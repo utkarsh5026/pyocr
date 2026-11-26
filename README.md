@@ -1,25 +1,69 @@
+<div align="center">
+
+<img src="docs/logo.svg" width="72" height="72" alt="pyocr-toolkit logo">
+
 # pyocr-toolkit
 
 **See exactly what text you get out of a PDF or image, and compare how different extraction methods read it.**
 
-Many GenAI workflows start with "get the text out of this PDF". pyocr-toolkit is a local web app (plus CLI)
-for checking that step. Upload a document and you get three versions of every page:
+[![CI](https://github.com/utkarsh5026/pyocr/actions/workflows/ci.yml/badge.svg)](https://github.com/utkarsh5026/pyocr/actions/workflows/ci.yml)
+![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)
+[![License](https://img.shields.io/badge/license-Apache%202.0-4f46e5)](LICENSE)
+![Runs locally](https://img.shields.io/badge/runs-locally-15803d)
 
-| Source | What it is | Good at | Weak at |
-|---|---|---|---|
-| **Native text** | Text already embedded in the file (PyMuPDF) | Born-digital PDFs. Exact and instant. | Scans have none. Broken font maps produce gibberish. |
-| **Tesseract OCR** | Classic OCR on the rendered page image | Free, local, fast, gives word positions | Tables, columns, poor scans, handwriting |
-| **LLM transcription** | A vision LLM told to copy the page *verbatim* | Hard pages, layout, context | Costs money. May quietly "fix" or skip text. |
+[**Website**](https://utkarsh5026.github.io/pyocr/) ·
+[Install](#install) ·
+[Screenshots](#screenshots) ·
+[Providers](#configure-llm-providers) ·
+[CLI](#command-line) ·
+[How it works](#how-it-works)
 
-You can then extract **page by page or the whole document**, **compare** any two sources (character and word error
-rate, word-level diffs, a per-page chart), **search** across everything, and **export** clean text (TXT, Markdown,
-JSON, JSONL) for your pipeline.
+<br>
+
+<img src="docs/screenshots/compare.png" alt="Compare view: Tesseract OCR scored against a PDF's native text, with CER per page and a word-level diff" width="100%">
+
+</div>
+
+---
+
+Many GenAI workflows start with "get the text out of this PDF". **pyocr-toolkit** is a local web app (plus CLI) for
+checking that step. Upload a document and you get three versions of every page:
+
+| | Source | What it is | Good at | Weak at |
+|---|---|---|---|---|
+| 📄 | **Native text** | Text already embedded in the file (PyMuPDF) | Born-digital PDFs. Exact and instant. | Scans have none. Broken font maps produce gibberish. |
+| 🔍 | **Tesseract OCR** | Classic OCR on the rendered page image | Free, local, fast, gives word positions | Tables, columns, poor scans, handwriting |
+| ✨ | **LLM transcription** | A vision LLM told to copy the page *verbatim* | Hard pages, layout, context | Costs money. May quietly "fix" or skip text. |
+
+Then you can:
+
+- **Extract** page by page, a range like `1-5,9`, or the whole document, as background jobs
+- **Compare** any two sources: character and word error rate (CER/WER), word-level diffs, a per-page chart
+- **Search** across every document and every source at once
+- **Export** clean text as TXT, Markdown, JSON or JSONL for your pipeline
 
 **LLM providers:** Claude (Anthropic API), OpenAI, Azure OpenAI, Claude on Azure (Microsoft Foundry), Google
 Gemini, and any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter) for local or private models.
 
 **Inputs:** PDF, XPS, EPUB, CBZ, MOBI, FB2, SVG, PNG, JPEG, TIFF (multi-page), BMP, GIF, WebP and anything else
 [PyMuPDF](https://pymupdf.readthedocs.io/) opens.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="50%"><b>Page inspector</b>: a scanned page (no embedded text, flagged <code>scan</code>) next to its Tesseract OCR text.<br><br><img src="docs/screenshots/inspector.png" alt="Page inspector"></td>
+    <td width="50%"><b>Side by side</b>, in dark mode: native, OCR and LLM text in synced columns.<br><br><img src="docs/screenshots/inspector-dark.png" alt="Side-by-side view in dark mode"></td>
+  </tr>
+  <tr>
+    <td><b>Library</b>: how much of each document has native, OCR and LLM text.<br><br><img src="docs/screenshots/library.png" alt="Library"></td>
+    <td><b>Search</b>: every document, every source, with the source of each hit.<br><br><img src="docs/screenshots/search.png" alt="Search"></td>
+  </tr>
+  <tr>
+    <td><b>Home</b>: upload, plus setup status for Tesseract and LLM providers.<br><br><img src="docs/screenshots/home.png" alt="Home"></td>
+    <td><b>Compare</b>, in dark mode.<br><br><img src="docs/screenshots/compare-dark.png" alt="Compare view in dark mode"></td>
+  </tr>
+</table>
 
 ---
 
@@ -47,6 +91,7 @@ python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\
 pip install git+https://github.com/utkarsh5026/pyocr
 ```
 
+> [!NOTE]
 > The PyPI name is `pyocr-toolkit` (plain `pyocr` is a different, unrelated library). Once it's published to
 > PyPI, `pipx install pyocr-toolkit` will also work.
 
@@ -116,7 +161,7 @@ python -m pyocr_toolkit --help                              # same CLI without t
 
 Documents processed on the command line also appear in the web app's library.
 
-## How it works, briefly
+## How it works
 
 1. **Native text.** A PDF page is a list of drawing instructions ("glyph 37 at (72, 700)"). Born-digital files map
    each glyph back to a character, so the text can be rebuilt exactly. A scan is only a picture, so it has no text.
@@ -138,8 +183,10 @@ The Help page explains each of these in more depth.
 - Uploads, OCR output and LLM output are stored as plain files under `DATA_DIR`.
 - A page image is sent to an LLM provider only when you start a transcription, and only to the provider you
   picked. Native text and Tesseract run entirely locally.
-- **There is no login.** `pyocr serve` listens on `127.0.0.1` by default. If you use `--host 0.0.0.0` or Docker,
-  put it behind your own authentication.
+
+> [!WARNING]
+> **There is no login.** `pyocr serve` listens on `127.0.0.1` by default. If you use `--host 0.0.0.0` or Docker,
+> put it behind your own authentication.
 
 ## Development
 
@@ -152,6 +199,9 @@ pyocr serve
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the code layout and how to add a provider.
+
+The project website lives in [`docs/`](docs/) (plain HTML and CSS, no build step) and is deployed to GitHub Pages by
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main` that touches it.
 
 ## License
 

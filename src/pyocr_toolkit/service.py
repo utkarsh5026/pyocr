@@ -9,6 +9,11 @@ source":
 * ``llm:<key>``    - one LLM configuration (provider + model + prompt); the key
                      is derived from those three, so it is identical across pages
 * ``llm``          - shorthand for "the most recent LLM result on each page"
+
+An LLM configuration may include image preprocessing (grayscale, contrast,
+binarize, ...; see :mod:`pyocr_toolkit.preprocess`). It is part of the cache
+key, so "same model on the original page" and "same model on the cleaned-up
+page" are two sources you can compare against each other.
 """
 
 from __future__ import annotations
@@ -25,6 +30,7 @@ from .config import Settings
 from .credentials import CredentialStore
 from .documents import DocumentError, OpenDocument
 from .llm import PROMPT_MODES, USER_PROMPT, Provider, ProviderError, TranscriptionRequest, catalog, resolve_prompt
+from .preprocess import MAX_PNG_BYTES, Preprocess, process_bytes
 
 
 @dataclass
@@ -33,6 +39,8 @@ class LLMSpec:
     model: str | None = None
     prompt_mode: str = "verbatim"
     custom_prompt: str | None = None
+    #: image preprocessing spec, e.g. ``"gray;contrast=1.5"`` or a preset id; empty = the page as rendered
+    preprocess: str = ""
 
 
 class Services:
@@ -46,17 +54,36 @@ class Services:
 
     # ----------------------------------------------------------------- LLM
     def resolve_spec(self, spec: LLMSpec) -> tuple[Provider, str, str]:
-        """Return (provider, model, system_prompt) or raise ValueError."""
+        """Return (provider, model, system_prompt) or raise ValueError (also for a bad preprocess spec)."""
         provider = self.providers.get(spec.provider)
         if provider is None:
             raise ValueError(f"unknown provider '{spec.provider}'")
         system_prompt = resolve_prompt(spec.prompt_mode, spec.custom_prompt)
         model = (spec.model or provider.default_model or "").strip()
+        Preprocess.parse(spec.preprocess)
         return provider, model, system_prompt
 
     def llm_key(self, doc: OpenDocument, spec: LLMSpec) -> str:
         provider, model, system_prompt = self.resolve_spec(spec)
-        return doc.llm_cache_key(provider.id, model, system_prompt)
+        return doc.llm_cache_key(provider.id, model, system_prompt, str(Preprocess.parse(spec.preprocess)))
+
+    def llm_image(self, doc: OpenDocument, page: int, pre: Preprocess | None = None) -> tuple[bytes, str]:
+        """The exact image (bytes, mime type) an LLM receives for this page.
+
+        Used both to run the model and to preview "what the model sees", so the
+        two can never drift apart. Blocking: call it from a thread in async code.
+        """
+        s, pre = self.settings, pre or Preprocess()
+        dpi = pre.dpi or s.llm_dpi
+        if pre.changes_pixels:
+            raw = doc.render(page, dpi, "ppm", s.llm_max_edge_px)
+            return process_bytes(raw, pre)
+        # PNG keeps text edges crisp; fall back to JPEG for huge colour pages
+        # (photos / colour scans) to stay inside provider upload limits.
+        image = doc.render(page, dpi, "png", s.llm_max_edge_px)
+        if len(image) > MAX_PNG_BYTES:
+            return doc.render(page, dpi, "jpeg", s.llm_max_edge_px), "image/jpeg"
+        return image, "image/png"
 
     def cost(self, provider_id: str, model: str | None, input_tokens: int | None,
              output_tokens: int | None) -> dict[str, Any] | None:
@@ -93,20 +120,14 @@ class Services:
         from "the model is reading this page"; it isn't called for cache hits.
         """
         provider, model, system_prompt = self.resolve_spec(spec)
-        key = doc.llm_cache_key(provider.id, model, system_prompt)
+        pre = Preprocess.parse(spec.preprocess)
+        key = doc.llm_cache_key(provider.id, model, system_prompt, str(pre))
         if not force:
             cached = doc.load_llm_result(page, key)
             if cached:
                 return {**cached, "key": key, "cached": True}
 
-        s = self.settings
-        # PNG keeps text edges crisp; fall back to JPEG for huge colour pages
-        # (photos / colour scans) to stay inside provider upload limits.
-        image = await asyncio.to_thread(doc.render, page, s.llm_dpi, "png", s.llm_max_edge_px)
-        mime = "image/png"
-        if len(image) > 3_500_000:
-            image = await asyncio.to_thread(doc.render, page, s.llm_dpi, "jpeg", s.llm_max_edge_px)
-            mime = "image/jpeg"
+        image, mime = await asyncio.to_thread(self.llm_image, doc, page, pre)
 
         async with self.llm_semaphore:
             if on_start:
@@ -130,6 +151,9 @@ class Services:
             "warnings": result.warnings,
             "image_bytes": len(image),
             "image_mime": mime,
+            # canonical spec + readable label; absent/empty = the page as rendered
+            "preprocess": str(pre) or None,
+            "preprocess_label": pre.describe() if not pre.is_identity else None,
             "created_at": time.time(),
         }
         doc.save_llm_result(page, key, record)
@@ -207,7 +231,9 @@ class Services:
                 entry = llm.setdefault(r["key"], {
                     "id": f"llm:{r['key']}", "kind": "llm", "key": r["key"],
                     "provider": r["provider"], "model": r["model"], "prompt_mode": r.get("prompt_mode"),
-                    "label": f"{r.get('provider_label') or r['provider']} · {r['model']} · {r.get('prompt_mode')}",
+                    "preprocess": r.get("preprocess"),
+                    "label": f"{r.get('provider_label') or r['provider']} · {r['model']} · {r.get('prompt_mode')}"
+                             + (f" · image: {r['preprocess_label']}" if r.get("preprocess_label") else ""),
                     "pages": [], "input_tokens": 0, "output_tokens": 0, "latency_ms": 0.0,
                     "updated_at": 0.0,
                 })

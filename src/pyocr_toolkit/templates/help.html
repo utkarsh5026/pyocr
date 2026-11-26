@@ -103,6 +103,38 @@
 <p>Every provider + model + prompt combination is stored separately, so you can run several and compare them.
   Results are cached: repeating a request costs nothing unless you click <i>re-run</i>.</p>
 
+<h2 id="preprocess">Adjusting the image before the LLM sees it</h2>
+<p>A vision model never sees your PDF, only the pixels it is sent. So the pixels are part of the experiment: a grey
+  photocopy, a speckled fax or a faded receipt can read better after cleaning up, and sometimes <i>worse</i> (thresholding
+  can erase a faint decimal point). <b>Adjust</b> on the page inspector (shortcut <kbd>e</kbd>) lets you try it and measure it.</p>
+<ul>
+  <li><b>Filters</b> are presets, each shown as a thumbnail of the current page: <i>Clean scan</i> (grayscale, auto levels,
+    a little sharpening), <i>High contrast</i>, <i>Black &amp; white</i>, <i>Fix faded</i>, <i>Denoise</i>, <i>Bring out
+    detail</i> and <i>Invert</i> (light text on dark). Picking a filter keeps your crop and rotation.</li>
+  <li><b>Fine-tune</b>: brightness, contrast and sharpness (1 = unchanged), denoise (a median filter: each pixel becomes
+    the median of its 3×3 or 5×5 neighbourhood, which removes isolated specks but keeps edges), black &amp; white,
+    resolution, rotation and crop margins.</li>
+  <li><b>Black &amp; white</b> turns every pixel pure black or pure white. <i>Automatic</i> uses Otsu's method: it tries
+    every grey level as the cut-off and keeps the one that best separates the image into two groups (ink and paper),
+    meaning the two groups' average brightnesses are as far apart as possible, weighted by how many pixels each has.</li>
+  <li><b>Auto levels</b> stretches the histogram so the darkest 1% becomes black and the lightest 1% white;
+    <b>Equalize</b> spreads brightness evenly over the whole range, which brings out very faint text (and noise).</li>
+</ul>
+<p>The viewer then shows <b>exactly the image the model receives</b>, the same bytes at the same size, with its pixel size and
+  file size (<i>Hold to compare</i> flips back to the original). Fewer pixels usually means fewer input tokens; grayscale
+  mostly shrinks the upload, not the token count.</p>
+<p>The steps always run in a fixed order, whatever order you set them in: rotate, crop, grayscale, denoise, levels,
+  brightness, contrast, sharpness, black &amp; white, invert. Geometry comes first, so crop edges refer to the page as you
+  see it. Denoise runs before contrast, because contrast would amplify the specks. Thresholding runs near the end,
+  because it throws away information every earlier step needs.</p>
+<p><b>Is it better?</b> The settings are part of the cache key, so "model X on the original page" and "model X on the
+  cleaned page" are two separate sources. <i>A/B: original vs adjusted</i> in the LLM tab runs both and diffs them, next to
+  their token counts and timings. A diff only shows what <i>changed</i>. To know which version is <i>right</i>, score each
+  against text you trust: the native layer of a born-digital PDF, or a page you have checked by hand. For a whole
+  document, put the same settings in <i>Image preprocessing</i> on the Overview page and use Compare. The settings
+  are remembered per document and shown as a short spec (for example <code>gray;auto;contrast=1.5</code>) that
+  <code>pyocr extract --preprocess</code> accepts too.</p>
+
 <h2 id="metrics">Comparing: CER and WER</h2>
 <p>To find out how wrong a text is, compare it with a text you trust more: the <b>reference</b>. The basic quantity is
   <b>edit distance</b> (Levenshtein distance): the smallest number of single-item <i>insertions</i>, <i>deletions</i> and
@@ -193,6 +225,7 @@ pyocr extract FILE --engine llm -p anthropic --pages 1-5 --format jsonl -o out.j
 pyocr extract FILE --engine ocr                       # Tesseract, all pages, text to stdout
 pyocr extract FILE --engine native --format md        # embedded text layer only
 pyocr compare FILE -p openai -m gpt-6.2-sol                 # per-page OCR/native error rate vs an LLM
+pyocr extract FILE --preprocess clean                 # adjust the image first (a preset or e.g. 'gray;auto;contrast=1.5')
 pyocr import a.pdf b.pdf scans.zip folder/ -w "Q3"    # add many files as one workspace (zips unpacked)
 pyocr import FILE... --no-workspace                   # add to the Library without grouping</pre>
 <p>Documents processed from the command line also appear in the Library, so you can inspect them in the browser afterwards.</p>
@@ -238,6 +271,7 @@ POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)
   <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>switch tab (native, OCR, LLM, compare, side by side). <i>Side by side</i> widens the text panel and shows all three texts in columns that scroll together; it stays on until you pick another tab.</td></tr>
   <tr><td><kbd>t</kbd></td><td>transcribe the page with the selected LLM</td></tr>
   <tr><td><kbd>o</kbd></td><td>run OCR on the page</td></tr>
+  <tr><td><kbd>e</kbd></td><td>open or close <i>Adjust</i> (image preprocessing for the LLM)</td></tr>
 </table>
 </article>
 </div>

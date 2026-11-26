@@ -132,7 +132,7 @@ Everything you upload and extract is stored in `./data` (change it with `DATA_DI
 | **Library** `/documents` | Document cards showing native / OCR / LLM coverage and how many pages still have no text. Filter by status, workspace or name; delete. |
 | **Workspaces** `/workspaces` | Named groups of documents. Uploading several files or a `.zip` offers to create one, with suggested names (from the file names, or `adjective-scientist` like `festive-albattani`). Open one to rename it, add files or remove documents. |
 | **Overview** `/documents/{id}` | Start background extraction (Tesseract or any LLM) for all pages or a range such as `1-5,9`; follow progress; see every *source* (engine + model + prompt) with token usage; export; page thumbnails. |
-| **Page inspector** `/documents/{id}/pages/{n}` | Page image next to native, OCR and LLM text; run OCR or an LLM on just this page; per-page diff; a *Side by side* tab with all three texts in synced columns; search hits drawn on the image. Keyboard: `←/→`, `/`, `1-5`, `t`, `o`. |
+| **Page inspector** `/documents/{id}/pages/{n}` | Page image next to native, OCR and LLM text; run OCR or an LLM on just this page; per-page diff; a *Side by side* tab with all three texts in synced columns; search hits drawn on the image; *Adjust* to preprocess the image the LLM receives (filters, fine-tuning, crop/rotate) and A/B it against the original. Keyboard: `←/→`, `/`, `1-5`, `t`, `o`, `e`. |
 | **Full text** `/documents/{id}/text` | Read the whole document from one source, optionally beside the page images; find, copy, download. |
 | **Compare** `/documents/{id}/compare` | Score source B against source A on every page: document-level CER/WER, a clickable CER-per-page chart, and an aligned side-by-side diff of the selected page (opens on the worst page). Works for OCR vs LLM, native vs LLM, or **model vs model**. |
 | **Search** `/search` | Search all documents at once. |
@@ -169,6 +169,7 @@ pyocr extract report.pdf --engine llm -p anthropic --pages 1-5 --format jsonl -o
 pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdown to stdout
 pyocr extract born-digital.pdf --engine native              # embedded text only, no network
 pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR / native CER vs an LLM
+pyocr extract scan.pdf -p anthropic --preprocess 'gray;auto;contrast=1.5'  # adjust the image first (or a preset: clean, bw, ...)
 pyocr import a.pdf b.pdf scans.zip folder/ -w invoices      # add many files as one workspace (zips unpacked)
 pyocr providers                                             # which providers are ready
 python -m pyocr_toolkit --help                              # same CLI without the script on PATH
@@ -194,6 +195,9 @@ you ask otherwise.
 3. **LLM.** The page image goes to a vision model with a strict "transcribe, don't correct" prompt
    ([`prompts.py`](https://github.com/utkarsh5026/pyocr/blob/main/src/pyocr_toolkit/llm/prompts.py)). It reads in context, so it is strong on hard pages, but it can
    "fix" typos, which the diff view exposes.
+   Optionally the image is preprocessed first (grayscale, levels, contrast, denoise, black & white, crop, rotate;
+   [`preprocess.py`](src/pyocr_toolkit/preprocess.py)). The settings are part of the cache key, so a run on the
+   cleaned-up page is a separate source you can diff against the run on the original.
 4. **Comparison.** *Edit distance* is the minimum number of character insertions, deletions and substitutions
    between two texts. **CER** = edits / reference characters; **WER** is the same count over words. For example,
    "the cat sat" → "the bat sat" has 1 edit, so CER = 1/11 = 9%. Whitespace is normalised first, because line

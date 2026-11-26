@@ -13,14 +13,16 @@
 
 [**Website**](https://utkarsh5026.github.io/pyocr/) ·
 [Install](#install) ·
-[Screenshots](#screenshots) ·
+[Tours](#tours) ·
 [Providers](#configure-llm-providers) ·
 [CLI](#command-line) ·
 [How it works](#how-it-works)
 
 <br>
 
-<img src="docs/screenshots/compare.png" alt="Compare view: Tesseract OCR scored against a PDF's native text, with CER per page and a word-level diff" width="100%">
+<img src="docs/tours/compare-light.webp" alt="Compare view, animated: Tesseract OCR scored against an LLM transcription of a scanned document, with the error rate per page and a word-level diff" width="100%">
+
+<sub>▶ The <a href="https://utkarsh5026.github.io/pyocr/">website</a> opens with a 24-second video of what it does.</sub>
 
 </div>
 
@@ -48,22 +50,30 @@ Gemini, and any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter) f
 **Inputs:** PDF, XPS, EPUB, CBZ, MOBI, FB2, SVG, PNG, JPEG, TIFF (multi-page), BMP, GIF, WebP and anything else
 [PyMuPDF](https://pymupdf.readthedocs.io/) opens.
 
-## Screenshots
+## Tours
+
+Short recordings of the app on demo data (made by [`.claude/skills/demo/tour_shots.py`](.claude/skills/demo/tour_shots.py);
+each is also in dark mode, as `docs/tours/*-dark.webp`).
 
 <table>
   <tr>
-    <td width="50%"><b>Page inspector</b>: a scanned page (no embedded text, flagged <code>scan</code>) next to its Tesseract OCR text.<br><br><img src="docs/screenshots/inspector.png" alt="Page inspector"></td>
-    <td width="50%"><b>Side by side</b>, in dark mode: native, OCR and LLM text in synced columns.<br><br><img src="docs/screenshots/inspector-dark.png" alt="Side-by-side view in dark mode"></td>
+    <td width="50%"><b>Page inspector</b>: a scanned page has no embedded text, so it's flagged <code>scan</code>; then its OCR
+      and LLM text, all three side by side, and a diff.<br><br><img src="docs/tours/inspector-light.webp" alt="Page inspector tour"></td>
+    <td width="50%"><b>Compare</b>: Tesseract scored against an LLM across the document, a bar per page, and each page's
+      diff.<br><br><img src="docs/tours/compare-light.webp" alt="Compare tour"></td>
   </tr>
   <tr>
-    <td><b>Library</b>: how much of each document has native, OCR and LLM text.<br><br><img src="docs/screenshots/library.png" alt="Library"></td>
-    <td><b>Search</b>: every document, every source, with the source of each hit.<br><br><img src="docs/screenshots/search.png" alt="Search"></td>
+    <td><b>Search</b>: every document and every source at once; a hit opens on its page, highlighted on the image.<br><br><img src="docs/tours/search-light.webp" alt="Search tour"></td>
+    <td><b>Upload and extract</b>: drop a scan, run Tesseract on every page as a background job, read the result.<br><br><img src="docs/tours/upload-light.webp" alt="Upload and extract tour"></td>
   </tr>
   <tr>
-    <td><b>Home</b>: upload, plus setup status for Tesseract and LLM providers.<br><br><img src="docs/screenshots/home.png" alt="Home"></td>
-    <td><b>Compare</b>, in dark mode.<br><br><img src="docs/screenshots/compare-dark.png" alt="Compare view in dark mode"></td>
+    <td colspan="2"><b>Library</b>: how much of each document has native, OCR and LLM text.<br><br><img src="docs/tours/library-light.webp" alt="Library tour" width="50%"></td>
   </tr>
 </table>
+
+> [!NOTE]
+> The LLM in these recordings is a local stand-in that answers with each sample page's true text (and "fixes" one
+> misspelling, as real models do), so they can be remade without an API key. Native text and OCR are the real thing.
 
 ---
 
@@ -201,7 +211,13 @@ pyocr serve
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the code layout and how to add a provider.
 
 The project website lives in [`docs/`](docs/) (plain HTML and CSS, no build step) and is deployed to GitHub Pages by
-[`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main` that touches it.
+[`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main` that touches it. Its media are
+made from code, on demo data that needs no API key:
+
+```bash
+python .claude/skills/demo/tour_shots.py        # docs/tours/*.webp: the app's tours, light and dark (needs Tesseract, Playwright)
+cd hero-video && npm install && npm run render  # docs/media/hero-demo.mp4: the website's hero video (Remotion)
+```
 
 ## License
 

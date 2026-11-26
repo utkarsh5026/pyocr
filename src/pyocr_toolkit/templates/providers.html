@@ -1,10 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Providers{% endblock %}
 {% block content %}
+<div class="page-head"><div>
 <h1>Providers &amp; setup</h1>
-<p class="lead small">Credentials are read from environment variables (or a <code>.env</code> file in the directory you
-  start <code>pyocr serve</code> from). They stay on the server; this page only shows whether each one is set.
-  Restart the server after changing them.</p>
+<p>Credentials come from environment variables (or a <code>.env</code> file next to where you run
+  <code>pyocr serve</code>). They never leave the server; restart it after changing them.</p>
+</div></div>
 
 <section class="card">
   <div class="section-head"><h2>Tesseract OCR</h2>
@@ -23,7 +24,7 @@ choco install tesseract                                 # Windows (or the UB Man
   {% endif %}
 </section>
 
-<h2>LLM providers</h2>
+<h2 style="margin-top:32px">LLM providers</h2>
 <div class="provider-grid">
 {% for p in providers %}
 <section class="card provider" data-provider-id="{{ p.id }}">
@@ -34,7 +35,7 @@ choco install tesseract                                 # Windows (or the UB Man
   <table class="table compact env">
     {% for e in p.env_status() %}
     <tr>
-      <td><code>{{ e.name }}</code>{% if e.required %} <span class="small muted">required</span>{% endif %}</td>
+      <td><code>{{ e.name }}</code>{% if e.required %} <span class="badge">required</span>{% endif %}</td>
       <td class="nowrap">{% if e.state == 'set' %}<span class="good">✓ set</span>{% elif e.state == 'default' %}<span class="muted" title="not set; using the built-in default">default: {{ e.default }}</span>{% else %}<span class="{{ 'bad' if e.required else 'muted' }}">{{ 'missing' if e.required else '–' }}</span>{% endif %}</td>
       <td class="small">{{ e.description }}</td>
     </tr>
@@ -43,7 +44,7 @@ choco install tesseract                                 # Windows (or the UB Man
   <div class="row">
     <input data-test-model value="{{ p.default_model or '' }}" placeholder="{{ p.model_hint }}" class="grow">
     <button class="btn small" data-test {{ 'disabled' if not p.configured }}>Test connection</button>
-    {% if p.docs_url %}<a class="small" href="{{ p.docs_url }}" target="_blank" rel="noopener">get credentials ↗</a>{% endif %}
+    {% if p.docs_url %}<a class="small" href="{{ p.docs_url }}" target="_blank" rel="noopener">Get credentials ↗</a>{% endif %}
   </div>
   <div class="small" data-test-result></div>
 </section>

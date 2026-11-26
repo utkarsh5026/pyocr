@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Page {{ page_no }} · {{ doc.filename }}{% endblock %}
 {% block body_class %}app{% endblock %}
 {% block subnav %}{% include "_doctabs.html" %}{% endblock %}
@@ -6,9 +7,9 @@
 <main id="workspace" data-doc-id="{{ doc.id }}" data-page="{{ page_no - 1 }}" data-is-pdf="{{ 'true' if doc.is_pdf else 'false' }}">
   <aside class="sidebar">
     <form id="search-form" class="search">
-      <input id="search-input" type="search" placeholder="Search this document…  ( / )">
-      <div class="search-sources">
-        <label><input type="checkbox" value="native" checked> native</label>
+      <input id="search-input" type="search" placeholder="Search this document…" title="Shortcut: /">
+      <div class="search-sources chips" title="Which texts to search">
+        <label><input type="checkbox" value="native" checked> Native</label>
         <label><input type="checkbox" value="ocr" checked> OCR</label>
         <label><input type="checkbox" value="llm" checked> LLM</label>
       </div>
@@ -19,18 +20,18 @@
 
   <section class="viewer">
     <div class="viewer-toolbar">
-      <button id="prev-page" class="btn small" title="Previous page (←)">‹</button>
+      <button id="prev-page" class="btn small ghost icon-only" title="Previous page (←)">{{ icon('chevron-left') }}</button>
       <span id="page-label">–</span>
-      <button id="next-page" class="btn small" title="Next page (→)">›</button>
+      <button id="next-page" class="btn small ghost icon-only" title="Next page (→)">{{ icon('chevron-right') }}</button>
       <span class="sep"></span>
-      <button id="zoom-out" class="btn small">−</button>
+      <button id="zoom-out" class="btn small ghost icon-only" title="Zoom out">−</button>
       <span id="zoom-label">100%</span>
-      <button id="zoom-in" class="btn small">+</button>
-      <button id="zoom-fit" class="btn small">fit</button>
-      <span class="sep"></span>
+      <button id="zoom-in" class="btn small ghost icon-only" title="Zoom in">+</button>
+      <button id="zoom-fit" class="btn small ghost">Fit</button>
+      <span class="sep badges-sep"></span>
       <span id="page-badges"></span>
       <div class="spacer"></div>
-      <a id="open-image" class="btn small ghost" target="_blank" title="Open a high-resolution render">hi-res ↗</a>
+      <a id="open-image" class="btn small ghost" target="_blank" title="Open a high-resolution render">Hi-res {{ icon('external') }}</a>
     </div>
     <div id="page-scroll" class="page-scroll">
       <div id="page-frame" class="page-frame">
@@ -41,22 +42,23 @@
   </section>
 
   <section class="panel">
-    <nav class="tabs">
-      <button data-tab="native" class="active">Native text</button>
-      <button data-tab="ocr">Tesseract OCR</button>
+    <nav class="tabs" role="tablist">
+      <button data-tab="native" class="active">Native</button>
+      <button data-tab="ocr">OCR</button>
       <button data-tab="llm">LLM</button>
       <button data-tab="compare">Compare</button>
+      <button data-tab="side" title="Native, OCR and LLM text in columns (5)">Side by side</button>
     </nav>
 
     <div class="tab-body" data-tab="native">
       <div class="tab-meta"><span id="native-meta"></span><div class="spacer"></div>
-        <button class="btn small ghost" data-copy="#native-text">copy</button></div>
+        <button class="btn small ghost" data-copy="#native-text" title="Copy text">{{ icon('copy') }}Copy</button></div>
       <pre id="native-text" class="text"></pre>
     </div>
 
     <div class="tab-body" data-tab="ocr" hidden>
       <div class="tab-meta"><span id="ocr-meta"></span><div class="spacer"></div>
-        <button class="btn small ghost" data-copy="#ocr-text">copy</button>
+        <button class="btn small ghost" data-copy="#ocr-text" title="Copy text">{{ icon('copy') }}Copy</button>
         <button id="run-ocr" class="btn small">Run OCR</button></div>
       <pre id="ocr-text" class="text"></pre>
     </div>
@@ -65,24 +67,32 @@
       {% set picker_id = 'ws' %}{% include "_llm_picker.html" %}
       <div class="tab-meta">
         <button id="run-llm" class="btn small primary">Transcribe this page</button>
-        <button id="rerun-llm" class="btn small ghost" title="Ignore the cache and call the model again">re-run</button>
+        <button id="rerun-llm" class="btn small ghost" title="Ignore the cache and call the model again">Re-run</button>
         <div class="spacer"></div>
-        <button class="btn small ghost" data-copy="#llm-text">copy</button>
+        <button class="btn small ghost" data-copy="#llm-text" title="Copy text">{{ icon('copy') }}Copy</button>
       </div>
       <div class="tab-meta">
-        <label class="grow">Stored results <select id="llm-result-select" title="Transcriptions stored for this page"></select></label>
-        <button id="delete-llm" class="btn small ghost danger" title="Delete this stored result">delete</button>
+        <label class="grow">Stored <select id="llm-result-select" title="Transcriptions stored for this page"></select></label>
+        <button id="delete-llm" class="btn small ghost danger icon-only" title="Delete this stored result">{{ icon('trash') }}</button>
       </div>
       <div id="llm-meta" class="tab-meta small"></div>
       <pre id="llm-text" class="text"></pre>
+    </div>
+
+    <div class="tab-body" data-tab="side" hidden>
+      <div class="side-cols">
+        <section class="side-col"><div class="side-head"><b>Native</b><span id="side-native-meta"></span></div><pre id="side-native" class="text"></pre></section>
+        <section class="side-col"><div class="side-head"><b>OCR</b><span id="side-ocr-meta"></span></div><pre id="side-ocr" class="text"></pre></section>
+        <section class="side-col"><div class="side-head"><b>LLM</b><span id="side-llm-meta"></span></div><pre id="side-llm" class="text"></pre></section>
+      </div>
     </div>
 
     <div class="tab-body" data-tab="compare" hidden>
       <div class="compare-controls">
         <label>Reference <select id="cmp-ref"></select></label>
         <label>vs <select id="cmp-hyp"></select></label>
-        <label><input type="checkbox" id="cmp-case" checked> ignore case</label>
-        <label><input type="checkbox" id="cmp-punct"> ignore punctuation</label>
+        <label class="check"><input type="checkbox" id="cmp-case" checked> Ignore case</label>
+        <label class="check"><input type="checkbox" id="cmp-punct"> Ignore punctuation</label>
         <button id="run-compare" class="btn small primary">Compare</button>
       </div>
       <div id="cmp-metrics" class="metrics"></div>

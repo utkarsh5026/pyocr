@@ -1,35 +1,63 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Library{% endblock %}
 {% block content %}
-<div class="section-head">
-  <h1>Library</h1>
-  <input type="search" id="lib-filter" placeholder="Filter by file name…">
+{% set status_cls = {'complete': 'ok', 'scanned': 'scan', 'partial': 'run'} %}
+{% set total_pages = docs|sum(attribute='page_count') %}
+{% set total_missing = docs|sum(attribute='missing_pages') %}
+<div class="page-head">
+  <div>
+    <h1>Library</h1>
+    <p>{{ docs|length }} document{{ 's' if docs|length != 1 }} · {{ total_pages }} page{{ 's' if total_pages != 1 }}
+      {% if docs %} · {% if total_missing %}<b class="warn">{{ total_missing }} page{{ 's' if total_missing != 1 }} still without text</b>{% else %}every page has text{% endif %}{% endif %}</p>
+  </div>
+  {% if docs %}<input type="search" id="lib-filter" placeholder="Filter by file name…" aria-label="Filter by file name">{% endif %}
 </div>
 {% if docs %}
-<table class="table" id="lib-table">
-  <thead><tr><th></th><th>File</th><th>Pages</th><th>Size</th><th>OCR</th><th>LLM</th><th>Uploaded</th><th></th></tr></thead>
-  <tbody>
-  {% for d in docs %}
-  <tr data-name="{{ d.filename|lower }}">
-    <td><img class="thumb" loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=36" alt=""></td>
-    <td><a href="/documents/{{ d.id }}"><b>{{ d.filename }}</b></a><div class="small">{{ d.filetype|upper }}</div></td>
-    <td>{{ d.page_count }}</td>
-    <td>{{ d.size_bytes|filesize }}</td>
-    <td><progress max="{{ d.page_count }}" value="{{ d.ocr_pages }}"></progress> <span class="small">{{ d.ocr_pages }}/{{ d.page_count }}</span></td>
-    <td><progress max="{{ d.page_count }}" value="{{ d.llm_pages }}"></progress> <span class="small">{{ d.llm_pages }}/{{ d.page_count }}</span></td>
-    <td class="small">{{ d.created_at|datetime }}</td>
-    <td class="actions">
-      <a class="btn small" href="/documents/{{ d.id }}/pages/1">Inspect</a>
-      <a class="btn small" href="/documents/{{ d.id }}/text">Text</a>
-      <a class="btn small" href="/documents/{{ d.id }}/compare">Compare</a>
-      <button class="btn small ghost danger" data-delete="{{ d.id }}" data-name="{{ d.filename }}">Delete</button>
-    </td>
-  </tr>
+<div class="chips lib-chips" role="radiogroup" aria-label="Filter by status">
+  {% for key, label in [('all', 'All'), ('partial', 'Needs text'), ('scanned', 'Scanned'), ('complete', 'All pages have text')] %}
+  <label><input type="radio" name="lib-status" value="{{ key }}" {{ 'checked' if key == 'all' }}>
+    {{ label }} <span class="count">{{ docs|length if key == 'all' else docs|selectattr('status', 'equalto', key)|list|length }}</span></label>
   {% endfor %}
-  </tbody>
-</table>
+</div>
+
+<div class="lib-grid" id="lib-grid">
+  {% for d in docs %}
+  <article class="card lib-card" data-name="{{ d.filename|lower }}" data-status="{{ d.status }}">
+    <a class="lib-thumb" href="/documents/{{ d.id }}" tabindex="-1" aria-hidden="true">
+      <img loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=40" alt="">
+      <span class="badge {{ status_cls[d.status] }}">{% if d.status == 'complete' %}All pages have text{% else %}{{ 'Scanned · ' if d.status == 'scanned' }}{{ d.missing_pages }} page{{ 's' if d.missing_pages != 1 }} need{{ 's' if d.missing_pages == 1 }} text{% endif %}</span>
+    </a>
+    <div class="lib-body">
+      <a class="file-name" href="/documents/{{ d.id }}" title="{{ d.filename }}">{{ d.filename }}</a>
+      <div class="small muted">{{ d.page_count }} page{{ 's' if d.page_count != 1 }} · {{ d.filetype|upper }} · {{ d.size_bytes|filesize }} · {{ d.created_at|datetime }}</div>
+      <div class="coverage" title="Pages with text from each source">
+        {% for key, label in [('native', 'Native'), ('ocr', 'OCR'), ('llm', 'LLM')] %}
+        {% set n = d[key ~ '_pages'] %}
+        <div class="cov {{ key }}">
+          <span class="cov-k">{{ label }}</span><span class="cov-v">{{ n }}/{{ d.page_count }}</span>
+          <span class="cov-bar"><i style="width: {{ (100 * n / d.page_count)|round(1) if d.page_count else 0 }}%"></i></span>
+        </div>
+        {% endfor %}
+      </div>
+      <div class="lib-actions">
+        <a class="btn small ghost" href="/documents/{{ d.id }}/pages/1">Inspect</a>
+        <a class="btn small ghost" href="/documents/{{ d.id }}/text">Text</a>
+        <a class="btn small ghost" href="/documents/{{ d.id }}/compare">Compare</a>
+        <div class="spacer"></div>
+        <button class="btn small ghost danger icon-only" data-delete="{{ d.id }}" data-name="{{ d.filename }}" title="Delete" aria-label="Delete {{ d.filename }}">{{ icon('trash') }}</button>
+      </div>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+<p class="small muted" id="lib-none" hidden>No documents match this filter.</p>
 {% else %}
-<div class="empty"><h2>No documents yet</h2><p>Use <b>Upload</b> (top right) or drop files anywhere on this page.</p></div>
+<div class="empty">
+  <div class="empty-icon">{{ icon('inbox') }}</div>
+  <h2>No documents yet</h2>
+  <p>Use <b>Upload</b> in the top bar or drop files anywhere on this page.</p>
+</div>
 {% endif %}
 {% endblock %}
 {% block scripts %}<script src="/static/library.js?v={{ version }}"></script>{% endblock %}

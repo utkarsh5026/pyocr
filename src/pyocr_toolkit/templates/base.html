@@ -1,15 +1,26 @@
-<!DOCTYPE html>
-<html lang="en">
+{% from "_icons.html" import icon with context %}<!DOCTYPE html>
+<html lang="en" data-theme="light" data-theme-pref="system">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}pyocr toolkit{% endblock %} · pyocr</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔎</text></svg>">
+  <script>
+    /* Runs before first paint so the page never flashes the wrong theme.
+       pref = what the user picked (system | light | dark); theme = what is shown. */
+    (function () {
+      var pref = "system";
+      try { pref = localStorage.getItem("pyocr.theme") || "system"; } catch (_) {}
+      var dark = pref === "dark" || (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      document.documentElement.dataset.themePref = pref;
+      document.documentElement.dataset.theme = dark ? "dark" : "light";
+    })();
+  </script>
   <link rel="stylesheet" href="/static/styles.css?v={{ version }}">
 </head>
 <body class="{% block body_class %}site{% endblock %}">
 <header class="topbar">
-  <a class="brand" href="/">pyocr <span>toolkit</span></a>
+  <a class="brand" href="/"><span class="logo">{{ icon('scan') }}</span>pyocr <span>toolkit</span></a>
   <nav class="mainnav">
     <a href="/" class="{{ 'active' if nav == 'home' }}">Home</a>
     <a href="/documents" class="{{ 'active' if nav == 'library' }}">Library</a>
@@ -20,10 +31,16 @@
   </nav>
   <div class="spacer"></div>
   <form class="quicksearch" action="/search" method="get" role="search">
+    {{ icon('search') }}
     <input type="search" name="q" placeholder="Search all documents…" aria-label="Search all documents">
   </form>
+  <button type="button" class="btn ghost icon-only theme-toggle" id="theme-toggle" title="Theme" aria-label="Toggle colour theme">
+    <span data-icon="system">{{ icon('monitor') }}</span>
+    <span data-icon="light">{{ icon('sun') }}</span>
+    <span data-icon="dark">{{ icon('moon') }}</span>
+  </button>
   <label class="btn primary" title="PDF, XPS, EPUB, PNG, JPEG, TIFF, ... (anything PyMuPDF opens)">
-    Upload
+    {{ icon('upload') }}<span class="upload-label">Upload</span>
     <input class="upload-input" type="file" hidden multiple
            accept=".pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
   </label>

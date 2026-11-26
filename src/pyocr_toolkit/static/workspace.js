@@ -104,6 +104,7 @@ function renderNative() {
       (p.looks_scanned ? ' · <span class="warn">looks scanned: try OCR or an LLM</span>' : "")
     : '<span class="warn">Image file: there is no embedded text layer. Use OCR or an LLM.</span>';
   setText($("#native-text"), layer.text, "No embedded text on this page.");
+  renderSide();
 }
 
 function renderOcr() {
@@ -120,6 +121,7 @@ function renderOcr() {
   $("#run-ocr").textContent = layer ? "Re-run OCR" : "Run OCR";
   $("#run-ocr").disabled = !state.config.tesseract_available;
   setText($("#ocr-text"), layer ? layer.text : "", "Click “Run OCR” (or press o) to OCR this page with Tesseract.");
+  renderSide();
 }
 
 function renderLlm(selectKey) {
@@ -136,6 +138,7 @@ function showLlmResult(key) {
   if (!r) {
     $("#llm-meta").innerHTML = "";
     setText($("#llm-text"), "", "No transcription yet. Pick a provider and model above and click “Transcribe this page” (or press t).");
+    renderSide();
     return;
   }
   const tokens = r.input_tokens != null ? ` · ${fmtInt(r.input_tokens)} in / ${fmtInt(r.output_tokens)} out tokens` : "";
@@ -143,11 +146,33 @@ function showLlmResult(key) {
   $("#llm-meta").innerHTML = `${esc(r.provider_label || r.provider)} · <b>${esc(r.model)}</b> · ` +
     `${(r.latency_ms / 1000).toFixed(1)}s${tokens} · ${r.text.length} chars${warns}`;
   setText($("#llm-text"), r.text);
+  renderSide();
+}
+
+/** Side-by-side tab: the three sources in columns (LLM = the result picked in the LLM tab). */
+function renderSide() {
+  if (!state.native) return;
+  const llm = state.llmResults.find((x) => x.key === $("#llm-result-select").value);
+  $("#side-native-meta").textContent = `${state.native.text.trim().length.toLocaleString()} ch`;
+  $("#side-ocr-meta").textContent = state.ocr ? `${state.ocr.text.trim().length.toLocaleString()} ch` : "not run";
+  $("#side-llm-meta").textContent = llm ? `${llm.model} · ${llm.text.length.toLocaleString()} ch` : "none yet";
+  setSideText($("#side-native"), state.native.text, "No embedded text.");
+  setSideText($("#side-ocr"), state.ocr?.text, "Not run yet (press o).");
+  setSideText($("#side-llm"), llm?.text, "No transcription yet (press t).");
+}
+
+function setSideText(el, text, emptyMsg) {
+  el.dataset.empty = emptyMsg;
+  el.innerHTML = text ? highlight(text, state.query) : "";
 }
 
 function switchTab(name) {
   $$(".tabs button").forEach((x) => x.classList.toggle("active", x.dataset.tab === name));
   $$(".tab-body").forEach((t) => { t.hidden = t.dataset.tab !== name; });
+  // "Side by side" is a layout mode: widen the text panel and remember it.
+  root.classList.toggle("side", name === "side");
+  try { localStorage.setItem("pyocr.sideBySide", name === "side" ? "1" : "0"); } catch (_) { /* private mode */ }
+  applyZoom();
 }
 
 // ------------------------------------------------------------------ actions
@@ -337,9 +362,21 @@ function wire() {
   $("#search-input").addEventListener("search", guard(() => !$("#search-input").value && runSearch()));
   $$(".search-sources input").forEach((i) => i.addEventListener("change", guard(() => state.query && runSearch())));
 
+  // scroll the side-by-side columns together (proportionally, since lengths differ)
+  const cols = $$(".side-cols pre");
+  let lead = null;
+  cols.forEach((c) => {
+    c.addEventListener("pointerenter", () => { lead = c; });
+    c.addEventListener("scroll", () => {
+      if (lead !== c) return;
+      const f = c.scrollTop / Math.max(1, c.scrollHeight - c.clientHeight);
+      cols.forEach((o) => { if (o !== c) o.scrollTop = f * (o.scrollHeight - o.clientHeight); });
+    });
+  });
+
   document.addEventListener("keydown", (e) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
-    const tabs = { 1: "native", 2: "ocr", 3: "llm", 4: "compare" };
+    const tabs = { 1: "native", 2: "ocr", 3: "llm", 4: "compare", 5: "side" };
     if (e.key === "ArrowRight" || e.key === "j") gotoPage(state.page + 1);
     else if (e.key === "ArrowLeft" || e.key === "k") gotoPage(state.page - 1);
     else if (e.key === "/") { e.preventDefault(); $("#search-input").focus(); }
@@ -358,6 +395,7 @@ function wire() {
     renderPageList();
     if (location.hash === "#llm") switchTab("llm");
     if (location.hash === "#compare") switchTab("compare");
+    else if (!location.hash && localStorage.getItem("pyocr.sideBySide") === "1") switchTab("side");
     await gotoPage(Math.min(state.page, state.pages.length - 1));
     if (state.query) { $("#search-input").value = state.query; await runSearch(); }
   } catch (e) {

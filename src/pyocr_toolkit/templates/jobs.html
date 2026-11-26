@@ -1,9 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Jobs{% endblock %}
 {% block content %}
+<div class="page-head"><div>
 <h1>Extraction jobs</h1>
-<p class="small muted">Background extractions started from a document's <i>Overview &amp; extract</i> page. The list
+<p>Background extractions started from a document's <i>Overview</i> page. The list
   is kept in memory and resets when the server restarts; the extracted text is stored on disk and is never lost.</p>
+</div></div>
 <div id="all-jobs" class="job-list" data-names='{{ names|tojson }}'>
   {% if not jobs %}<p class="muted">No jobs yet.</p>{% endif %}
 </div>

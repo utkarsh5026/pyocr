@@ -1,50 +1,55 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Home{% endblock %}
 {% block content %}
 <section class="hero">
   <div>
     <h1>See exactly what your text extraction produces.</h1>
-    <p class="lead">Upload a PDF or image, then put its <b>embedded text</b>, <b>Tesseract OCR</b> and
-      <b>LLM transcriptions</b> (Claude, GPT, Gemini, Azure, local models) side by side. Extract page by page or
-      the whole document, measure how far apart they are, and export clean text for your GenAI pipeline.</p>
+    <p class="lead">Put a document's <b>embedded text</b>, <b>Tesseract OCR</b> and <b>LLM transcriptions</b>
+      side by side, measure how far apart they are, and export clean text for your GenAI pipeline.</p>
   </div>
   <label class="dropzone" id="home-drop">
     <input class="upload-input" type="file" hidden multiple
            accept=".pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
-    <div class="dz-icon">⬆</div>
+    <div class="dz-icon">{{ icon('upload') }}</div>
     <b>Drop files here or click to upload</b>
-    <span class="small">PDF, XPS, EPUB, PNG, JPEG, TIFF, WebP … up to {{ request.app.state.settings.max_upload_mb }} MB</span>
+    <span class="small">PDF, XPS, EPUB, PNG, JPEG, TIFF, WebP · up to {{ request.app.state.settings.max_upload_mb }} MB</span>
   </label>
 </section>
 
 <section class="status-row">
-  <a class="card stat" href="/documents"><div class="v">{{ total_docs }}</div><div class="k">documents in library</div></a>
-  <a class="card stat" href="/providers">
-    <div class="v {{ 'good' if configured else 'warn' }}">{{ configured|length }} / {{ providers|length }}</div>
-    <div class="k">LLM providers configured</div>
+  <a class="card stat" href="/documents">
+    <span class="stat-icon">{{ icon('file') }}</span>
+    <div><div class="v">{{ total_docs }}</div><div class="k">document{{ 's' if total_docs != 1 }} in library</div></div>
   </a>
   <a class="card stat" href="/providers">
-    <div class="v {{ 'good' if tesseract else 'bad' }}">{{ 'ready' if tesseract else 'missing' }}</div>
-    <div class="k">Tesseract OCR</div>
+    <span class="stat-icon">{{ icon('sparkles') }}</span>
+    <div><div class="v {{ 'good' if configured else 'warn' }}">{{ configured|length }} / {{ providers|length }}</div>
+    <div class="k">LLM providers configured</div></div>
+  </a>
+  <a class="card stat" href="/providers">
+    <span class="stat-icon">{{ icon('cpu') }}</span>
+    <div><div class="v {{ 'good' if tesseract else 'bad' }}">{{ 'Ready' if tesseract else 'Missing' }}</div>
+    <div class="k">Tesseract OCR</div></div>
   </a>
 </section>
 {% if not configured %}
-<div class="callout warn">No LLM provider is configured yet. Native text and OCR work right away; to compare
-  against an LLM, add an API key. See <a href="/providers">Providers</a>.</div>
+<div class="callout warn">{{ icon('info') }}<div>No LLM provider is configured yet. Native text and OCR work right away;
+  to compare against an LLM, <a href="/providers">add an API key</a>.</div></div>
 {% endif %}
 
 <section>
   <h2>How it works</h2>
   <ol class="steps">
-    <li><b>Upload</b><span>Any PDF or image. Pages without a real text layer are flagged as <i>scans</i>.</span></li>
-    <li><b>Extract</b><span>Run Tesseract or an LLM on one page, a page range or the whole document. Results are cached.</span></li>
-    <li><b>Inspect &amp; compare</b><span>Page image next to each text, word-level diffs, character/word error rates, search with highlights.</span></li>
-    <li><b>Export</b><span>Whole-document text as TXT, Markdown, JSON or JSONL (one page per line for RAG / ingestion).</span></li>
+    <li><b>Upload</b><span>Any PDF or image. Pages without a real text layer are flagged as scans.</span></li>
+    <li><b>Extract</b><span>Run Tesseract or an LLM on a page, a range or the whole document.</span></li>
+    <li><b>Inspect &amp; compare</b><span>Page image next to each text, word-level diffs and error rates.</span></li>
+    <li><b>Export</b><span>TXT, Markdown, JSON or JSONL, ready for RAG and ingestion.</span></li>
   </ol>
 </section>
 
 <section>
-  <div class="section-head"><h2>Recent documents</h2><a href="/documents">View all →</a></div>
+  <div class="section-head"><h2>Recent documents</h2>{% if recent %}<a href="/documents" class="small">View all →</a>{% endif %}</div>
   {% if recent %}
   <div class="doc-cards">
     {% for d in recent %}
@@ -62,7 +67,7 @@
     {% endfor %}
   </div>
   {% else %}
-  <p class="muted">Nothing uploaded yet. Drop a file above to get started.</p>
+  <p class="muted small">Nothing uploaded yet. Drop a file above to get started.</p>
   {% endif %}
 </section>
 {% endblock %}

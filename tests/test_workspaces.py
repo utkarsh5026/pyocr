@@ -176,6 +176,7 @@ def test_workspace_pages(client, doc_id):  # noqa: F811
         (f"/documents/{doc_id}", "festive-albattani"),  # breadcrumb
         ("/", "festive-albattani"),
         ("/", 'id="upload-dialog"'),
+        ("/help", 'id="workspaces"'),
     ]:
         r = client.get(url)
         assert r.status_code == 200 and needle in r.text, url

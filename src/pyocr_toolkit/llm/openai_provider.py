@@ -83,6 +83,12 @@ class _OpenAIChatBase(Provider):
 class OpenAIProvider(_OpenAIChatBase):
     id = "openai"
     label = "OpenAI"
+    docs_url = "https://platform.openai.com/api-keys"
+    env_vars = [
+        ("OPENAI_API_KEY", True, "API key from platform.openai.com"),
+        ("OPENAI_MODEL", False, "default model, e.g. gpt-5"),
+        ("OPENAI_BASE_URL", False, "only for proxies / gateways"),
+    ]
     suggested_models = ["gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4o"]
 
     @property
@@ -104,6 +110,13 @@ class AzureOpenAIProvider(_OpenAIChatBase):
     id = "azure_openai"
     label = "Azure OpenAI"
     model_hint = "Azure deployment name"
+    docs_url = "https://learn.microsoft.com/azure/ai-services/openai/"
+    env_vars = [
+        ("AZURE_OPENAI_API_KEY", True, "key of your Azure OpenAI resource"),
+        ("AZURE_OPENAI_ENDPOINT", True, "https://<resource>.openai.azure.com"),
+        ("AZURE_OPENAI_DEPLOYMENT", False, "name of a vision-capable deployment (gpt-4o, gpt-4.1, gpt-5 ...)"),
+        ("AZURE_OPENAI_API_VERSION", False, "default 2024-10-21"),
+    ]
 
     @property
     def default_model(self) -> str | None:
@@ -132,7 +145,13 @@ class AzureOpenAIProvider(_OpenAIChatBase):
 
 class OpenAICompatibleProvider(_OpenAIChatBase):
     id = "openai_compatible"
-    label = "OpenAI-compatible (Ollama / vLLM / OpenRouter / LM Studio)"
+    label = "OpenAI-compatible (Ollama, vLLM, ...)"
+    docs_url = "https://github.com/ollama/ollama/blob/main/docs/openai.md"
+    env_vars = [
+        ("OPENAI_COMPATIBLE_BASE_URL", True, "e.g. http://localhost:11434/v1 for Ollama"),
+        ("OPENAI_COMPATIBLE_MODEL", False, "a vision model, e.g. qwen2.5vl:7b or llama3.2-vision"),
+        ("OPENAI_COMPATIBLE_API_KEY", False, "only if the server needs one (OpenRouter does)"),
+    ]
     token_param = "max_tokens"
 
     @property

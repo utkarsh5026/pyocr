@@ -3,9 +3,9 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from pyocr.api import create_app
-from pyocr.config import Settings
-from pyocr.llm.base import Provider, TranscriptionRequest, TranscriptionResult
+from pyocr_toolkit.api import create_app
+from pyocr_toolkit.config import Settings
+from pyocr_toolkit.llm.base import Provider, TranscriptionRequest, TranscriptionResult
 
 from .conftest import HAS_TESSERACT, TEXT_PAGE
 

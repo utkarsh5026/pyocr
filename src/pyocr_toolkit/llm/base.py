@@ -46,6 +46,26 @@ class Provider(abc.ABC):
     suggested_models: list[str] = []
     #: what the "model" field means for this provider
     model_hint: str = "Model name"
+    #: (ENV_VAR, required, description) - shown on the Providers page
+    env_vars: list[tuple[str, bool, str]] = []
+    #: where to get credentials
+    docs_url: str = ""
+
+    def env_status(self) -> list[dict]:
+        """Which settings are set (never the values themselves)."""
+        settings = getattr(self, "settings", None)
+        fields = type(settings).model_fields if settings is not None else {}
+        out = []
+        for name, required, desc in self.env_vars:
+            attr = name.lower()
+            value = getattr(settings, attr, None)
+            default = fields[attr].default if attr in fields else None
+            # "default" = not set by the user but a built-in default applies
+            state = "missing" if not value else "default" if value == default else "set"
+            out.append({"name": name, "required": required, "description": desc,
+                        "set": state == "set", "state": state,
+                        "default": default if isinstance(default, (str, int, float)) else None})
+        return out
 
     @property
     @abc.abstractmethod
@@ -83,4 +103,6 @@ class Provider(abc.ABC):
             "default_model": self.default_model,
             "suggested_models": self.suggested_models,
             "model_hint": self.model_hint,
+            "env": self.env_status(),
+            "docs_url": self.docs_url,
         }

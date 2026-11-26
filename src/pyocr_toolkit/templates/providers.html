@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Providers{% endblock %}
+{% block content %}
+<h1>Providers &amp; setup</h1>
+<p class="lead small">Credentials are read from environment variables (or a <code>.env</code> file in the directory you
+  start <code>pyocr serve</code> from). They stay on the server; this page only shows whether each one is set.
+  Restart the server after changing them.</p>
+
+<section class="card">
+  <div class="section-head"><h2>Tesseract OCR</h2>
+    <span class="badge {{ 'ok' if tesseract else 'scan' }}">{{ 'installed' if tesseract else 'not installed' }}</span></div>
+  {% if tesseract %}
+  <p class="small">{{ tesseract_version }} at <code>{{ tesseract }}</code>. Using language
+    <code>{{ settings.tesseract_language }}</code> at {{ settings.ocr_dpi }} DPI.
+    Installed languages: {% for l in tesseract_langs %}<code>{{ l }}</code> {% endfor %}</p>
+  <p class="small">Set <code>TESSERACT_LANGUAGE=eng+deu</code> (for example) to OCR multi-language documents.</p>
+  {% else %}
+  <p>Install it to enable the OCR tab:</p>
+  <pre class="code">sudo apt-get install tesseract-ocr tesseract-ocr-eng   # Debian / Ubuntu
+brew install tesseract                                  # macOS
+choco install tesseract                                 # Windows (or the UB Mannheim installer)</pre>
+  <p class="small">Or run the Docker image, which already includes it.</p>
+  {% endif %}
+</section>
+
+<h2>LLM providers</h2>
+<div class="provider-grid">
+{% for p in providers %}
+<section class="card provider" data-provider-id="{{ p.id }}">
+  <div class="section-head">
+    <h3>{{ p.label }}</h3>
+    <span class="badge {{ 'ok' if p.configured else 'scan' }}">{{ 'ready' if p.configured else 'not configured' }}</span>
+  </div>
+  <table class="table compact env">
+    {% for e in p.env_status() %}
+    <tr>
+      <td><code>{{ e.name }}</code>{% if e.required %} <span class="small muted">required</span>{% endif %}</td>
+      <td class="nowrap">{% if e.state == 'set' %}<span class="good">✓ set</span>{% elif e.state == 'default' %}<span class="muted" title="not set; using the built-in default">default: {{ e.default }}</span>{% else %}<span class="{{ 'bad' if e.required else 'muted' }}">{{ 'missing' if e.required else '–' }}</span>{% endif %}</td>
+      <td class="small">{{ e.description }}</td>
+    </tr>
+    {% endfor %}
+  </table>
+  <div class="row">
+    <input data-test-model value="{{ p.default_model or '' }}" placeholder="{{ p.model_hint }}" class="grow">
+    <button class="btn small" data-test {{ 'disabled' if not p.configured }}>Test connection</button>
+    {% if p.docs_url %}<a class="small" href="{{ p.docs_url }}" target="_blank" rel="noopener">get credentials ↗</a>{% endif %}
+  </div>
+  <div class="small" data-test-result></div>
+</section>
+{% endfor %}
+</div>
+
+<section class="card">
+  <h2>Rendering settings in effect</h2>
+  <table class="table compact">
+    <tr><td><code>DATA_DIR</code></td><td>{{ settings.data_dir }}</td><td class="small">where uploads and results are stored</td></tr>
+    <tr><td><code>PREVIEW_DPI</code></td><td>{{ settings.preview_dpi }}</td><td class="small">page images in the browser</td></tr>
+    <tr><td><code>LLM_DPI</code> / <code>LLM_MAX_EDGE_PX</code></td><td>{{ settings.llm_dpi }} / {{ settings.llm_max_edge_px }}</td><td class="small">image sent to the LLM</td></tr>
+    <tr><td><code>OCR_DPI</code></td><td>{{ settings.ocr_dpi }}</td><td class="small">image given to Tesseract</td></tr>
+    <tr><td><code>LLM_CONCURRENCY</code></td><td>{{ settings.llm_concurrency }}</td><td class="small">parallel LLM calls</td></tr>
+    <tr><td><code>MAX_UPLOAD_MB</code></td><td>{{ settings.max_upload_mb }}</td><td class="small">upload limit</td></tr>
+  </table>
+  <p class="small">A ready-to-edit template of every setting is in <code>.env.example</code>; run
+    <code>pyocr init</code> to copy it into the current directory.</p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/providers.js?v={{ version }}"></script>{% endblock %}

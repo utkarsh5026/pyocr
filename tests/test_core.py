@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import pytest
 
-from pyocr import compare, search
-from pyocr.documents import DocumentError, DocumentStore, Word
-from pyocr.llm.anthropic_provider import _supports_effort
+from pyocr_toolkit import compare, search
+from pyocr_toolkit.documents import DocumentError, DocumentStore, Word
+from pyocr_toolkit.llm.anthropic_provider import _supports_effort
 
 from .conftest import HAS_TESSERACT
 

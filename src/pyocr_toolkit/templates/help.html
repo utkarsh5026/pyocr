@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Help{% endblock %}
+{% block content %}
+<div class="help">
+<nav class="toc">
+  <b>Contents</b>
+  <a href="#start">Quick start</a>
+  <a href="#tour">Tour of the pages</a>
+  <a href="#engines">The three text sources</a>
+  <a href="#prompts">LLM prompts</a>
+  <a href="#metrics">Comparing: CER &amp; WER</a>
+  <a href="#workflows">Typical workflows</a>
+  <a href="#export">Export &amp; GenAI pipelines</a>
+  <a href="#search">Search</a>
+  <a href="#providers">Setting up providers</a>
+  <a href="#cli">Command line</a>
+  <a href="#api">HTTP API</a>
+  <a href="#data">Data &amp; privacy</a>
+  <a href="#faq">Troubleshooting &amp; FAQ</a>
+  <a href="#keys">Keyboard shortcuts</a>
+</nav>
+
+<article>
+<h1>pyocr toolkit guide</h1>
+<p class="lead">pyocr shows you what text you actually get out of a PDF or image, using three different
+  methods, and how far apart they are. Use it to decide whether OCR is good enough for a document set, to pick an
+  LLM for extraction, or just to get clean text out of a difficult file.</p>
+
+<h2 id="start">Quick start</h2>
+<ol>
+  <li><b>Upload</b> a file with the <i>Upload</i> button (top right) or by dropping it anywhere on a page. You can upload several at once.</li>
+  <li>The file opens on its <b>Overview &amp; extract</b> page. Each page gets a badge; <span class="badge scan">scan</span> means it has no embedded text, so it needs OCR or an LLM.</li>
+  <li>Start an <b>extraction</b>: choose Tesseract or an LLM, a page range (or leave it empty for every page), and click <i>Start extraction</i>. A progress bar follows the job.</li>
+  <li>Open the <b>Page inspector</b> to see one page next to all of its texts, or <b>Full text</b> to read the whole document from one source.</li>
+  <li>Use <b>Compare</b> to measure two sources against each other, then export the text you want.</li>
+</ol>
+
+<h2 id="tour">Tour of the pages</h2>
+<dl class="defs">
+  <dt><a href="/">Home</a></dt><dd>Upload area, setup status and recent documents.</dd>
+  <dt><a href="/documents">Library</a></dt><dd>Every uploaded document, with how much of it has been OCR'd or transcribed.</dd>
+  <dt>Document → Overview &amp; extract</dt><dd>Start background extractions, list every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
+  <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text, Tesseract, LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
+  <dt>Document → Full text</dt><dd>The whole document from one source, page by page, optionally next to the page images. Find-in-text, copy and download.</dd>
+  <dt>Document → Compare</dt><dd>Scores two sources on every page, gives a whole-document error rate, and shows a diff for any page.</dd>
+  <dt><a href="/search">Search</a></dt><dd>Search every document in the library at once.</dd>
+  <dt><a href="/jobs">Jobs</a></dt><dd>All background extractions with their progress, errors and token usage.</dd>
+  <dt><a href="/providers">Providers</a></dt><dd>Which LLMs are configured, which settings are missing, and a <i>Test connection</i> button.</dd>
+</dl>
+
+<h2 id="engines">The three text sources, from first principles</h2>
+<h3>1. Native text: the text the file already contains</h3>
+<p>A PDF page is a list of <b>drawing instructions</b>, for example <i>"use font F at 11 pt, draw glyph 37 at (72, 700)"</i>.
+  When a PDF is exported from Word, LaTeX or a browser, each glyph also carries a mapping back to a Unicode character.
+  PyMuPDF follows those instructions and rebuilds words and lines from where the glyphs sit. This is exact, because
+  nothing is guessed, but it only exists for <i>born-digital</i> files. A scanner only records a picture of the page,
+  so a scanned PDF has no glyphs and no native text. A few PDFs also have broken glyph mappings, so native text can
+  be gibberish even though the page looks fine.</p>
+<h3>2. Tesseract OCR: turning pixels back into characters</h3>
+<p>For a picture, all we have is pixels. pyocr renders the page at <code>OCR_DPI</code> (300 by default; small text
+  needs enough pixels per character) and gives it to <b>Tesseract</b>, an open-source OCR engine. Tesseract finds
+  lines of text, segments them, and recognises characters with a neural network (LSTM). It also reports a box for every
+  word, which is how search can highlight OCR hits on the page. It is fast, free and private, but it reads shapes rather
+  than meaning. Tables, multi-column layouts, stamps, low-contrast or skewed scans and handwriting are its weak spots.</p>
+<h3>3. LLM transcription: a vision model reading the page</h3>
+<p>The page is rendered to an image (<code>LLM_DPI</code>, with the longest side capped at <code>LLM_MAX_EDGE_PX</code>)
+  and sent to a multimodal LLM with instructions to act as a <i>transcription engine</i>, not an assistant. Because it
+  reads whole words and sentences in context, it is usually far more accurate than Tesseract on hard pages, and it
+  understands layout. It can also make mistakes OCR never makes: quietly fixing a typo, normalising a date, skipping a
+  repeated header, or occasionally inventing a plausible word for a smudge. Use the diff view to catch these. It also
+  costs money and sends the page image to the provider.</p>
+
+<h2 id="prompts">LLM prompts</h2>
+<ul>
+  <li><b>Verbatim</b> (default): plain text, line by line, nothing corrected, tables as <code>cell | cell</code>. Use this to judge OCR, because both outputs then have the same shape.</li>
+  <li><b>Markdown</b>: keeps structure (headings, lists, GFM tables). Closest to what you would feed a RAG or LLM pipeline.</li>
+  <li><b>Custom</b>: write your own instructions, for example "extract only the line items as CSV" or "transcribe the handwritten notes only".</li>
+</ul>
+<p>Every provider + model + prompt combination is stored separately, so you can run several and compare them.
+  Results are cached: repeating a request costs nothing unless you click <i>re-run</i>.</p>
+
+<h2 id="metrics">Comparing: CER and WER</h2>
+<p>To find out how wrong a text is, compare it with a text you trust more: the <b>reference</b>. The basic quantity is
+  <b>edit distance</b> (Levenshtein distance): the smallest number of single-item <i>insertions</i>, <i>deletions</i> and
+  <i>substitutions</i> needed to turn the candidate into the reference.</p>
+<pre class="code">reference : the cat sat
+candidate : the bat sat        → 1 substitution (c → b)
+
+CER = character edits / reference characters = 1 / 11 = 9.1 %
+WER = word edits / reference words           = 1 / 3  = 33 %</pre>
+<ul>
+  <li><b>CER</b> (character error rate) is the usual OCR quality figure. As a rough guide, under 2 % is excellent
+    (<span class="good">green</span>), 2–10 % is usable with care (<span class="warn">amber</span>), and over 10 % will
+    hurt downstream extraction (<span class="bad">red</span>).</li>
+  <li><b>WER</b> (word error rate) is harsher, because one wrong letter makes the whole word wrong. It is closer to what
+    matters for search and for exact values such as invoice numbers or amounts.</li>
+  <li>Both can be <b>over 100 %</b> when the candidate contains a lot of extra text.</li>
+  <li>The whole-document CER on the Compare page is <b>micro-averaged</b>: total edits divided by total reference
+    characters. Long pages count more than short ones, which matches how much text is actually affected.</li>
+</ul>
+<p>Before scoring, whitespace is collapsed, because engines break lines differently and that is not a reading error.
+  Ligatures such as <code>ﬁ</code> are normalised to <code>fi</code>, and words hyphenated across a line break are joined.
+  Case and punctuation can optionally be ignored as well.</p>
+<p class="callout"><b>Disagreement is not the same as error.</b> "OCR vs LLM" tells you how much two engines disagree,
+  not which one is right. For real ground truth, use a born-digital PDF: its native text is exact, so comparing OCR and
+  each LLM against it shows how every engine performs on your kind of documents.</p>
+
+<h2 id="workflows">Typical workflows</h2>
+<h3>Is OCR good enough for this batch of scans?</h3>
+<ol><li>Upload a representative document.</li><li>Extract with Tesseract <i>and</i> an LLM (verbatim) on all pages.</li>
+  <li>Compare: reference = LLM, candidate = Tesseract OCR. Check the overall CER and the worst pages.</li>
+  <li>Open the worst pages in the inspector and read the diff. Are the errors in places that matter, such as numbers and names?</li></ol>
+<h3>Which LLM should our pipeline use?</h3>
+<ol><li>Take a born-digital PDF, which has exact native text.</li><li>Run two or three models on the same pages.</li>
+  <li>Compare native text (reference) against each model (candidate). Lower CER means a more faithful model. Also look at
+    the token counts on the Overview page for cost.</li>
+  <li>Compare model A against model B on your real scans to see where they disagree.</li></ol>
+<h3>Just get clean text out of a hard PDF</h3>
+<ol><li>Extract with an LLM using the Markdown prompt.</li><li>Open <i>Full text</i>, check it next to the page images, then download as Markdown or JSONL.</li></ol>
+
+<h2 id="export">Export and GenAI pipelines</h2>
+<p>Every source can be downloaded for the whole document (Overview → <i>Export</i>, or the <i>Download</i> menu in Full text):</p>
+<ul>
+  <li><b>TXT</b>: pages separated by <code>===== Page N =====</code>.</li>
+  <li><b>Markdown</b>: a <code>## Page N</code> heading per page.</li>
+  <li><b>JSON</b>: <code>{document, source, pages: [{page, text, extracted}]}</code>.</li>
+  <li><b>JSONL</b>: one JSON object per page (<code>document_id, filename, page, source, text</code>), ready for chunking, embedding or loading into a vector store.</li>
+</ul>
+<p>Pages that have not been extracted for that source are left empty. An export never starts a paid LLM call.</p>
+
+<h2 id="search">Search</h2>
+<p>Search is case-insensitive, and a phrase matches even when it is split across lines. In the page inspector, hits
+  from the native text are drawn in <span class="hl-native">yellow</span> and Tesseract hits in
+  <span class="hl-ocr">blue</span>, using each word's coordinates. LLM output has no coordinates, so its hits appear as
+  text snippets. OCR and LLM text is only searchable on pages where it has been extracted.</p>
+
+<h2 id="providers">Setting up providers</h2>
+<p>Run <code>pyocr init</code> to create a <code>.env</code> file, fill in the keys you have, and restart
+  <code>pyocr serve</code>. Open <a href="/providers">Providers</a> to check the setup and click <i>Test connection</i>.</p>
+<table class="table compact">
+  <tr><th>Provider</th><th>Minimum settings</th></tr>
+  <tr><td>Claude (Anthropic API)</td><td><code>ANTHROPIC_API_KEY</code></td></tr>
+  <tr><td>OpenAI</td><td><code>OPENAI_API_KEY</code></td></tr>
+  <tr><td>Azure OpenAI</td><td><code>AZURE_OPENAI_API_KEY</code>, <code>AZURE_OPENAI_ENDPOINT</code>, <code>AZURE_OPENAI_DEPLOYMENT</code></td></tr>
+  <tr><td>Claude on Azure (Foundry)</td><td><code>ANTHROPIC_FOUNDRY_API_KEY</code>, <code>ANTHROPIC_FOUNDRY_RESOURCE</code></td></tr>
+  <tr><td>Google Gemini</td><td><code>GEMINI_API_KEY</code></td></tr>
+  <tr><td>Ollama / vLLM / LM Studio / OpenRouter</td><td><code>OPENAI_COMPATIBLE_BASE_URL</code>, <code>OPENAI_COMPATIBLE_MODEL</code></td></tr>
+</table>
+<p>You can type any model or deployment name in the model box. The suggestions are only hints. The model must accept
+  images: for local models, use a vision model such as <code>qwen2.5vl</code> or <code>llama3.2-vision</code>.</p>
+
+<h2 id="cli">Command line</h2>
+<pre class="code">pyocr serve [--host 0.0.0.0] [--port 8000] [--open]   # start this web app
+pyocr init                                            # write a .env template here
+pyocr doctor                                          # check Tesseract, providers, data dir
+pyocr providers                                       # list providers and their status
+pyocr extract FILE --engine llm -p anthropic --pages 1-5 --format jsonl -o out.jsonl
+pyocr extract FILE --engine ocr                       # Tesseract, all pages, text to stdout
+pyocr extract FILE --engine native --format md        # embedded text layer only
+pyocr compare FILE -p openai -m gpt-5                 # per-page OCR/native error rate vs an LLM</pre>
+<p>Documents processed from the command line also appear in the Library, so you can inspect them in the browser afterwards.</p>
+
+<h2 id="api">HTTP API</h2>
+<p>Everything this UI does goes through a JSON API. Interactive documentation is at <a href="/docs">/docs</a>.
+  The most useful endpoints:</p>
+<pre class="code">POST /api/documents                              upload (multipart "file")
+POST /api/documents/{id}/jobs                    {"kind":"llm","pages":"1-5","llm":{"provider":"anthropic"}}
+GET  /api/jobs/{job_id}                          progress
+GET  /api/documents/{id}/sources                 what has been extracted
+GET  /api/documents/{id}/export?source=llm&amp;fmt=jsonl
+GET  /api/documents/{id}/compare?a=llm&amp;b=ocr      per-page CER/WER
+POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)</pre>
+
+<h2 id="data">Data and privacy</h2>
+<ul>
+  <li>Everything is stored under <code>DATA_DIR</code> (default <code>./data</code>): the original file, OCR results and LLM results as plain JSON.</li>
+  <li>A page image goes to an LLM provider <b>only</b> when you start a transcription for that page, and only to the provider you chose. Native text and Tesseract never leave your machine.</li>
+  <li>API keys are read on the server and are never sent to the browser.</li>
+  <li>There is no login. Keep it on <code>127.0.0.1</code> (the default) or put it behind your own authentication before sharing it on a network.</li>
+</ul>
+
+<h2 id="faq">Troubleshooting and FAQ</h2>
+<dl class="defs">
+  <dt>“Tesseract OCR is not available”</dt><dd>Install Tesseract (see <a href="/providers">Providers</a>) and restart. For languages other than English, install the matching pack (for example <code>tesseract-ocr-deu</code>) and set <code>TESSERACT_LANGUAGE</code>.</dd>
+  <dt>A provider says “not configured”</dt><dd>The required environment variable is not visible to the server. Put it in <code>.env</code> in the directory where you run <code>pyocr serve</code>, or export it, then restart.</dd>
+  <dt>“authentication failed” / “model not found”</dt><dd>Check the key and the model name. For Azure, the model box needs your <i>deployment</i> name, not the model family.</dd>
+  <dt>“output hit the max token limit”</dt><dd>The page has a lot of text. The transcription is truncated; try the verbatim prompt, which is shorter than Markdown, or a model with a larger output limit.</dd>
+  <dt>The LLM “fixed” words that are misspelled on the page</dt><dd>That is a known LLM habit. The verbatim prompt discourages it, and the diff view makes it visible. If exact characters matter (IDs, legal text), compare against native text or OCR.</dd>
+  <dt>OCR is slow</dt><dd>Tesseract at 300 DPI takes roughly 1–5 s per page. Results are cached, so each page is only OCR'd once. Lowering <code>OCR_DPI</code> to 200 is faster and slightly less accurate.</dd>
+  <dt>Native text has words in the wrong order or odd characters</dt><dd>The PDF's internal structure or font mapping is unusual. This is exactly the kind of problem this tool is for: compare against OCR or an LLM to see the difference.</dd>
+  <dt>Can I use it with a local model and no internet?</dt><dd>Yes. Run Ollama with a vision model and set <code>OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1</code>.</dd>
+</dl>
+
+<h2 id="keys">Keyboard shortcuts (page inspector)</h2>
+<table class="table compact">
+  <tr><td><kbd>←</kbd> / <kbd>→</kbd> or <kbd>k</kbd> / <kbd>j</kbd></td><td>previous / next page</td></tr>
+  <tr><td><kbd>/</kbd></td><td>focus the search box</td></tr>
+  <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>switch tab (native, OCR, LLM, compare)</td></tr>
+  <tr><td><kbd>t</kbd></td><td>transcribe the page with the selected LLM</td></tr>
+  <tr><td><kbd>o</kbd></td><td>run OCR on the page</td></tr>
+</table>
+</article>
+</div>
+{% endblock %}

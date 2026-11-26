@@ -1,14 +1,33 @@
 [project]
-name = "pyocr"
-version = "0.1.0"
-description = "Inspect PDF / image text extraction: native text layer vs Tesseract OCR vs LLM transcription, side by side."
+name = "pyocr-toolkit"
+version = "0.2.0"
+description = "Inspect and compare PDF/image text extraction - native text, Tesseract OCR and LLMs (Claude, GPT, Gemini, Azure, local) - in your browser."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
+authors = [{ name = "utkarsh5026" }]
+keywords = ["ocr", "pdf", "tesseract", "llm", "document-ai", "text-extraction", "rag", "pymupdf", "claude", "openai"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Text Processing",
+]
 dependencies = [
     "pymupdf>=1.24",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
+    "jinja2>=3.1",
     "python-multipart>=0.0.9",
     "pydantic-settings>=2.2",
     "rapidfuzz>=3.6",
@@ -18,18 +37,35 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "httpx>=0.27"]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://github.com/utkarsh5026/pyocr"
+Issues = "https://github.com/utkarsh5026/pyocr/issues"
 
 [project.scripts]
-pyocr = "pyocr.cli:main"
+pyocr = "pyocr_toolkit.cli:main"
+pyocr-toolkit = "pyocr_toolkit.cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/pyocr"]
+packages = ["src/pyocr_toolkit"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "README.md", "LICENSE", "CHANGELOG.md", "CONTRIBUTING.md", ".env.example"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E702", "B008", "B905"]

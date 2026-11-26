@@ -14,10 +14,10 @@ import httpx2
 import openai
 import pytest
 
-from pyocr.config import Settings
-from pyocr.llm import ProviderError, TranscriptionRequest
-from pyocr.llm.anthropic_provider import AnthropicProvider
-from pyocr.llm.openai_provider import AzureOpenAIProvider, OpenAIProvider
+from pyocr_toolkit.config import Settings
+from pyocr_toolkit.llm import ProviderError, TranscriptionRequest
+from pyocr_toolkit.llm.anthropic_provider import AnthropicProvider
+from pyocr_toolkit.llm.openai_provider import AzureOpenAIProvider, OpenAIProvider
 
 REQ = TranscriptionRequest(image=b"\x89PNGfake", mime_type="image/png", system_prompt="SYS",
                            user_prompt="Transcribe this page.")

@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<section class="hero">
+  <div>
+    <h1>See exactly what your text extraction produces.</h1>
+    <p class="lead">Upload a PDF or image, then put its <b>embedded text</b>, <b>Tesseract OCR</b> and
+      <b>LLM transcriptions</b> (Claude, GPT, Gemini, Azure, local models) side by side. Extract page by page or
+      the whole document, measure how far apart they are, and export clean text for your GenAI pipeline.</p>
+  </div>
+  <label class="dropzone" id="home-drop">
+    <input class="upload-input" type="file" hidden multiple
+           accept=".pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
+    <div class="dz-icon">⬆</div>
+    <b>Drop files here or click to upload</b>
+    <span class="small">PDF, XPS, EPUB, PNG, JPEG, TIFF, WebP … up to {{ request.app.state.settings.max_upload_mb }} MB</span>
+  </label>
+</section>
+
+<section class="status-row">
+  <a class="card stat" href="/documents"><div class="v">{{ total_docs }}</div><div class="k">documents in library</div></a>
+  <a class="card stat" href="/providers">
+    <div class="v {{ 'good' if configured else 'warn' }}">{{ configured|length }} / {{ providers|length }}</div>
+    <div class="k">LLM providers configured</div>
+  </a>
+  <a class="card stat" href="/providers">
+    <div class="v {{ 'good' if tesseract else 'bad' }}">{{ 'ready' if tesseract else 'missing' }}</div>
+    <div class="k">Tesseract OCR</div>
+  </a>
+</section>
+{% if not configured %}
+<div class="callout warn">No LLM provider is configured yet. Native text and OCR work right away; to compare
+  against an LLM, add an API key. See <a href="/providers">Providers</a>.</div>
+{% endif %}
+
+<section>
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li><b>Upload</b><span>Any PDF or image. Pages without a real text layer are flagged as <i>scans</i>.</span></li>
+    <li><b>Extract</b><span>Run Tesseract or an LLM on one page, a page range or the whole document. Results are cached.</span></li>
+    <li><b>Inspect &amp; compare</b><span>Page image next to each text, word-level diffs, character/word error rates, search with highlights.</span></li>
+    <li><b>Export</b><span>Whole-document text as TXT, Markdown, JSON or JSONL (one page per line for RAG / ingestion).</span></li>
+  </ol>
+</section>
+
+<section>
+  <div class="section-head"><h2>Recent documents</h2><a href="/documents">View all →</a></div>
+  {% if recent %}
+  <div class="doc-cards">
+    {% for d in recent %}
+    <a class="card doc-card" href="/documents/{{ d.id }}">
+      <img loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=40" alt="">
+      <div>
+        <b title="{{ d.filename }}">{{ d.filename }}</b>
+        <div class="small">{{ d.page_count }} page{{ 's' if d.page_count != 1 }} · {{ d.created_at|datetime }}</div>
+        <div class="badges">
+          <span class="badge {{ 'ok' if d.ocr_pages == d.page_count }}">OCR {{ d.ocr_pages }}/{{ d.page_count }}</span>
+          <span class="badge {{ 'ok' if d.llm_pages == d.page_count }}">LLM {{ d.llm_pages }}/{{ d.page_count }}</span>
+        </div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">Nothing uploaded yet. Drop a file above to get started.</p>
+  {% endif %}
+</section>
+{% endblock %}

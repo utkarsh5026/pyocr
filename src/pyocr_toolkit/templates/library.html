@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Library{% endblock %}
+{% block content %}
+<div class="section-head">
+  <h1>Library</h1>
+  <input type="search" id="lib-filter" placeholder="Filter by file name…">
+</div>
+{% if docs %}
+<table class="table" id="lib-table">
+  <thead><tr><th></th><th>File</th><th>Pages</th><th>Size</th><th>OCR</th><th>LLM</th><th>Uploaded</th><th></th></tr></thead>
+  <tbody>
+  {% for d in docs %}
+  <tr data-name="{{ d.filename|lower }}">
+    <td><img class="thumb" loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=36" alt=""></td>
+    <td><a href="/documents/{{ d.id }}"><b>{{ d.filename }}</b></a><div class="small">{{ d.filetype|upper }}</div></td>
+    <td>{{ d.page_count }}</td>
+    <td>{{ d.size_bytes|filesize }}</td>
+    <td><progress max="{{ d.page_count }}" value="{{ d.ocr_pages }}"></progress> <span class="small">{{ d.ocr_pages }}/{{ d.page_count }}</span></td>
+    <td><progress max="{{ d.page_count }}" value="{{ d.llm_pages }}"></progress> <span class="small">{{ d.llm_pages }}/{{ d.page_count }}</span></td>
+    <td class="small">{{ d.created_at|datetime }}</td>
+    <td class="actions">
+      <a class="btn small" href="/documents/{{ d.id }}/pages/1">Inspect</a>
+      <a class="btn small" href="/documents/{{ d.id }}/text">Text</a>
+      <a class="btn small" href="/documents/{{ d.id }}/compare">Compare</a>
+      <button class="btn small ghost danger" data-delete="{{ d.id }}" data-name="{{ d.filename }}">Delete</button>
+    </td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<div class="empty"><h2>No documents yet</h2><p>Use <b>Upload</b> (top right) or drop files anywhere on this page.</p></div>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/library.js?v={{ version }}"></script>{% endblock %}

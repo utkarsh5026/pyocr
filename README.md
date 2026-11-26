@@ -1,194 +1,158 @@
-# pyocr: OCR inspector
+# pyocr-toolkit
 
-Upload a PDF or an image and check how well its text gets extracted. For each page you can see three
-versions of the text next to the page image:
+**See exactly what text you get out of a PDF or image, and compare how different extraction methods read it.**
 
-| Source | What it is | When it is right |
-|---|---|---|
-| **Native text** | The text the PDF already contains (PyMuPDF `page.get_text()`) | Born-digital PDFs (exported from Word, LaTeX, ...). Scanned pages have none. |
-| **Tesseract OCR** | Tesseract run on the rendered page image (`page.get_textpage_ocr`) | The classic OCR baseline. Weak on low-quality scans, tables and handwriting. |
-| **LLM transcription** | A vision LLM (Claude, GPT, Gemini, ...) asked to copy the page **verbatim** | Usually the most accurate reading of the page, but costs money and can occasionally "fix" text it shouldn't. |
+Many GenAI workflows start with "get the text out of this PDF". pyocr-toolkit is a local web app (plus CLI)
+for checking that step. Upload a document and you get three versions of every page:
 
-You can then **compare** any two of them (character and word error rate plus a word-level diff), **search**
-the whole document (matches are highlighted on the page image), and run OCR or an LLM over **every page** to
-get a per-page report showing which pages the OCR struggles on.
+| Source | What it is | Good at | Weak at |
+|---|---|---|---|
+| **Native text** | Text already embedded in the file (PyMuPDF) | Born-digital PDFs. Exact and instant. | Scans have none. Broken font maps produce gibberish. |
+| **Tesseract OCR** | Classic OCR on the rendered page image | Free, local, fast, gives word positions | Tables, columns, poor scans, handwriting |
+| **LLM transcription** | A vision LLM told to copy the page *verbatim* | Hard pages, layout, context | Costs money. May quietly "fix" or skip text. |
 
-Supported inputs are anything PyMuPDF opens: PDF, XPS, EPUB, CBZ, MOBI, FB2, SVG, and raster images (PNG, JPEG,
-TIFF including multi-page, BMP, GIF, WebP, ...).
+You can then extract **page by page or the whole document**, **compare** any two sources (character and word error
+rate, word-level diffs, a per-page chart), **search** across everything, and **export** clean text (TXT, Markdown,
+JSON, JSONL) for your pipeline.
 
-Supported LLM providers:
+**LLM providers:** Claude (Anthropic API), OpenAI, Azure OpenAI, Claude on Azure (Microsoft Foundry), Google
+Gemini, and any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter) for local or private models.
 
-| Provider id | Service | Settings |
-|---|---|---|
-| `anthropic` | Claude via the Anthropic API | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (default `claude-opus-5-5`) |
-| `openai` | OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL` (default `gpt-5`) |
-| `azure_openai` | Azure OpenAI | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` |
-| `azure_claude` | Claude on Microsoft Foundry (Azure) | `ANTHROPIC_FOUNDRY_API_KEY`, `ANTHROPIC_FOUNDRY_RESOURCE` |
-| `gemini` | Google Gemini | `GEMINI_API_KEY`, `GEMINI_MODEL` |
-| `openai_compatible` | Ollama, vLLM, LM Studio, OpenRouter, ... | `OPENAI_COMPATIBLE_BASE_URL`, `OPENAI_COMPATIBLE_MODEL` |
+**Inputs:** PDF, XPS, EPUB, CBZ, MOBI, FB2, SVG, PNG, JPEG, TIFF (multi-page), BMP, GIF, WebP and anything else
+[PyMuPDF](https://pymupdf.readthedocs.io/) opens.
 
-The model can also be changed per request in the UI. Whatever you type there is sent as-is; for Azure, it is
-the deployment name.
+---
 
-## Quick start
+## Install
+
+You need **Python 3.10+**. **Tesseract** is optional but recommended (it enables the OCR source).
 
 ```bash
-# 1. system dependency for the OCR tab (optional; the rest works without it)
-sudo apt-get install tesseract-ocr tesseract-ocr-eng     # macOS: brew install tesseract
-
-# 2. install
-python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
-
-# 3. configure the providers you have keys for
-cp .env.example .env    # then edit .env
-
-# 4. run
-pyocr serve             # http://127.0.0.1:8000  (use --host 0.0.0.0 to share on your network)
+# Tesseract (optional)
+sudo apt-get install tesseract-ocr tesseract-ocr-eng   # Debian / Ubuntu
+brew install tesseract                                  # macOS
+choco install tesseract                                 # Windows (or the UB Mannheim installer)
 ```
 
-Command-line use without the UI:
+**Option A: pipx** (recommended, installs it as an isolated command):
 
 ```bash
-pyocr providers                                    # which providers are configured
-pyocr transcribe scan.pdf -p anthropic --pages 1-3 # print LLM transcriptions
-pyocr compare scan.pdf -p openai -m gpt-5          # per-page OCR/native error rate vs the LLM
+pipx install git+https://github.com/utkarsh5026/pyocr
 ```
 
-## Using the UI
+**Option B: pip** in a virtual environment:
 
-1. **Upload**: use the button, or drag a file onto the window. Earlier uploads appear in the drop-down.
-2. **Page list** (left): thumbnails with badges. `scan` means the page has no real text layer, so a plain
-   text extractor would get nothing from it. `OCR` and `LLM` show what has already been run.
-3. **Tabs** (right):
-   * *Native text*: what a non-OCR pipeline sees.
-   * *Tesseract OCR*: click **Run OCR**. Results are cached on disk.
-   * *LLM*: choose provider, model and prompt in the top bar, then click **Transcribe page**. Results are
-     cached per (provider, model, prompt), so reopening a page costs nothing. Use **re-run** to call the
-     model again.
-   * *Compare*: pick a reference and a candidate. The usual setup is LLM as the reference and OCR as the
-     candidate.
-4. **Search** (`/` focuses it): searches native text, cached OCR and stored LLM transcriptions. Native and OCR
-   hits are drawn on the page (yellow = native, blue = OCR). LLM hits show as snippets, because an LLM returns
-   plain text with no coordinates.
-5. **OCR all pages / LLM all pages**: batch runs with a progress bar. **Report** shows a per-page table of
-   error rates and lets you export each source as `.txt` or `.json`.
-
-Keyboard: `←`/`→` (or `j`/`k`) change page, `/` searches.
-
-## How it works
-
-### 1. Where text in a PDF comes from
-
-A PDF page does not store "text" the way a `.txt` file does. It stores **drawing instructions**: "use font F
-at size 12, place glyph #37 at (72, 700), then glyph #81 ...". When a PDF is exported from Word, each glyph is
-also mapped back to a Unicode character, so `page.get_text()` can rebuild words and lines from glyph positions.
-That is the **native text layer**. It is exact, because nothing is guessed, but only if:
-
-* the page was born digital. A scanner only produces a *picture* of the page, so there are no glyphs.
-* the font's glyph-to-Unicode map is correct. Some PDFs map glyphs to garbage, which is why native text can be
-  wrong even when it looks fine on screen.
-
-The `looks_scanned` badge marks pages that have no text layer, or almost none, but do contain images.
-
-### 2. OCR: turning pixels back into characters
-
-For a scan, the only thing we have is pixels. PyMuPDF renders the page to a bitmap at `OCR_DPI` (300 by
-default; small text needs enough pixels per character) and gives it to **Tesseract**. Tesseract finds lines,
-segments them into characters, and classifies each one with an LSTM network. It returns words with bounding
-boxes, which is how search can highlight OCR hits on the page. It is fast and free, but it reads shape by
-shape and has little sense of layout or meaning. Tables, stamps, skewed or low-contrast scans and handwriting
-are where it fails.
-
-### 3. LLM transcription
-
-A vision LLM gets the same kind of page image (rendered at `LLM_DPI`, and downscaled so the longest edge is
-at most `LLM_MAX_EDGE_PX`, because the providers downscale large images themselves and a bigger upload just
-costs time). It also gets a system prompt that tells it to act as a transcription engine rather than an
-assistant. See [`src/pyocr/llm/prompts.py`](src/pyocr/llm/prompts.py):
-
-* **verbatim**: plain text, line by line, no spelling fixes, tables as `cell | cell`. Use this mode to judge
-  OCR, because both outputs then have the same shape.
-* **markdown**: keeps structure (headings, GFM tables). Use it to see what an LLM pipeline downstream would
-  receive.
-* **custom**: your own prompt, for example "extract only the line items".
-
-Because the model reads whole words and sentences in context, it is usually much more accurate than Tesseract
-on hard pages. It can also make errors OCR never makes: silently "correcting" a typo, normalising a date,
-skipping a repeated header. Use the diff view to spot these.
-
-Claude-specific details (in [`anthropic_provider.py`](src/pyocr/llm/anthropic_provider.py)): requests are
-streamed so long pages don't hit HTTP timeouts. `ANTHROPIC_EFFORT` sets how much the model reasons before
-answering. For recent first-party models the request enables the **server-side refusal fallback**: if a
-safety classifier declines a page, the API re-runs it on a fallback model instead of returning nothing. The
-UI shows a warning when that happens.
-
-### 4. Measuring agreement: CER and WER
-
-To check whether OCR read a page correctly, compare its output with a trusted transcription. The standard
-measure is **edit distance** (Levenshtein): the minimum number of single-character insertions, deletions
-and substitutions that turn one string into the other.
-
-```
-reference : "the cat sat"
-candidate : "the bat sat"      -> 1 substitution
-CER = edits / reference length = 1 / 11 = 9.1 %
-WER = word edits / reference words = 1 / 3 = 33 %
+```bash
+python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
+pip install git+https://github.com/utkarsh5026/pyocr
 ```
 
-* **CER** (character error rate) is what OCR quality is usually quoted in. Below about 2 % is very good, and
-  above about 10 % will hurt downstream extraction (green/amber/red in the UI).
-* **WER** is harsher: one wrong letter makes the whole word wrong. It is closer to what matters for search and
-  for exact values like invoice numbers.
+> The PyPI name is `pyocr-toolkit` (plain `pyocr` is a different, unrelated library). Once it's published to
+> PyPI, `pipx install pyocr-toolkit` will also work.
 
-Whitespace is collapsed before scoring, because OCR engines and LLMs break lines differently and that is not a
-reading error. Ligatures (`ﬁ` → `fi`) are normalised and end-of-line hyphenation is joined. Case and
-punctuation can be ignored with the checkboxes. The diff is computed on words, aligned with the same edit
-distance, and shown as missing (red), extra (green) or replaced words.
+**Option C: Docker** (Tesseract and several language packs included):
 
-Note that "LLM vs OCR" measures **disagreement**, not ground truth. If you have a born-digital PDF, its native
-text is real ground truth: compare OCR and the LLM against it to see how each engine performs on your kind of
-documents.
-
-## Storage and privacy
-
-Everything is stored under `DATA_DIR` (default `./data`, which git ignores):
-
-```
-data/documents/<id>/source.pdf        the original upload
-data/documents/<id>/ocr/<page>.json   Tesseract output + word boxes
-data/documents/<id>/llm/<page>/*.json LLM transcriptions (text, model, tokens, latency)
+```bash
+git clone https://github.com/utkarsh5026/pyocr && cd pyocr
+cp .env.example .env            # add your keys
+docker compose up -d            # → http://localhost:8000
 ```
 
-Page images are sent **only** to the LLM provider you choose, and only when you click transcribe. API keys are
-read from the server environment and never sent to the browser. There is no authentication, so run it locally
-or behind your own auth proxy.
+## Run
 
-## HTTP API
+```bash
+pyocr init          # writes a .env template in the current folder: add the API keys you have
+pyocr doctor        # checks Tesseract, providers and the data folder
+pyocr serve --open  # starts the app on http://127.0.0.1:8000 and opens your browser
+```
 
-The UI is a thin client over a JSON API (interactive docs at `/docs`):
+Everything you upload and extract is stored in `./data` (change it with `DATA_DIR`). The in-app **Help** page
+(`/help`) covers every feature in detail.
 
-| Method | Path | Purpose |
+## The web app
+
+| Page | What you do there |
+|---|---|
+| **Home** `/` | Drop files to upload; see setup status and recent documents. |
+| **Library** `/documents` | All documents, with how much has been OCR'd / transcribed. Filter and delete. |
+| **Overview & extract** `/documents/{id}` | Start background extraction (Tesseract or any LLM) for all pages or a range such as `1-5,9`; follow progress; see every *source* (engine + model + prompt) with token usage; export; page thumbnails. |
+| **Page inspector** `/documents/{id}/pages/{n}` | Page image next to native, OCR and LLM text; run OCR or an LLM on just this page; per-page diff; search hits drawn on the image. Keyboard: `←/→`, `/`, `1-4`, `t`, `o`. |
+| **Full text** `/documents/{id}/text` | Read the whole document from one source, optionally beside the page images; find, copy, download. |
+| **Compare** `/documents/{id}/compare` | Score source B against source A on every page: document-level CER/WER, CER per page chart, worst pages, word diff for any page. Works for OCR vs LLM, native vs LLM, or **model vs model**. |
+| **Search** `/search` | Search all documents at once. |
+| **Jobs** `/jobs` | All background extractions, with progress, errors and tokens. |
+| **Providers** `/providers` | Which settings are set or missing, plus a **Test connection** button per provider. |
+| **Help** `/help` | The full guide: concepts, metrics, workflows, troubleshooting. |
+| **API docs** `/docs` | Interactive OpenAPI docs for the JSON API. |
+
+## Configure LLM providers
+
+Set these in `.env` (created by `pyocr init`) or as environment variables, then restart. Keys stay on the server and
+are never sent to the browser.
+
+| Provider | Required | Optional |
 |---|---|---|
-| `POST` | `/api/documents` | upload (multipart `file`) |
-| `GET` | `/api/documents/{id}/pages` | per-page info (size, text chars, scanned?, cached results) |
-| `GET` | `/api/documents/{id}/pages/{n}/image?dpi=` | page PNG |
-| `GET` | `/api/documents/{id}/pages/{n}/text/native` | text layer + word boxes |
-| `GET` | `/api/documents/{id}/pages/{n}/text/ocr?force=` | Tesseract text + word boxes (cached) |
-| `POST` | `/api/documents/{id}/pages/{n}/llm` | `{provider, model, prompt_mode, custom_prompt, force}` |
-| `POST` | `/api/documents/{id}/pages/{n}/compare` | `{reference:{source,key}, hypothesis:{...}}` → metrics + diff |
-| `GET` | `/api/documents/{id}/search?q=&sources=native,ocr,llm` | matches with boxes and snippets |
-| `GET` | `/api/documents/{id}/report` | per-page error rates |
-| `GET` | `/api/documents/{id}/export?source=llm&fmt=txt` | whole-document text |
+| Claude (Anthropic API) | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (default `claude-opus-5-5`), `ANTHROPIC_EFFORT` |
+| OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` (default `gpt-5`), `OPENAI_BASE_URL` |
+| Azure OpenAI | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` | `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION` |
+| Claude on Azure (Foundry) | `ANTHROPIC_FOUNDRY_API_KEY`, `ANTHROPIC_FOUNDRY_RESOURCE` | `ANTHROPIC_FOUNDRY_MODEL` |
+| Google Gemini | `GEMINI_API_KEY` | `GEMINI_MODEL` (default `gemini-2.5-flash`) |
+| Ollama / vLLM / LM Studio / OpenRouter | `OPENAI_COMPATIBLE_BASE_URL` | `OPENAI_COMPATIBLE_MODEL`, `OPENAI_COMPATIBLE_API_KEY` |
 
-Page numbers are 0-based in the API.
+Any model or deployment name can be typed in the UI; the defaults are just starting points. The model must accept
+images. For a fully local setup, run Ollama with a vision model and set
+`OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1`.
+
+## Command line
+
+```bash
+pyocr extract report.pdf --engine llm -p anthropic --pages 1-5 --format jsonl -o report.jsonl
+pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdown to stdout
+pyocr extract born-digital.pdf --engine native              # embedded text only, no network
+pyocr compare scan.pdf -p openai -m gpt-5                   # per-page OCR / native CER vs an LLM
+pyocr providers                                             # which providers are ready
+python -m pyocr_toolkit --help                              # same CLI without the script on PATH
+```
+
+Documents processed on the command line also appear in the web app's library.
+
+## How it works, briefly
+
+1. **Native text.** A PDF page is a list of drawing instructions ("glyph 37 at (72, 700)"). Born-digital files map
+   each glyph back to a character, so the text can be rebuilt exactly. A scan is only a picture, so it has no text.
+2. **OCR.** The page is rendered to pixels (300 DPI) and Tesseract recognises characters from their shapes,
+   reporting a box for each word. That is why search can highlight OCR hits on the page.
+3. **LLM.** The page image goes to a vision model with a strict "transcribe, don't correct" prompt
+   ([`prompts.py`](src/pyocr_toolkit/llm/prompts.py)). It reads in context, so it is strong on hard pages, but it can
+   "fix" typos, which the diff view exposes.
+4. **Comparison.** *Edit distance* is the minimum number of character insertions, deletions and substitutions
+   between two texts. **CER** = edits / reference characters; **WER** is the same count over words. For example,
+   "the cat sat" → "the bat sat" has 1 edit, so CER = 1/11 = 9%. Whitespace is normalised first, because line
+   breaks aren't reading errors. Disagreement between two engines is not proof of error: compare against a
+   born-digital PDF's native text when you need ground truth.
+
+The Help page explains each of these in more depth.
+
+## Privacy and security
+
+- Uploads, OCR output and LLM output are stored as plain files under `DATA_DIR`.
+- A page image is sent to an LLM provider only when you start a transcription, and only to the provider you
+  picked. Native text and Tesseract run entirely locally.
+- **There is no login.** `pyocr serve` listens on `127.0.0.1` by default. If you use `--host 0.0.0.0` or Docker,
+  put it behind your own authentication.
 
 ## Development
 
 ```bash
+git clone https://github.com/utkarsh5026/pyocr && cd pyocr
 pip install -e ".[dev]"
-pytest            # provider tests use mocked HTTP, so no keys or network are needed
+pytest              # LLM providers are tested against mocked HTTP: no keys, no network
+ruff check src tests
+pyocr serve
 ```
 
-To add another provider, subclass `pyocr.llm.base.Provider`, implement `default_model`,
-`missing_settings()` and `_transcribe()`, then register it in `pyocr/llm/__init__.py`.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the code layout and how to add a provider.
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE).

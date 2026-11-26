@@ -31,9 +31,10 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import pymupdf
 
@@ -101,7 +102,7 @@ class TextLayer:
         }
 
     @classmethod
-    def from_json(cls, data: dict[str, Any]) -> "TextLayer":
+    def from_json(cls, data: dict[str, Any]) -> TextLayer:
         words = [Word(*row[:4], text=row[4], block=row[5], line=row[6]) for row in data["words"]]
         return cls(source=data["source"], text=data["text"], words=words, elapsed_ms=data.get("elapsed_ms"))
 

@@ -123,6 +123,12 @@ class _ClaudeBase(Provider):
 class AnthropicProvider(_ClaudeBase):
     id = "anthropic"
     label = "Claude (Anthropic API)"
+    docs_url = "https://console.anthropic.com/settings/keys"
+    env_vars = [
+        ("ANTHROPIC_API_KEY", True, "API key from the Claude Console"),
+        ("ANTHROPIC_MODEL", False, "default model, e.g. claude-opus-5-5"),
+        ("ANTHROPIC_EFFORT", False, "low | medium | high | xhigh | max (default medium)"),
+    ]
 
     @property
     def default_model(self) -> str | None:
@@ -143,6 +149,13 @@ class AnthropicFoundryProvider(_ClaudeBase):
     id = "azure_claude"
     label = "Claude on Azure (Microsoft Foundry)"
     model_hint = "Foundry deployment name of the Claude model"
+    docs_url = "https://learn.microsoft.com/azure/ai-foundry/"
+    env_vars = [
+        ("ANTHROPIC_FOUNDRY_API_KEY", True, "key of your Microsoft Foundry resource"),
+        ("ANTHROPIC_FOUNDRY_RESOURCE", True, "resource name (or set ANTHROPIC_FOUNDRY_BASE_URL)"),
+        ("ANTHROPIC_FOUNDRY_BASE_URL", False, "full endpoint URL, instead of the resource name"),
+        ("ANTHROPIC_FOUNDRY_MODEL", False, "deployment name, e.g. claude-opus-5-5"),
+    ]
     # Server-side fallbacks are a Claude API feature, not available on Foundry.
     supports_server_fallback = False
 

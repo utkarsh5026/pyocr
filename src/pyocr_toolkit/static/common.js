@@ -28,7 +28,33 @@ function toast(msg, isError = false) {
   el.className = isError ? "error" : "";
   el.hidden = false;
   clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 8000 : 3000);
+  _toastTimer = setTimeout(() => {
+    el.classList.add("leaving");  // fade out (styles.css), then hide
+    _toastTimer = setTimeout(() => { el.hidden = true; }, 180);
+  }, isError ? 8000 : 3000);
+}
+
+/** Replay a one-shot CSS animation class (e.g. "reveal") on an element. */
+function replayAnimation(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth;  // force a reflow so removing + re-adding restarts it
+  el.classList.add(cls);
+  el.addEventListener("animationend", () => el.classList.remove(cls), { once: true });
+}
+
+/**
+ * Show that `btn` is working: spinner + label, disabled. Returns a function that
+ * restores the button. Extra elements get `cls` toggled for the same duration
+ * (the workspace uses this for the page scan line and the shimmering text box).
+ */
+function setBusy(btn, label, extras = []) {
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = label; btn.classList.add("is-busy");
+  extras.forEach(([el, cls]) => el?.classList.add(cls));
+  return () => {
+    btn.disabled = false; btn.textContent = prev; btn.classList.remove("is-busy");
+    extras.forEach(([el, cls]) => el?.classList.remove(cls));
+  };
 }
 
 /** Wrap an async handler so errors become toasts instead of silent failures. */
@@ -137,6 +163,66 @@ function wireUploads() {
   });
 }
 
+// ------------------------------------------------------------------ model ratings
+const RATING_CLS = { excellent: "excellent", good: "ok", fair: "fair", unsuitable: "bad", unrated: "" };
+
+/** Badge for a catalog rating (see llm/catalog.py). */
+function ratingBadge(m) {
+  return `<span class="badge ${RATING_CLS[m.rating] || ""}" title="${esc(m.note || "")}">${esc(m.rating_label)}</span>`;
+}
+
+function fmtPrice(m) {
+  if (m.price_in == null) return "";
+  return `$${m.price_in} / $${m.price_out} per 1M tokens`;
+}
+
+const _verdictCache = new Map();
+/** Ask the server how well `name` suits transcription (works for custom names too). */
+function lookupModel(providerId, name) {
+  const key = `${providerId}|${name}`;
+  if (!_verdictCache.has(key)) {
+    const qs = `provider=${encodeURIComponent(providerId)}&name=${encodeURIComponent(name)}`;
+    _verdictCache.set(key, api(`/api/models/lookup?${qs}`).catch(() => null));
+  }
+  return _verdictCache.get(key);
+}
+
+/** One-line HTML verdict for a model name, e.g. under a model input. */
+function verdictHtml(m) {
+  if (!m) return "";
+  const which = m.match && !m.exact ? ` <span class="muted">(looks like <code>${esc(m.match)}</code>)</span>` : "";
+  const status = m.status && m.status !== "current" ? ` <span class="badge">${esc(m.status)}</span>` : "";
+  const custom = m.match ? "" : ' <span class="muted">custom name</span>';
+  const price = fmtPrice(m) ? ` <span class="muted">· ${esc(fmtPrice(m))} ·</span>` : "";
+  return `${ratingBadge(m)}${status}${which}${custom}${price} <span class="muted">${esc(m.note || "")}</span>`;
+}
+
+/** Keep `out` showing the verdict for whatever is typed into `input` (or its placeholder). */
+function bindModelVerdict(input, out, providerId) {
+  let timer;
+  const current = () => input.value.trim() || input.placeholder.trim();
+  const update = () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const name = current();
+      const pid = typeof providerId === "function" ? providerId() : providerId;
+      if (!name || !pid) { out.innerHTML = ""; return; }
+      const m = await lookupModel(pid, name);
+      if (current() === name) out.innerHTML = verdictHtml(m);
+    }, 200);
+  };
+  input.addEventListener("input", update);
+  input.addEventListener("change", update);
+  update();
+  return update;
+}
+
+/** Fill a <datalist> with a provider's model options, labelled with their rating. */
+function fillModelDatalist(datalist, options) {
+  datalist.innerHTML = options.map((m) =>
+    `<option value="${esc(m.name)}" label="${esc(m.rating_label + (m.label ? " · " + m.label : ""))}">`).join("");
+}
+
 // ------------------------------------------------------------------ LLM picker
 /**
  * Turn a `[data-llm-picker]` block into a working provider/model/prompt picker.
@@ -167,15 +253,21 @@ async function initLlmPicker(root) {
     if (logoEl) logoEl.innerHTML = logoHtml(p.brand);
     modelIn.value = localStorage.getItem(`pyocr.model.${p.id}`) || p.default_model || "";
     modelIn.placeholder = p.model_hint;
-    datalist.innerHTML = p.suggested_models.map((m) => `<option value="${esc(m)}">`).join("");
+    fillModelDatalist(datalist, p.model_options || []);
     status.innerHTML = p.configured ? "" :
       `<span class="warn">Not configured: set ${esc(p.missing.join(", "))}. See <a href="/providers">Providers</a>.</span>`;
+    refreshVerdict();
   }
   function syncPrompt() {
     localStorage.setItem("pyocr.prompt", promptSel.value);
     customBox.hidden = promptSel.value !== "custom";
     if (!customBox.hidden) customBox.open = true;
   }
+  // Rating of the chosen model (custom names are fine; they just get a heuristic verdict).
+  const verdict = document.createElement("div");
+  verdict.className = "picker-verdict small";
+  status.before(verdict);
+  const refreshVerdict = bindModelVerdict(modelIn, verdict, () => provSel.value);
   provSel.addEventListener("change", syncProvider);
   promptSel.addEventListener("change", syncPrompt);
   modelIn.addEventListener("change", () => localStorage.setItem(`pyocr.model.${provider().id}`, modelIn.value.trim()));
@@ -210,7 +302,10 @@ function jobHtml(job, docName) {
   const errors = job.errors.length
     ? `<details class="small"><summary class="err">${job.failed} page(s) failed</summary><ul>${job.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></details>` : "";
   const active = job.status === "running" || job.status === "queued";
-  return `<div class="job" data-job="${job.id}">
+  // Polling re-renders this markup; a negative delay tied to the clock keeps the
+  // running animations (styles.css "Motion") in phase instead of restarting.
+  const phase = active ? ` style="--phase:-${(Date.now() % 2800) / 1000}s"` : "";
+  return `<div class="job${active ? " is-active" : ""}" data-job="${job.id}"${phase}>
     <div class="job-head">
       <span class="badge ${statusCls}">${job.status}</span>
       ${logoHtml(job.kind === "ocr" ? ocrEngineInfo(job.engine)?.brand : providerBrand(job.llm?.provider), "sm")}

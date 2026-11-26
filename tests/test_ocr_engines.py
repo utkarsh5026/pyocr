@@ -465,3 +465,39 @@ def test_tesseract_on_two_documents_at_once(tmp_path, sample_pdf, sample_png):
     with ThreadPoolExecutor(4) as pool:
         layers = list(pool.map(lambda job: job[0].ocr_text(job[1], dpi=200, language="eng", force=True), jobs))
     assert all(layer.text.strip() for layer in layers)
+
+
+def test_engine_credentials_saved_from_ui(client):
+    """Cloud OCR keys can be set on the Providers page like LLM keys, and are never echoed back."""
+    secret = "SECRET-gv-789"
+    r = client.post("/api/ocr-engines/google_vision/credentials",
+                    json={"values": {"GOOGLE_VISION_API_KEY": secret, "GOOGLE_VISION_LANGUAGE_HINTS": "en,de"}})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["provider"]["configured"] and secret not in r.text
+    hints = next(e for e in body["settings"] if e["name"] == "GOOGLE_VISION_LANGUAGE_HINTS")
+    assert hints["saved"] and hints["value"] == "en,de"  # not a secret, so it is shown
+    engines = {e["id"]: e for e in client.get("/api/config").json()["ocr_engines"]}
+    assert engines["google_vision"]["available"]
+    assert secret not in client.get("/providers").text
+    assert secret in (client.data_dir / "credentials.json").read_text()
+
+    # settings that belong to another engine, or aren't text, are refused
+    r = client.post("/api/ocr-engines/google_vision/credentials", json={"values": {"MISTRAL_API_KEY": "x"}})
+    assert r.status_code == 400
+    r = client.post("/api/ocr-engines/easyocr/credentials", json={"values": {"OCR_GPU": "false"}})
+    assert r.status_code == 400
+    assert client.post("/api/ocr-engines/nope/credentials", json={"values": {}}).status_code == 404
+    r = client.post("/api/ocr-engines/mistral/credentials", json={"values": {"MISTRAL_API_KEY": "x"}},
+                    headers={"Origin": "https://evil.example"})
+    assert r.status_code == 403
+
+    r = client.post("/api/ocr-engines/google_vision/credentials", json={"clear": ["GOOGLE_VISION_API_KEY"]})
+    assert not r.json()["provider"]["configured"]
+
+
+def test_saving_engine_settings_resets_its_client(client):
+    engine = client.app.state.services.ocr_engines["mistral"]
+    engine._http, engine._model = object(), object()
+    client.post("/api/ocr-engines/mistral/credentials", json={"values": {"MISTRAL_API_KEY": "k"}})
+    assert engine._http is None and engine._model is None

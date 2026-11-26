@@ -86,6 +86,17 @@ class OCREngine(abc.ABC):
     def source_id(self) -> str:
         return "ocr" if self.id == DEFAULT_OCR_ENGINE else f"ocr:{self.id}"
 
+    def env_status(self) -> list[dict]:
+        """Which settings are set (never the values themselves)."""
+        return env_status(self.settings, self.env_vars)
+
+    def reset_client(self) -> None:
+        """Forget the loaded model / HTTP client so changed settings (keys, languages) apply."""
+        with self._lock:
+            self._model = None
+            if getattr(self, "_http", None) is not None:
+                self._http = None
+
     def missing_modules(self) -> list[str]:
         return [alts[0] for alts in self.requires if not any(importlib.util.find_spec(m) for m in alts)]
 
@@ -126,7 +137,8 @@ class OCREngine(abc.ABC):
             "problem": problem,
             "installed": not self.missing_modules(),
             "install": self.install_hint(),
-            "env": env_status(self.settings, self.env_vars),
+            "env": self.env_status(),
+            "missing": self.missing_settings(),
             "has_boxes": self.has_boxes,
             "summary": self.settings_summary(),
         }

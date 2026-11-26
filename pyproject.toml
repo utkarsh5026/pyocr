@@ -38,7 +38,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.5"]
+dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.5", "rich>=13"]
 # Optional OCR engines (Tesseract needs only the system binary). Google Vision,
 # Azure Document Intelligence and Mistral OCR need no extra packages.
 rapidocr = ["rapidocr>=2", "onnxruntime>=1.17"]

@@ -25,6 +25,7 @@ pytest tests/test_providers.py -q  # one file
 pytest -k compare -q               # by name
 pyocr serve --open                 # run the app on http://127.0.0.1:8000
 pyocr doctor                       # check Tesseract / providers / data dir
+make                               # grouped list of dev tasks (aliases for `python makefile.py <task>`)
 ```
 
 Done means: `ruff check src tests` and `pytest -q` both pass. OCR tests skip automatically when `tesseract`
@@ -43,10 +44,13 @@ src/pyocr_toolkit/
   api.py         JSON API under /api + create_app() (the app factory)
   web.py         server-rendered HTML pages (Jinja2, templates/)
   cli.py         `pyocr` argparse CLI
-  llm/           base.py (Provider ABC), one module per provider family, prompts.py, __init__.py registry
+  llm/           base.py (Provider ABC), one module per provider family, prompts.py, catalog.py (rated models), __init__.py registry
+  credentials.py provider settings saved from the UI (DATA_DIR/credentials.json)
   templates/     Jinja2; base.html holds the nav; partials start with _
   static/        styles.css + one vanilla-JS file per page; common.js shared helpers
 tests/           conftest.py builds sample PDF/PNG in memory; test_api.py has FakeProvider
+Makefile         thin aliases: every target runs `python makefile.py <target>`
+makefile.py      rich-rendered task runner; add a task there AND its target in Makefile (test_makefile.py checks)
 docs/            static GitHub Pages site (index.html, style.css, screenshots/), deployed by .github/workflows/pages.yml
 ```
 
@@ -64,12 +68,17 @@ Shared logic goes in `service.py`, not duplicated across API, web and CLI.
   `OpenDocument.llm_cache_key(provider_id, model, system_prompt)`, so it is the same on every page. Don't change
   how keys are derived without a migration story: it orphans every user's cached results.
 - **On-disk layout** (`data/documents/<32-hex id>/meta.json`, `source.<ext>`, `ocr/<page>.json`,
-  `llm/<page>/<key>.json`) is user data. Changes must stay readable for existing folders.
+  `llm/<page>/<key>.json`, plus `data/credentials.json` for settings saved on the Providers page) is user data.
+  Changes must stay readable for existing folders.
 - **PyMuPDF is not thread-safe.** Every access to an open `pymupdf.Document` goes through the per-document lock
   in `documents.py`. FastAPI runs sync endpoints in a thread pool, so this matters. In async code, render with
   `asyncio.to_thread`.
-- **Secrets never reach the browser.** `env_status()` reports set / default / missing, never values. There's a
-  test for this (`test_providers_page_never_shows_values`).
+- **Secrets never reach the browser.** `env_status()` reports set / default / missing, never values; the
+  credentials API (`credentials.py`) adds values only for non-secret settings (no `KEY`/`SECRET`/`TOKEN` in the
+  name). Writes to it go through `_require_same_origin`. Tests: `test_providers_page_never_shows_values`,
+  `test_credentials_saved_from_ui`.
+- **The model catalog** (`llm/catalog.py`) suggests and rates; it never restricts. Any typed model name must keep
+  working. Update ratings with a source and bump `CATALOG_UPDATED`.
 - **LLM calls** go through `Services.run_llm_page`, which caches results and respects `llm_semaphore`
   (`LLM_CONCURRENCY`). Don't call `provider.transcribe` directly from endpoints.
 - **The verbatim prompt** in `llm/prompts.py` is the product's yardstick ("transcribe, don't correct"). Changing

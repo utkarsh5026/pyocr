@@ -23,7 +23,7 @@ from .brands import brands_json
 from .config import Settings, get_settings
 from .documents import DEFAULT_OCR_ENGINE, DocumentError, DocumentStore, OCRUnavailableError, OpenDocument
 from .jobs import JobManager
-from .llm import PROMPT_MODES, ProviderError, build_providers
+from .llm import PROMPT_MODES, ProviderError, build_providers, catalog
 from .ocr import build_ocr_engines
 from .service import LLMSpec, Services, ocr_source_id, parse_pages
 
@@ -76,6 +76,26 @@ class ProviderTestBody(BaseModel):
     model: str | None = None
 
 
+class CredentialsBody(BaseModel):
+    #: env var name -> new value; empty / missing = keep the current value
+    values: dict[str, str | None] = Field(default_factory=dict)
+    #: env var names to forget, falling back to the environment / built-in default
+    clear: list[str] = Field(default_factory=list)
+
+
+def _require_same_origin(request: Request) -> None:
+    """Refuse cross-site writes. There's no auth (localhost only), so without this any web
+    page open in the same browser could POST new endpoints/keys to the local server."""
+    origin = request.headers.get("origin") or request.headers.get("referer")
+    if origin:
+        from urllib.parse import urlsplit
+
+        if urlsplit(origin).netloc != request.headers.get("host"):
+            raise HTTPException(403, "cross-origin request refused; open pyocr in this browser tab instead")
+    if not (request.headers.get("content-type") or "").startswith("application/json"):
+        raise HTTPException(415, "send JSON (Content-Type: application/json)")
+
+
 def _safe_stem(filename: str) -> str:
     # ASCII-only filename: HTTP headers are latin-1 and quotes would break them.
     return re.sub(r"[^A-Za-z0-9._-]+", "_", Path(filename).stem) or "document"
@@ -114,6 +134,69 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "llm_dpi": settings.llm_dpi,
             "ocr_dpi": settings.ocr_dpi,
         }
+
+    @api.get("/models", tags=["models"])
+    def search_models(q: str = "", provider: str | None = None, rating: str | None = None,
+                      include_deprecated: bool = True):
+        """Search the built-in catalog of vision models, rated for page transcription."""
+        return {
+            "updated": catalog.CATALOG_UPDATED,
+            "ratings": {k: v[0] for k, v in catalog.RATINGS.items()},
+            "sources": [{"label": a, "url": b} for a, b in catalog.SOURCES],
+            "models": [m.to_json() for m in catalog.search(q, provider, rating, include_deprecated)],
+        }
+
+    @api.get("/models/lookup", tags=["models"])
+    def lookup_model(name: str, provider: str | None = None):
+        """How well a (possibly custom) model name suits transcription."""
+        return catalog.lookup(name, provider)
+
+    @api.get("/providers/{provider_id}/models", tags=["models"])
+    async def provider_models(provider_id: str, live: bool = True):
+        """Catalog models for a provider plus, where the API allows, the models your key can use."""
+        try:
+            return await services.provider_models(provider_id, live)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @api.get("/providers/{provider_id}/credentials", tags=["config"])
+    def get_credentials(provider_id: str):
+        p = providers.get(provider_id)
+        if p is None:
+            raise HTTPException(404, f"unknown provider '{provider_id}'")
+        return {"provider": p.describe(), "settings": services.credentials.status(p)}
+
+    @api.post("/providers/{provider_id}/credentials", tags=["config"])
+    def save_credentials(provider_id: str, body: CredentialsBody, request: Request):
+        """Save provider settings from the UI (stored in DATA_DIR/credentials.json, never echoed back)."""
+        _require_same_origin(request)
+        try:
+            services.credentials.update(provider_id, body.values, body.clear)
+        except ValueError as exc:
+            status = 404 if "unknown provider" in str(exc) else 400
+            raise HTTPException(status, str(exc)) from exc
+        return get_credentials(provider_id)
+
+    @api.get("/ocr-engines/{engine_id}/credentials", tags=["config"])
+    def get_engine_credentials(engine_id: str):
+        e = engines.get(engine_id)
+        if e is None:
+            raise HTTPException(404, f"unknown OCR engine '{engine_id}'")
+        d = e.describe()
+        # same shape as the provider endpoint, so the Providers page handles both
+        return {"provider": {**d, "configured": d["available"]}, "settings": services.credentials.status(e)}
+
+    @api.post("/ocr-engines/{engine_id}/credentials", tags=["config"])
+    def save_engine_credentials(engine_id: str, body: CredentialsBody, request: Request):
+        """Save OCR engine settings from the UI (stored in DATA_DIR/credentials.json, never echoed back)."""
+        _require_same_origin(request)
+        if engine_id not in engines:
+            raise HTTPException(404, f"unknown OCR engine '{engine_id}'")
+        try:
+            services.credentials.update(engine_id, body.values, body.clear)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return get_engine_credentials(engine_id)
 
     @api.post("/providers/{provider_id}/test", tags=["config"])
     async def test_provider(provider_id: str, body: ProviderTestBody):

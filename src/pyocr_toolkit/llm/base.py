@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 
 from ..config import env_status
+from . import catalog
 
 
 class ProviderError(Exception):
@@ -52,6 +53,8 @@ class Provider(abc.ABC):
     env_vars: list[tuple[str, bool, str]] = []
     #: where to get credentials
     docs_url: str = ""
+    #: whether :meth:`list_models` asks the provider's API (False: deployments you name yourself)
+    can_list_models: bool = False
 
     #: key into ``brands.BRANDS`` for the logo shown in the UI
     brand: str = ""
@@ -71,6 +74,18 @@ class Provider(abc.ABC):
     @property
     def configured(self) -> bool:
         return not self.missing_settings()
+
+    def reset_client(self) -> None:
+        """Forget the cached SDK client so the next call picks up changed settings."""
+        if hasattr(self, "_client"):
+            self._client = None
+
+    async def list_models(self) -> list[str] | None:
+        """Model ids the provider says this key can use, or ``None`` if it can't list them.
+
+        Azure/Foundry deployments aren't listable with a data-plane key, so those return ``None``.
+        """
+        return None
 
     async def transcribe(self, req: TranscriptionRequest) -> TranscriptionResult:
         missing = self.missing_settings()
@@ -95,8 +110,10 @@ class Provider(abc.ABC):
             "missing": self.missing_settings(),
             "default_model": self.default_model,
             "suggested_models": self.suggested_models,
+            "model_options": catalog.model_options(self.id, self.suggested_models),
             "model_hint": self.model_hint,
             "env": self.env_status(),
             "docs_url": self.docs_url,
             "brand": self.brand,
+            "can_list_models": self.can_list_models,
         }

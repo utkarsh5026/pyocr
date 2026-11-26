@@ -13,6 +13,10 @@ pytest && ruff check src tests
 pyocr serve
 ```
 
+The same steps are available as `make install`, `make check` and `make serve`; run `make` for the full, grouped
+list (or `python makefile.py` where `make` isn't available). Extra arguments go through `ARGS`, e.g.
+`make test ARGS="-k compare"`.
+
 No API keys are needed for the test suite: provider code is exercised against mocked HTTP, and the API tests use a
 fake provider. To try the UI end to end without keys, point the OpenAI-compatible provider at any local server
 (for example Ollama with a vision model).

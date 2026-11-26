@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from .documents import DocumentStore
+from .preprocess import Preprocess
 from .service import LLMSpec, Services
 
 JobKind = Literal["ocr", "llm"]
@@ -83,6 +84,9 @@ class JobManager:
             if not provider.configured:
                 raise ValueError(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}")
             label = f"LLM · {provider.label} · {model} · {llm.prompt_mode}"
+            pre = Preprocess.parse(llm.preprocess)
+            if not pre.is_identity:
+                label += f" · image: {pre.describe()}"
         else:
             label = f"Tesseract OCR ({self.services.settings.tesseract_language})"
         job = Job(id=uuid.uuid4().hex[:12], doc_id=doc.meta.id, kind=kind, pages=pages, label=label,

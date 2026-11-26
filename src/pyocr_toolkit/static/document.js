@@ -12,8 +12,9 @@ function updateForm() {
   $("#llm-options").hidden = kind() !== "llm";
   const pages = $("#extract-form input[name=pages]").value.trim();
   const what = pages ? `pages ${pages}` : `all ${PAGE_COUNT} page${PAGE_COUNT === 1 ? "" : "s"}`;
+  const pre = $("#extract-form input[name=preprocess]").value.trim();
   $("#extract-hint").textContent = kind() === "llm" && picker
-    ? `Sends ${what} as images to ${picker.describe()}`
+    ? `Sends ${what} as images${pre ? " (preprocessed)" : ""} to ${picker.describe()}`
     : `Runs locally on ${what}; about 1–5 s per page`;
 }
 
@@ -52,8 +53,11 @@ $("#extract-form").addEventListener("submit", guard(async (e) => {
   const body = { kind: kind(), pages: form.pages.value.trim() || null, force: form.force.checked };
   if (body.kind === "llm") {
     body.llm = picker.spec();
+    body.llm.preprocess = form.preprocess.value.trim() || null;
+    preprocessStore.set(DOC_ID, body.llm.preprocess);
     const n = body.pages ? `pages ${body.pages}` : `all ${PAGE_COUNT} pages`;
-    if (!confirm(`Send ${n} to ${picker.describe()}?\n\nPages already transcribed with this model and prompt are ` +
+    const img = body.llm.preprocess ? `\nImage preprocessing: ${body.llm.preprocess}\n` : "";
+    if (!confirm(`Send ${n} to ${picker.describe()}?\n${img}\nPages already transcribed with this model, prompt and image settings are ` +
       (body.force ? "RE-SENT (re-run is on)." : "skipped."))) return;
   }
   const job = await postJSON(`/api/documents/${DOC_ID}/jobs`, body);
@@ -75,6 +79,10 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
     $("#llm-options").addEventListener("change", updateForm);
     updateForm();
     const cfg = await getConfig();
+    $("#pre-presets").innerHTML = cfg.preprocess_presets.filter((p) => p.spec)
+      .map((p) => `<option value="${esc(p.spec)}">${esc(p.label)}: ${esc(p.hint)}</option>`).join("");
+    $("#extract-form input[name=preprocess]").value = preprocessStore.get(DOC_ID);
+    updateForm();
     if (!cfg.tesseract_available) {
       const ocr = $("#extract-form input[value=ocr]");
       ocr.disabled = true;

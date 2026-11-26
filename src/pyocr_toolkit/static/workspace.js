@@ -1,4 +1,5 @@
-/* Page inspector: one page image + native / OCR / LLM text + per-page diff. */
+/* Page inspector: one page image + native / OCR / LLM text + per-page diff,
+   plus "Adjust image": preprocessing applied to the image an LLM receives. */
 "use strict";
 
 const root = $("#workspace");
@@ -17,6 +18,15 @@ const state = {
   llmResults: [],
   native: null,
   ocr: null,
+  // image preprocessing (see preprocess.py); "" = send the page as rendered
+  pre: preprocessStore.get(DOC_ID),
+  preLabel: "",
+  adjustOpen: false,
+  peek: false,           // "hold to compare" is showing the original
+  editedUrl: null,       // object URL of the adjusted image currently shown
+  editedInfo: null,      // {bytes, mime, w, h} of that image
+  origInfo: {},          // page -> {bytes, mime, w, h} of the unadjusted LLM image
+  stripKey: null,        // page + geometry the filter thumbnails were rendered for
 };
 
 const docUrl = (suffix = "") => `/api/documents/${DOC_ID}${suffix}`;
@@ -72,16 +82,14 @@ async function gotoPage(n) {
   $$("#page-list li").forEach((li) => li.classList.toggle("active", +li.dataset.page === n));
   $(`#page-list li[data-page="${n}"]`)?.scrollIntoView({ block: "nearest" });
 
-  const img = $("#page-img");
-  img.classList.add("loading");  // dimmed until the new render arrives
-  img.onload = () => { img.classList.remove("loading"); applyZoom(); };
-  img.onerror = () => img.classList.remove("loading");
-  img.src = pageUrl(n, `/image?dpi=${state.config.preview_dpi}`);
+  guard(loadPageImage)();
+  if (state.adjustOpen) renderPresets();
   applyZoom();
 
   $("#cmp-metrics").innerHTML = "";
   $("#cmp-diff").innerHTML = "";
   $("#cmp-legend").hidden = true;
+  $("#ab-summary").hidden = true;
   $("#cmp-ref").innerHTML = $("#cmp-hyp").innerHTML = "";
 
   const [native, ocr, llm] = await Promise.all([
@@ -129,7 +137,7 @@ function renderOcr() {
 function renderLlm(selectKey) {
   const sel = $("#llm-result-select");
   sel.innerHTML = state.llmResults.map((r) =>
-    `<option value="${esc(r.key)}">${esc(r.provider)} · ${esc(r.model)} · ${esc(r.prompt_mode)} · ${new Date(r.created_at * 1000).toLocaleString()}</option>`).join("");
+    `<option value="${esc(r.key)}">${esc(r.provider)} · ${esc(r.model)} · ${esc(r.prompt_mode)}${r.preprocess ? " · adjusted image" : ""} · ${new Date(r.created_at * 1000).toLocaleString()}</option>`).join("");
   sel.disabled = $("#delete-llm").disabled = state.llmResults.length === 0;
   if (selectKey) sel.value = selectKey;
   showLlmResult(sel.value);
@@ -145,8 +153,9 @@ function showLlmResult(key) {
   }
   const tokens = r.input_tokens != null ? ` · ${fmtInt(r.input_tokens)} in / ${fmtInt(r.output_tokens)} out tokens` : "";
   const warns = (r.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
+  const image = r.preprocess_label ? ` · image: <span class="badge accent" title="${esc(r.preprocess)}">${esc(r.preprocess_label)}</span>` : "";
   $("#llm-meta").innerHTML = `${esc(r.provider_label || r.provider)} · <b>${esc(r.model)}</b> · ` +
-    `${(r.latency_ms / 1000).toFixed(1)}s${tokens} · ${r.text.length} chars${warns}`;
+    `${(r.latency_ms / 1000).toFixed(1)}s${tokens} · ${r.text.length} chars${image}${warns}`;
   setText($("#llm-text"), r.text);
   renderSide();
 }
@@ -195,7 +204,7 @@ async function runOcr(force = true) {
 
 async function runLlm(force = false) {
   const n = state.page, btn = $("#run-llm");
-  const body = state.picker.spec(force);
+  const body = { ...state.picker.spec(force), preprocess: state.pre || null };
   const out = $("#llm-text"), emptyMsg = out.dataset.empty;
   out.dataset.empty = "Reading the page…";
   const done = setBusy(btn, "Transcribing…", [[$("#page-frame"), "is-reading"], [out, "is-thinking"]]);
@@ -231,7 +240,14 @@ async function deleteLlm() {
 function applyZoom() {
   const p = state.pages[state.page];
   if (!p) return;
-  const naturalWidth = p.width * (state.config.preview_dpi / 72);
+  // An adjusted image may be rotated or cropped: size the frame by what is actually shown.
+  let widthPt = p.width;
+  if (state.pre && !state.peek) {
+    const o = parsePre(state.pre);
+    if (o.rotate === 90 || o.rotate === 270) widthPt = p.height;
+    widthPt *= (100 - o.crop[1] - o.crop[3]) / 100;
+  }
+  const naturalWidth = widthPt * (state.config.preview_dpi / 72);
   if (state.fit) {
     const avail = $("#page-scroll").clientWidth - 32;
     state.zoom = Math.max(0.2, Math.min(4, avail / naturalWidth));
@@ -312,7 +328,10 @@ function rerenderTexts() {
 function renderCompareOptions() {
   const opts = [["native", "Native text layer"]];
   if (state.ocr) opts.push(["ocr", "Tesseract OCR"]);
-  for (const r of state.llmResults) opts.push([`llm:${r.key}`, `LLM: ${r.provider} / ${r.model} (${r.prompt_mode})`]);
+  for (const r of state.llmResults) {
+    opts.push([`llm:${r.key}`, `LLM: ${r.provider} / ${r.model} (${r.prompt_mode})` +
+      (r.preprocess_label ? ` · image: ${r.preprocess_label}` : " · original image")]);
+  }
   const ref = $("#cmp-ref"), hyp = $("#cmp-hyp");
   const prev = { ref: ref.value, hyp: hyp.value };
   for (const sel of [ref, hyp]) sel.innerHTML = opts.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("");
@@ -329,6 +348,7 @@ const textRef = (v) => (v.startsWith("llm:") ? { source: "llm", key: v.slice(4) 
 async function runCompare() {
   const refV = $("#cmp-ref").value, hypV = $("#cmp-hyp").value;
   if (refV === hypV) { toast("Pick two different sources to compare.", true); return; }
+  $("#ab-summary").hidden = true;
   const res = await postJSON(pageUrl(state.page, "/compare"), {
     reference: textRef(refV), hypothesis: textRef(hypV),
     ignore_case: $("#cmp-case").checked, ignore_punctuation: $("#cmp-punct").checked,
@@ -348,6 +368,262 @@ function renderMetrics(el, m) {
     metric("Ref / cand words", `${fmtInt(m.reference_words)} / ${fmtInt(m.hypothesis_words)}`);
 }
 
+// ------------------------------------------------------------------ adjust image (preprocessing)
+// Spec format and step order mirror preprocess.py. The server re-normalises every spec anyway;
+// building the same canonical string here lets the filter strip recognise a preset.
+const PRE_DEFAULT = { rotate: 0, crop: [0, 0, 0, 0], dpi: null, gray: false, denoise: 0, auto: false,
+  equalize: false, brightness: 1, contrast: 1, sharpness: 1, threshold: null, invert: false };
+const fmtNum = (v) => String(+(+v).toFixed(2));
+
+function parsePre(spec) {
+  const o = { ...PRE_DEFAULT, crop: [...PRE_DEFAULT.crop] };
+  for (const tok of (spec || "").split(";")) {
+    const [k, v = ""] = tok.split("=").map((x) => x.trim());
+    if (!k) continue;
+    if (k === "rotate") o.rotate = ((+v % 360) + 360) % 360;
+    else if (k === "crop") o.crop = v.split(",").map(Number);
+    else if (k === "dpi") o.dpi = +v || null;
+    else if (k === "denoise") o.denoise = +v || 3;
+    else if (k === "threshold") o.threshold = !v || v === "otsu" || v === "auto" ? "otsu" : +v;
+    else if (["brightness", "contrast", "sharpness"].includes(k)) o[k] = +v;
+    else if (k in o) o[k] = !["0", "false", "no", "off"].includes(v.toLowerCase());
+  }
+  if (o.threshold != null) o.gray = true;  // binarizing implies grayscale (as on the server)
+  return o;
+}
+
+function buildPre(o) {
+  const p = [];
+  if (o.rotate) p.push(`rotate=${o.rotate}`);
+  if (o.crop.some(Boolean)) p.push(`crop=${o.crop.map((c) => fmtNum(Math.round(c * 10) / 10)).join(",")}`);
+  if (o.dpi) p.push(`dpi=${o.dpi}`);
+  if (o.gray || o.threshold != null) p.push("gray");
+  if (o.denoise) p.push(`denoise=${o.denoise}`);
+  if (o.auto) p.push("auto");
+  if (o.equalize) p.push("equalize");
+  for (const k of ["brightness", "contrast", "sharpness"]) if (+fmtNum(o[k]) !== 1) p.push(`${k}=${fmtNum(o[k])}`);
+  if (o.threshold != null) p.push(`threshold=${o.threshold}`);
+  if (o.invert) p.push("invert");
+  return p.join(";");
+}
+
+/** The "look" part of a spec (no rotate / crop / resolution): what a filter preset decides. */
+const toneOf = (o) => buildPre({ ...o, rotate: 0, crop: [0, 0, 0, 0], dpi: null });
+/** A preset applied on top of the current geometry, so picking a filter keeps your crop and rotation. */
+const withGeometry = (presetSpec, o) => buildPre({ ...parsePre(presetSpec), rotate: o.rotate, crop: o.crop, dpi: o.dpi });
+const originalSrc = () => pageUrl(state.page, `/image?dpi=${state.config.preview_dpi}`);
+
+async function imageInfo(blob) {
+  const bmp = await createImageBitmap(blob);
+  const info = { bytes: blob.size, mime: blob.type, w: bmp.width, h: bmp.height };
+  bmp.close();
+  return info;
+}
+
+let previewTimer = 0, previewSeq = 0;
+function schedulePreview(delay = 220) {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(guard(loadPageImage), delay);
+}
+
+/** Show the page: the plain preview, or (with a spec) exactly the image the LLM will receive. */
+async function loadPageImage() {
+  const n = state.page, img = $("#page-img"), seq = ++previewSeq;
+  const edited = !!state.pre;
+  $("#highlight-layer").hidden = edited;  // search boxes are in page coordinates; a crop/rotation breaks them
+  img.classList.add("loading");           // dimmed until the new render arrives
+  if (!edited) {
+    if (state.editedUrl) URL.revokeObjectURL(state.editedUrl);
+    Object.assign(state, { editedUrl: null, editedInfo: null, preLabel: "" });
+    img.src = originalSrc();
+    renderAdjustState();
+    return;
+  }
+  const res = await fetch(pageUrl(n, `/llm-image?preprocess=${encodeURIComponent(state.pre)}`));
+  if (!res.ok) {
+    img.classList.remove("loading");
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.detail || res.statusText);
+  }
+  const blob = await res.blob();
+  const info = await imageInfo(blob);
+  if (seq !== previewSeq) return;  // a newer preview superseded this one
+  if (state.editedUrl) URL.revokeObjectURL(state.editedUrl);
+  state.editedUrl = URL.createObjectURL(blob);
+  state.editedInfo = info;
+  state.preLabel = decodeURIComponent(res.headers.get("X-Preprocess-Label") || "");
+  img.src = state.peek ? originalSrc() : state.editedUrl;
+  renderAdjustState();
+}
+
+/** Everything that reflects the current spec: toolbar button, badge, LLM-tab line, editor footer. */
+function renderAdjustState() {
+  const on = !!state.pre;
+  $("#adjust-toggle").classList.toggle("on", on);
+  const badge = $("#edited-badge");
+  badge.hidden = !on;
+  badge.textContent = state.peek ? "Original" : "Adjusted · what the model sees";
+  badge.classList.toggle("peek", state.peek);
+  $("#ab-llm").hidden = !on;
+  $("#llm-image-line").innerHTML = on
+    ? `Image: <span class="badge accent">${esc(state.preLabel || "adjusted")}</span> ` +
+      '<a href="#" data-adjust="open">Change</a> · <a href="#" data-adjust="clear">Use the original</a>'
+    : 'Image: the page as rendered. <a href="#" data-adjust="open">Adjust image</a> to preprocess it first.';
+  if (!state.adjustOpen) return;
+  $("#adj-spec").textContent = state.pre || "original";
+  const o = state.origInfo[state.page], e = on ? state.editedInfo : o;
+  const kind = (i) => i.mime.replace("image/", "").toUpperCase();
+  $("#adj-info").textContent = !e ? "" :
+    `Model receives ${e.w}×${e.h} px · ${kind(e)} · ${fmtSize(e.bytes)}` +
+    (on && o ? ` (original ${o.w}×${o.h} px · ${fmtSize(o.bytes)})` : "");
+}
+
+/** Filter strip: one thumbnail per preset, rendered with the current crop / rotation. */
+function renderPresets() {
+  const o = parsePre(state.pre), tone = toneOf(o);
+  const key = `${state.page}|${o.rotate}|${o.crop}|${o.dpi}`;
+  if (key !== state.stripKey) {
+    state.stripKey = key;
+    $("#adj-presets").innerHTML = state.config.preprocess_presets.map((p) => {
+      const spec = withGeometry(p.spec, o);
+      const src = pageUrl(state.page, `/image?dpi=40${spec ? `&preprocess=${encodeURIComponent(spec)}` : ""}`);
+      return `<button type="button" class="filter" role="radio" data-spec="${esc(p.spec)}" title="${esc(p.hint)}">
+        <img alt="" src="${src}"><span>${esc(p.label)}</span></button>`;
+    }).join("") + '<span class="filter custom" role="radio" title="Your own combination (Fine-tune)"><span class="custom-box">' +
+      '<svg class="icon" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/>' +
+      '<circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg></span><span>Custom</span></span>';
+  }
+  let matched = false;
+  $$("#adj-presets .filter[data-spec]").forEach((b) => {
+    const active = b.dataset.spec === tone;
+    matched ||= active;
+    b.classList.toggle("active", active);
+    b.setAttribute("aria-checked", active);
+  });
+  const custom = $("#adj-presets .filter.custom");
+  custom.classList.toggle("active", !matched);
+  custom.hidden = matched;
+}
+
+/** Put the spec's values into the fine-tune controls. */
+function syncAdjustControls() {
+  const o = parsePre(state.pre);
+  for (const el of $$("[data-adj]")) {
+    const k = el.dataset.adj;
+    if (k === "threshold-mode") el.value = o.threshold == null ? "" : o.threshold === "otsu" ? "otsu" : "fixed";
+    else if (k === "threshold") el.value = typeof o.threshold === "number" ? o.threshold : 128;
+    else if (k === "dpi") el.value = o.dpi || "";
+    else if (el.type === "checkbox") el.checked = !!o[k];
+    else el.value = o[k];
+    const out = el.parentElement.querySelector("output");
+    if (out) out.textContent = k === "threshold" ? el.value : `×${fmtNum(el.value)}`;
+  }
+  $('[data-adj="gray"]').disabled = o.threshold != null;  // black & white is always grayscale
+  $("[data-threshold-level]").hidden = typeof o.threshold !== "number";
+  $$("[data-crop]").forEach((el) => { el.value = o.crop[+el.dataset.crop] || 0; });
+  $("[data-rotate-label]").textContent = o.rotate ? `${o.rotate}° clockwise` : "";
+  renderPresets();
+}
+
+/** Build a spec from the fine-tune controls (rotation comes from the current spec). */
+function readAdjustControls() {
+  const o = parsePre(state.pre), v = (k) => $(`[data-adj="${k}"]`);
+  for (const k of ["brightness", "contrast", "sharpness"]) o[k] = +v(k).value;
+  for (const k of ["gray", "auto", "equalize", "invert"]) o[k] = v(k).checked;
+  o.denoise = +v("denoise").value;
+  o.dpi = +v("dpi").value || null;
+  const mode = v("threshold-mode").value;
+  o.threshold = mode === "" ? null : mode === "otsu" ? "otsu" : +v("threshold").value;
+  const crop = $$("[data-crop]").map((el) => Math.max(0, Math.min(45, +el.value || 0)));
+  // keep at least 20% of the page each way (the server enforces the same limit)
+  if (crop[0] + crop[2] > 80) crop[2] = 80 - crop[0];
+  if (crop[1] + crop[3] > 80) crop[3] = 80 - crop[1];
+  o.crop = crop;
+  return buildPre(o);
+}
+
+function setPre(spec, { immediate = false } = {}) {
+  state.pre = spec;
+  preprocessStore.set(DOC_ID, spec);
+  if (state.adjustOpen) syncAdjustControls();
+  if (!spec) state.peek = false;
+  applyZoom();
+  if (immediate) guard(loadPageImage)(); else schedulePreview();
+}
+
+async function loadOriginalInfo(n) {
+  if (state.origInfo[n]) return;
+  const res = await fetch(pageUrl(n, "/llm-image"));
+  if (res.ok) state.origInfo[n] = await imageInfo(await res.blob());
+  if (n === state.page) renderAdjustState();
+}
+
+function toggleAdjust(open = !state.adjustOpen) {
+  state.adjustOpen = open;
+  $("#adjust-panel").hidden = !open;
+  $("#adjust-toggle").setAttribute("aria-expanded", String(open));
+  if (open) {
+    state.stripKey = null;
+    syncAdjustControls();
+    renderAdjustState();
+    guard(loadOriginalInfo)(state.page);
+  }
+  applyZoom();
+}
+
+function peekOriginal(on) {
+  if (!state.pre || state.peek === on) return;
+  state.peek = on;
+  if (on || state.editedUrl) $("#page-img").src = on ? originalSrc() : state.editedUrl;
+  else schedulePreview(0);  // released before the adjusted render arrived
+  renderAdjustState();
+  applyZoom();
+}
+
+/** Transcribe the original and the adjusted image with the same model, then diff the two. */
+async function runAB() {
+  if (!state.pre) { toast("Pick a filter in Adjust image first.", true); return; }
+  const n = state.page, base = state.picker.spec(false);
+  const done = setBusy($("#ab-llm"), "Running A/B…", [[$("#page-frame"), "is-reading"], [$("#llm-text"), "is-thinking"]]);
+  try {
+    const [a, b] = await Promise.all([
+      postJSON(pageUrl(n, "/llm"), { ...base, preprocess: null }),
+      postJSON(pageUrl(n, "/llm"), { ...base, preprocess: state.pre }),
+    ]);
+    state.pages[n].llm_results += !a.cached + !b.cached;
+    refreshPageBadges(n);
+    if (n !== state.page) return;
+    state.llmResults = await api(pageUrl(n, "/llm"));
+    renderLlm(b.key);
+    renderCompareOptions();
+    $("#cmp-ref").value = `llm:${a.key}`;
+    $("#cmp-hyp").value = `llm:${b.key}`;
+    switchTab("compare");
+    await runCompare();
+    renderAB(a, b);
+  } finally {
+    done();
+  }
+}
+
+function renderAB(a, b) {
+  const rows = [
+    ["Image sent", (r) => `${(r.image_mime || "").replace("image/", "").toUpperCase()} · ${fmtSize(r.image_bytes)}`],
+    ["Input tokens", (r) => fmtInt(r.input_tokens)],
+    ["Output tokens", (r) => fmtInt(r.output_tokens)],
+    ["Time", (r) => `${(r.latency_ms / 1000).toFixed(1)} s${r.cached ? " (cached)" : ""}`],
+    ["Characters", (r) => fmtInt(r.text.length)],
+  ];
+  const box = $("#ab-summary");
+  box.innerHTML = `<table class="table compact ab-table"><thead><tr><th></th><th>A · original image</th>
+      <th>B · adjusted <span class="small muted">${esc(b.preprocess_label || "")}</span></th></tr></thead><tbody>` +
+    rows.map(([k, f]) => `<tr><td class="muted">${k}</td><td>${esc(f(a))}</td><td>${esc(f(b))}</td></tr>`).join("") +
+    `</tbody></table><p class="small muted">The diff shows what the preprocessing changed in the transcription
+    (A is the reference, B the candidate). Different isn't automatically better: to see which is <i>right</i>,
+    compare each against text you trust, such as the native layer of a born-digital PDF or a page you've checked.</p>`;
+  box.hidden = false;
+}
+
 // ------------------------------------------------------------------ wiring
 function wire() {
   $("#prev-page").addEventListener("click", () => gotoPage(state.page - 1));
@@ -365,6 +641,40 @@ function wire() {
   $("#delete-llm").addEventListener("click", guard(deleteLlm));
   $("#llm-result-select").addEventListener("change", (e) => showLlmResult(e.target.value));
   $("#run-compare").addEventListener("click", guard(runCompare));
+  $("#ab-llm").addEventListener("click", guard(runAB));
+
+  // adjust image
+  const img = $("#page-img");
+  img.addEventListener("load", () => { img.classList.remove("loading"); applyZoom(); });
+  img.addEventListener("error", () => img.classList.remove("loading"));
+  $("#adjust-toggle").addEventListener("click", () => toggleAdjust());
+  $("#adj-close").addEventListener("click", () => toggleAdjust(false));
+  $("#adj-reset").addEventListener("click", () => setPre("", { immediate: true }));
+  $("#adj-copy").addEventListener("click", () => copyText(state.pre));
+  $("#edited-badge").addEventListener("click", () => toggleAdjust(true));
+  $("#adj-presets").addEventListener("click", (e) => {
+    const btn = e.target.closest(".filter[data-spec]");
+    if (btn) setPre(withGeometry(btn.dataset.spec, parsePre(state.pre)), { immediate: true });
+  });
+  $$("#adjust-panel [data-adj], #adjust-panel [data-crop]").forEach((el) => {
+    el.addEventListener("input", () => setPre(readAdjustControls()));
+  });
+  $$("#adjust-panel [data-rotate]").forEach((b) => b.addEventListener("click", () => {
+    const o = parsePre(state.pre);
+    o.rotate = (o.rotate + +b.dataset.rotate + 360) % 360;
+    setPre(buildPre(o), { immediate: true });
+  }));
+  const hold = $("#adj-compare");
+  hold.addEventListener("pointerdown", () => peekOriginal(true));
+  ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => hold.addEventListener(ev, () => peekOriginal(false)));
+  hold.addEventListener("keydown", (e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); peekOriginal(true); } });
+  hold.addEventListener("keyup", () => peekOriginal(false));
+  $("#llm-image-line").addEventListener("click", (e) => {
+    const act = e.target.closest("[data-adjust]")?.dataset.adjust;
+    if (!act) return;
+    e.preventDefault();
+    if (act === "open") toggleAdjust(true); else setPre("", { immediate: true });
+  });
   $("#search-form").addEventListener("submit", guard(runSearch));
   // the (x) clear button fires "search" with an empty value (Enter is handled by submit)
   $("#search-input").addEventListener("search", guard(() => !$("#search-input").value && runSearch()));
@@ -391,6 +701,7 @@ function wire() {
     else if (tabs[e.key]) switchTab(tabs[e.key]);
     else if (e.key === "t") { switchTab("llm"); guard(() => runLlm(false))(); }
     else if (e.key === "o") { switchTab("ocr"); guard(() => runOcr(false))(); }
+    else if (e.key === "e") toggleAdjust();
   });
 }
 
@@ -398,6 +709,9 @@ function wire() {
   wire();
   try {
     state.config = await getConfig();
+    const dpis = [100, 150, 300, 400].filter((d) => d !== state.config.llm_dpi);
+    $('[data-adj="dpi"]').innerHTML = `<option value="">Default (${state.config.llm_dpi} dpi)</option>` +
+      dpis.map((d) => `<option value="${d}">${d} dpi</option>`).join("");
     state.picker = await initLlmPicker($("[data-llm-picker]"));
     state.pages = await api(docUrl("/pages"));
     renderPageList();

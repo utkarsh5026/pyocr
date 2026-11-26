@@ -49,6 +49,11 @@ SUPPORTED_EXTENSIONS = {
 
 _DOC_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
+#: Tesseract (through MuPDF's Leptonica) has process-wide state: two OCR calls on
+#: *different* documents still collide ("Attempt to use Leptonica from 2 threads
+#: at once"), so the per-document lock is not enough. One Tesseract call at a time.
+TESSERACT_LOCK = threading.Lock()
+
 
 class DocumentError(Exception):
     """Raised for user-facing problems (bad file, unknown id, bad page)."""
@@ -251,7 +256,8 @@ class OpenDocument:
             try:
                 # full=True OCRs the whole page image, ignoring any existing text
                 # layer: that is what we want when judging OCR quality.
-                tp = page.get_textpage_ocr(full=True, dpi=dpi, language=language)
+                with TESSERACT_LOCK:
+                    tp = page.get_textpage_ocr(full=True, dpi=dpi, language=language)
             except RuntimeError as exc:  # raised when tesseract / tessdata is missing
                 raise OCRUnavailableError(
                     f"Tesseract OCR is not available ({exc}). Install tesseract-ocr and the "

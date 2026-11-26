@@ -34,6 +34,8 @@ from pyocr_toolkit.ocr.cloud import (
 )
 from pyocr_toolkit.ocr.local import EasyOCREngine, RapidOCREngine, parse_doctr, parse_paddleocr
 
+from .conftest import HAS_TESSERACT
+
 STATIC = Path(__file__).resolve().parents[1] / "src" / "pyocr_toolkit" / "static"
 IMG = RenderedImage(b"\x89PNGfake", "image/png", 1000, 500, 500.0, 250.0)
 
@@ -448,3 +450,18 @@ def test_cli_accepts_ocr_engine_source():
     assert _ocr_engine_arg(args) == "easyocr"
     args = build_parser().parse_args(["extract", "x.pdf", "--engine", "ocr", "--ocr-engine", "doctr"])
     assert _ocr_engine_arg(args) == "doctr"
+
+
+@pytest.mark.skipif(not HAS_TESSERACT, reason="tesseract not installed")
+def test_tesseract_on_two_documents_at_once(tmp_path, sample_pdf, sample_png):
+    """Regression: Leptonica is process-wide, so OCR on *different* documents must not overlap."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    from pyocr_toolkit.documents import DocumentStore
+
+    store = DocumentStore(tmp_path)
+    docs = [store.get(store.add("a.pdf", sample_pdf).id), store.get(store.add("b.png", sample_png).id)]
+    jobs = [(docs[0], 1), (docs[1], 0)] * 2
+    with ThreadPoolExecutor(4) as pool:
+        layers = list(pool.map(lambda job: job[0].ocr_text(job[1], dpi=200, language="eng", force=True), jobs))
+    assert all(layer.text.strip() for layer in layers)

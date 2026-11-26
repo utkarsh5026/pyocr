@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 import pymupdf
 
-from ..documents import DEFAULT_OCR_ENGINE, OCRUnavailableError, RenderedImage, TextLayer
+from ..documents import DEFAULT_OCR_ENGINE, TESSERACT_LOCK, OCRUnavailableError, RenderedImage, TextLayer
 from .base import OCREngine, OCRResult
 
 if TYPE_CHECKING:
@@ -62,7 +62,8 @@ class TesseractEngine(OCREngine):
         page.insert_text((20, 50), expected, fontsize=22)
         t0 = time.perf_counter()
         try:
-            tp = page.get_textpage_ocr(full=True, dpi=300, language=self.settings.tesseract_language)
+            with TESSERACT_LOCK:
+                tp = page.get_textpage_ocr(full=True, dpi=300, language=self.settings.tesseract_language)
         except RuntimeError as exc:
             raise OCRUnavailableError(f"Tesseract failed: {exc}") from exc
         text = page.get_text("text", textpage=tp).strip()

@@ -126,25 +126,28 @@ Everything you upload and extract is stored in `./data` (change it with `DATA_DI
 | **Compare** `/documents/{id}/compare` | Score source B against source A on every page: document-level CER/WER, a clickable CER-per-page chart, and an aligned side-by-side diff of the selected page (opens on the worst page). Works for OCR vs LLM, native vs LLM, or **model vs model**. |
 | **Search** `/search` | Search all documents at once. |
 | **Jobs** `/jobs` | All background extractions, with progress, errors and tokens. |
-| **Providers** `/providers` | Which settings are set or missing, plus a **Test connection** button per provider. |
+| **Providers** `/providers` | Which settings are set or missing, a form to set keys/endpoints in the browser, plus a **Test connection** button per provider. |
+| **Models** `/models` | Search a catalog of vision models rated for transcription (excellent / good / fair / not suitable, with price and reason); list the models your key can use and pick one. |
 | **Help** `/help` | The full guide: concepts, metrics, workflows, troubleshooting. |
 | **API docs** `/docs` | Interactive OpenAPI docs for the JSON API. |
 
 ## Configure LLM providers
 
-Set these in `.env` (created by `pyocr init`) or as environment variables, then restart. Keys stay on the server and
-are never sent to the browser.
+Paste keys on the **Providers** page (saved to `DATA_DIR/credentials.json`, owner-only, applied immediately and
+taking precedence over the environment), or set them in `.env` (created by `pyocr init`) or as environment
+variables and restart. Keys stay on the server and are never sent to the browser.
 
 | Provider | Required | Optional |
 |---|---|---|
 | Claude (Anthropic API) | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (default `claude-opus-5-5`), `ANTHROPIC_EFFORT` |
-| OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` (default `gpt-5`), `OPENAI_BASE_URL` |
+| OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` (default `gpt-6.2-sol`), `OPENAI_BASE_URL` |
 | Azure OpenAI | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` | `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION` |
 | Claude on Azure (Foundry) | `ANTHROPIC_FOUNDRY_API_KEY`, `ANTHROPIC_FOUNDRY_RESOURCE` | `ANTHROPIC_FOUNDRY_MODEL` |
-| Google Gemini | `GEMINI_API_KEY` | `GEMINI_MODEL` (default `gemini-2.5-flash`) |
+| Google Gemini | `GEMINI_API_KEY` | `GEMINI_MODEL` (default `gemini-3.8-flash`) |
 | Ollama / vLLM / LM Studio / OpenRouter | `OPENAI_COMPATIBLE_BASE_URL` | `OPENAI_COMPATIBLE_MODEL`, `OPENAI_COMPATIBLE_API_KEY` |
 
-Any model or deployment name can be typed in the UI; the defaults are just starting points. The model must accept
+Any model or deployment name can be typed in the UI; the defaults are just starting points. The **Models** page
+and the hint under each model box say whether a model suits transcription (custom names are marked as such). The model must accept
 images. For a fully local setup, run Ollama with a vision model and set
 `OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1`.
 
@@ -154,7 +157,7 @@ images. For a fully local setup, run Ollama with a vision model and set
 pyocr extract report.pdf --engine llm -p anthropic --pages 1-5 --format jsonl -o report.jsonl
 pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdown to stdout
 pyocr extract born-digital.pdf --engine native              # embedded text only, no network
-pyocr compare scan.pdf -p openai -m gpt-5                   # per-page OCR / native CER vs an LLM
+pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR / native CER vs an LLM
 pyocr providers                                             # which providers are ready
 python -m pyocr_toolkit --help                              # same CLI without the script on PATH
 ```

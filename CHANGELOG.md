@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Developer task runner: `make` (or `python makefile.py`) lists grouped, rich-rendered commands for setup,
+  linting/tests, running the app (incl. auto-reload `make dev`), building, Docker and housekeeping. `rich` is
+  now a dev dependency.
 - Subtle UI motion: pages and card grids ease in, cards lift on hover, buttons respond to presses, tab panels
   and results fade in, and toasts fade out. While Tesseract or an LLM is working on a page, a scan line sweeps
   the page image, the button shows a spinner (with a flowing gradient for the model), the text box shimmers,

@@ -198,6 +198,9 @@ ruff check src tests
 pyocr serve
 ```
 
+Or use the task runner: `make` lists every developer command grouped by category (`make install`, `make check`,
+`make dev` for auto-reload, `make docker-up`, ...). Without `make` (e.g. on Windows), run `python makefile.py <task>`.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the code layout and how to add a provider.
 
 The project website lives in [`docs/`](docs/) (plain HTML and CSS, no build step) and is deployed to GitHub Pages by

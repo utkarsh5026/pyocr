@@ -32,11 +32,14 @@
         </div>
       </div>
       <div id="llm-options">{% set picker_id = 'ex' %}{% include "_llm_picker.html" %}
-        <label>Image preprocessing <input name="preprocess" list="pre-presets" autocomplete="off"
-          placeholder="None: send the page as rendered" title="A preset name or steps like gray;auto;contrast=1.5">
-          <datalist id="pre-presets"></datalist></label>
-        <p class="small muted" style="margin:-6px 0 0">Tune it visually with {{ icon('sliders') }}<b>Adjust image</b> on the
-          <a href="/documents/{{ doc.id }}/pages/1">Pages</a> view. Each setting becomes its own source, so you can compare runs.</p>
+        <div class="field preprocess-field">
+          <div class="field-head"><label for="ex-preprocess">Image preprocessing</label></div>
+          <input id="ex-preprocess" name="preprocess" list="pre-presets" autocomplete="off"
+            placeholder="None: send the page as rendered" title="A preset name or steps like gray;auto;contrast=1.5">
+          <datalist id="pre-presets"></datalist>
+          <p class="hint">Tune it visually with {{ icon('sliders') }}<b>Adjust image</b> on the
+            <a href="/documents/{{ doc.id }}/pages/1">Pages</a> view. Each setting becomes its own source, so you can compare runs.</p>
+        </div>
         <div class="field per-request">
           <div class="field-head">
             <span class="field-label" id="per-request-label">Pages per request</span>

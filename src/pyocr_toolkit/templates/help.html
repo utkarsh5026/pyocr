@@ -47,7 +47,8 @@
   <dt>Document → Compare</dt><dd>Pick a reference (A) and a candidate (B). You get the whole-document error rates, a per-page CER chart (click a bar to open that page) and the selected page's text side by side, with words only in A and only in B highlighted. It opens on the worst page.</dd>
   <dt><a href="/search">Search</a></dt><dd>Search every document in the library at once.</dd>
   <dt><a href="/jobs">Jobs</a></dt><dd>All background extractions with their progress, errors and token usage.</dd>
-  <dt><a href="/providers">Providers</a></dt><dd>Which LLMs are configured, which settings are missing, and a <i>Test connection</i> button.</dd>
+  <dt><a href="/providers">Providers</a></dt><dd>Which LLMs are configured, which settings are missing, a form to set keys and endpoints in the browser, and a <i>Test connection</i> button.</dd>
+  <dt><a href="/models">Models</a></dt><dd>Search vision models and see whether each is good for transcription, its price and why; list the models your key can use.</dd>
 </dl>
 
 <h2 id="workspaces">Workspaces and batch uploads</h2>
@@ -158,8 +159,12 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
   text snippets. OCR and LLM text is only searchable on pages where it has been extracted.</p>
 
 <h2 id="providers">Setting up providers</h2>
-<p>Run <code>pyocr init</code> to create a <code>.env</code> file, fill in the keys you have, and restart
-  <code>pyocr serve</code>. Open <a href="/providers">Providers</a> to check the setup and click <i>Test connection</i>.</p>
+<p>Easiest: open <a href="/providers">Providers</a>, expand <i>Set up in the browser</i> on a provider card, paste your
+  key and click <i>Save</i>. It takes effect immediately, is stored only on this machine in
+  <code>DATA_DIR/credentials.json</code> (readable only by you), overrides environment variables, and is never sent
+  back to the browser. Tick <i>forget saved value</i> to fall back to the environment again.</p>
+<p>Alternatively run <code>pyocr init</code> to create a <code>.env</code> file, fill in the keys you have, and restart
+  <code>pyocr serve</code>. Either way, click <i>Test connection</i> to check.</p>
 <table class="table compact">
   <tr><th>Provider</th><th>Minimum settings</th></tr>
   <tr><td>Claude (Anthropic API)</td><td><code>ANTHROPIC_API_KEY</code></td></tr>
@@ -171,6 +176,12 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
 </table>
 <p>You can type any model or deployment name in the model box. The suggestions are only hints. The model must accept
   images: for local models, use a vision model such as <code>qwen2.5vl</code> or <code>llama3.2-vision</code>.</p>
+<p>The <a href="/models">Models</a> page is a searchable catalog of vision models rated for this job
+  (<i>Excellent</i>, <i>Good</i>, <i>Fair: clean print only</i>, <i>Not suitable</i>), with prices and the reason
+  for each rating, and links to the benchmarks used. <i>List models</i> asks a provider which models your key can
+  use and rates each one. The same rating appears under every model box as you type; names that aren't in the
+  catalog are marked <i>custom</i> and still work. Ratings are a starting point: measure on your own pages with
+  <i>Compare</i>.</p>
 
 <h2 id="cli">Command line</h2>
 <pre class="code">pyocr serve [--host 0.0.0.0] [--port 8000] [--open]   # start this web app
@@ -180,7 +191,7 @@ pyocr providers                                       # list providers and their
 pyocr extract FILE --engine llm -p anthropic --pages 1-5 --format jsonl -o out.jsonl
 pyocr extract FILE --engine ocr                       # Tesseract, all pages, text to stdout
 pyocr extract FILE --engine native --format md        # embedded text layer only
-pyocr compare FILE -p openai -m gpt-5                 # per-page OCR/native error rate vs an LLM
+pyocr compare FILE -p openai -m gpt-6.2-sol                 # per-page OCR/native error rate vs an LLM
 pyocr import a.pdf b.pdf scans.zip folder/ -w "Q3"    # add many files as one workspace (zips unpacked)
 pyocr import FILE... --no-workspace                   # add to the Library without grouping</pre>
 <p>Documents processed from the command line also appear in the Library, so you can inspect them in the browser afterwards.</p>

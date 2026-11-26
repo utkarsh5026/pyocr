@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Jobs{% endblock %}
 {% block content %}
 <div class="page-head"><div>
@@ -7,7 +8,8 @@
   is kept in memory and resets when the server restarts; the extracted text is stored on disk and is never lost.</p>
 </div></div>
 <div id="all-jobs" class="job-list" data-names='{{ names|tojson }}'>
-  {% if not jobs %}<p class="muted">No jobs yet.</p>{% endif %}
+  {% if not jobs %}<div class="empty"><div class="empty-icon"><span class="emoji" aria-hidden="true">⏳</span></div><h2>No jobs yet</h2>
+    <p>Start one from a document's <b>Overview</b> page.</p></div>{% endif %}
 </div>
 {% endblock %}
 {% block scripts %}<script src="/static/jobs.js?v={{ version }}"></script>{% endblock %}

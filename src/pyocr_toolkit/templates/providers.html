@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Providers{% endblock %}
 {% block content %}
 <div class="page-head"><div>
@@ -8,8 +9,8 @@
 </div></div>
 
 <section class="card">
-  <div class="section-head"><h2>Tesseract OCR</h2>
-    <span class="badge {{ 'ok' if tesseract else 'scan' }}">{{ 'installed' if tesseract else 'not installed' }}</span></div>
+  <div class="section-head"><h2 class="h-icon">{{ icon('cpu') }}Tesseract OCR</h2>
+    <span class="badge {{ 'ok' if tesseract else 'scan' }}">{{ icon('check' if tesseract else 'alert') }}{{ 'installed' if tesseract else 'not installed' }}</span></div>
   {% if tesseract %}
   <p class="small">{{ tesseract_version }} at <code>{{ tesseract }}</code>. Using language
     <code>{{ settings.tesseract_language }}</code> at {{ settings.ocr_dpi }} DPI.
@@ -24,35 +25,70 @@ choco install tesseract                                 # Windows (or the UB Man
   {% endif %}
 </section>
 
-<h2 style="margin-top:32px">LLM providers</h2>
+<div class="section-head" style="margin-top:32px">
+  <h2 class="h-icon">{{ icon('sparkles') }}LLM providers</h2>
+  <a class="btn small" href="/models">{{ icon('grid') }}Browse &amp; search models</a>
+</div>
+<p class="small muted">Set credentials here or in environment variables / <code>.env</code>. Values saved here are
+  stored on this machine in <code>{{ credentials_path }}</code> (owner-only), override the environment, and take
+  effect immediately. Keys are never sent back to the browser.</p>
 <div class="provider-grid">
 {% for p in providers %}
-<section class="card provider" data-provider-id="{{ p.id }}">
+{% set st = cred_status[p.id] %}
+<section class="card provider" data-provider-id="{{ p.id }}"{% if p.configured %} data-provider-ready{% endif %}>
   <div class="section-head">
     <h3>{{ p.label }}</h3>
-    <span class="badge {{ 'ok' if p.configured else 'scan' }}">{{ 'ready' if p.configured else 'not configured' }}</span>
+    <span class="badge {{ 'ok' if p.configured else 'scan' }}">{{ icon('check' if p.configured else 'alert') }}{{ 'ready' if p.configured else 'not configured' }}</span>
   </div>
   <table class="table compact env">
-    {% for e in p.env_status() %}
+    {% for e in st %}
     <tr>
       <td><code>{{ e.name }}</code>{% if e.required %} <span class="badge">required</span>{% endif %}</td>
-      <td class="nowrap">{% if e.state == 'set' %}<span class="good">✓ set</span>{% elif e.state == 'default' %}<span class="muted" title="not set; using the built-in default">default: {{ e.default }}</span>{% else %}<span class="{{ 'bad' if e.required else 'muted' }}">{{ 'missing' if e.required else '–' }}</span>{% endif %}</td>
+      <td class="nowrap">{% if e.state == 'set' %}<span class="good">{{ icon('check') }}set</span>{% if e.saved %} <span class="badge" title="saved on this page; overrides the environment">saved here</span>{% endif %}{% elif e.state == 'default' %}<span class="muted" title="not set; using the built-in default">default: {{ e.default }}</span>{% else %}<span class="{{ 'bad' if e.required else 'muted' }}">{{ 'missing' if e.required else '–' }}</span>{% endif %}</td>
       <td class="small">{{ e.description }}</td>
     </tr>
     {% endfor %}
   </table>
+  <details class="cred-edit">
+    <summary>{{ 'Edit settings' if p.configured else 'Set up in the browser' }}</summary>
+    <form data-cred-form autocomplete="off">
+      {% for e in st if e.editable %}
+      <div class="cred-field">
+        <label for="cred-{{ p.id }}-{{ e.name }}"><code>{{ e.name }}</code>{% if e.required %} <span class="badge">required</span>{% endif %}</label>
+        {% if e.secret %}
+        <input type="password" id="cred-{{ p.id }}-{{ e.name }}" name="{{ e.name }}" autocomplete="new-password" spellcheck="false"
+               placeholder="{{ '•••••••• set – type to replace' if e.state == 'set' else 'paste key' }}">
+        {% else %}
+        <input type="text" id="cred-{{ p.id }}-{{ e.name }}" name="{{ e.name }}" spellcheck="false"
+               {% if e.name.endswith('_MODEL') or e.name.endswith('_DEPLOYMENT') %}list="models-{{ p.id }}"{% endif %}
+               placeholder="{{ e.value if e.value else (e.description) }}">
+        {% endif %}
+        {% if e.saved %}<label class="small cred-reset"><input type="checkbox" data-clear="{{ e.name }}"> forget saved value{% if e.from_env %} (use environment){% endif %}</label>{% endif %}
+      </div>
+      {% endfor %}
+      <div class="row">
+        <button class="btn small primary" type="submit">Save</button>
+        <span class="small muted">Blank fields keep their current value.</span>
+      </div>
+      <div class="small" data-cred-result></div>
+    </form>
+  </details>
+  <datalist id="models-{{ p.id }}">{% for m in p.describe().model_options %}<option value="{{ m.name }}" label="{{ m.rating_label }}{{ ' · ' ~ m.label if m.label is defined }}">{% endfor %}</datalist>
   <div class="row">
-    <input data-test-model value="{{ p.default_model or '' }}" placeholder="{{ p.model_hint }}" class="grow">
-    <button class="btn small" data-test {{ 'disabled' if not p.configured }}>Test connection</button>
-    {% if p.docs_url %}<a class="small" href="{{ p.docs_url }}" target="_blank" rel="noopener">Get credentials ↗</a>{% endif %}
+    <input data-test-model value="{{ p.default_model or '' }}" placeholder="{{ p.model_hint }}" class="grow"
+           list="models-{{ p.id }}" autocomplete="off" aria-label="Model to test">
+    <button class="btn small" data-test {{ 'disabled' if not p.configured }}>{{ icon('plug') }}Test connection</button>
+    <a class="small" href="/models?provider={{ p.id }}">Models {{ icon('external') }}</a>
+    {% if p.docs_url %}<a class="small" href="{{ p.docs_url }}" target="_blank" rel="noopener">Get credentials {{ icon('external') }}</a>{% endif %}
   </div>
+  <div class="small model-verdict" data-model-verdict></div>
   <div class="small" data-test-result></div>
 </section>
 {% endfor %}
 </div>
 
 <section class="card">
-  <h2>Rendering settings in effect</h2>
+  <h2 class="h-icon">{{ icon('settings') }}Rendering settings in effect</h2>
   <table class="table compact">
     <tr><td><code>DATA_DIR</code></td><td>{{ settings.data_dir }}</td><td class="small">where uploads and results are stored</td></tr>
     <tr><td><code>PREVIEW_DPI</code></td><td>{{ settings.preview_dpi }}</td><td class="small">page images in the browser</td></tr>

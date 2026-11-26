@@ -7,7 +7,7 @@
   <meta name="description" content="A local web app and CLI to inspect and compare PDF/image text extraction: native text, Tesseract OCR and vision LLMs (Claude, GPT, Gemini, Azure, local models), side by side.">
   <meta property="og:title" content="pyocr-toolkit">
   <meta property="og:description" content="See exactly what text you get out of a PDF, and compare native text, Tesseract OCR and LLM transcription page by page.">
-  <meta property="og:image" content="screenshots/compare.png">
+  <meta property="og:image" content="media/hero-poster.webp">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="icon" href="logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
@@ -66,9 +66,13 @@
     </div>
 
     <figure class="hero-shot window">
-      <div class="window-bar"><i></i><i></i><i></i><span>localhost:8000 · Page inspector</span></div>
-      <img src="screenshots/inspector.png" alt="Page inspector: a scanned page image next to its Tesseract OCR text" class="themed"
-           data-light="screenshots/inspector.png" data-dark="screenshots/inspector-dark.png" width="2160" height="1350">
+      <div class="window-bar"><i></i><i></i><i></i><span>pyocr-toolkit in 24 seconds · click to replay</span></div>
+      <video class="hero-video" muted playsinline preload="none" poster="media/hero-poster.webp" width="1280" height="800"
+             aria-label="A 24-second demo: broken extracted text, a scanned page read three ways (native text, Tesseract OCR and an LLM), the error rate between them per page and a word-level diff, an LLM quietly fixing a typo that is really in the file, the app's views, and the install command. Click to replay.">
+        <source src="media/hero-demo.mp4" type="video/mp4">
+      </video>
+      <img class="hero-still themed" src="tours/inspector-light.png" data-light="tours/inspector-light.png" data-dark="tours/inspector-dark.png"
+           alt="Page inspector: a scanned page next to its native, OCR and LLM text" width="1280" height="800">
     </figure>
   </div>
 </section>
@@ -135,14 +139,14 @@
 <section class="section" id="tour">
   <div class="wrap">
     <h2 class="section-title">A quick tour</h2>
-    <p class="section-sub">Real screenshots of the app, taken on two sample documents.</p>
+    <p class="section-sub">Recordings of the real app on demo documents. The LLM in them is a local stand-in, so they can be remade without an API key.</p>
 
     <div class="tabs" role="tablist">
       <button role="tab" class="tab active" data-shot="compare">Compare</button>
       <button role="tab" class="tab" data-shot="inspector">Page inspector</button>
       <button role="tab" class="tab" data-shot="library">Library</button>
       <button role="tab" class="tab" data-shot="search">Search</button>
-      <button role="tab" class="tab" data-shot="home">Home</button>
+      <button role="tab" class="tab" data-shot="upload">Upload &amp; extract</button>
     </div>
 
     <div class="tour">
@@ -151,8 +155,8 @@
           <h3>Compare</h3>
           <p>Pick a <b>reference</b> (the text you trust more) and a <b>candidate</b>. You get document-level CER and WER,
             a bar per page coloured by how bad it is, and an aligned diff of the selected page.</p>
-          <p class="note">Here Tesseract is scored against a born-digital PDF's own text, so the reference is ground truth:
-            it read <code>NB-0417/ii</code> as <code>NB-0417/i</code>.</p>
+          <p class="note">Here Tesseract is scored against an LLM's transcription of a scan: it read <code>B1</code> as
+            <code>Bl</code> and <code>13:20</code> as <code>13220</code>. Page 3 has no LLM text yet, so it isn't scored.</p>
         </div>
         <div class="tour-item" data-shot="inspector" hidden>
           <h3>Page inspector</h3>
@@ -171,15 +175,16 @@
           <p>Case-insensitive search across all documents and every source. Phrases match across line breaks, and each hit
             says which source it came from.</p>
         </div>
-        <div class="tour-item" data-shot="home" hidden>
-          <h3>Home</h3>
-          <p>Drop files to upload and check setup status at a glance: how many LLM providers are configured and whether
-            Tesseract is ready.</p>
+        <div class="tour-item" data-shot="upload" hidden>
+          <h3>Upload &amp; extract</h3>
+          <p>Drop a file and pick an engine. Extraction runs as a background job, page by page, with progress and token
+            usage, and every page's text is ready to read, compare or export.</p>
+          <p class="note">This is a scanned invoice, so Tesseract does the reading.</p>
         </div>
       </div>
       <figure class="window tour-shot">
         <div class="window-bar"><i></i><i></i><i></i><span id="tour-url">localhost:8000 · Compare</span></div>
-        <img id="tour-img" src="screenshots/compare.png" alt="Compare view" width="2160" height="1350">
+        <img id="tour-img" src="tours/compare-light.webp" alt="Compare view" width="1280" height="800">
       </figure>
     </div>
   </div>
@@ -226,7 +231,7 @@ docker compose up -d</code></pre>
     --pages 1-5 --format jsonl -o report.jsonl
 <span class="p">$</span> pyocr extract scan.tiff --engine ocr --format md
 <span class="p">$</span> pyocr extract born-digital.pdf --engine native
-<span class="p">$</span> pyocr compare scan.pdf -p openai -m gpt-5</code></pre>
+<span class="p">$</span> pyocr compare scan.pdf -p openai -m gpt-6.2-sol</code></pre>
       </div>
     </div>
 
@@ -310,7 +315,7 @@ choco install tesseract                                 # Windows (or the UB Man
 </footer>
 
 <script>
-  // theme toggle: swaps CSS tokens and the dark/light screenshots
+  // theme toggle: swaps CSS tokens and the dark/light pictures
   const root = document.documentElement;
   function applyShots() {
     document.querySelectorAll('img.themed').forEach(img => {
@@ -331,21 +336,41 @@ choco install tesseract                                 # Windows (or the UB Man
     setTimeout(() => b.textContent = 'Copy', 1600);
   }));
 
-  // tour tabs
-  const names = { compare: 'Compare', inspector: 'Page inspector', library: 'Library', search: 'Search', home: 'Home' };
-  const darkAvail = { compare: 'compare-dark', inspector: 'inspector-dark' };
+  // tour tabs: each view's recording (docs/tours, made by .claude/skills/demo/tour_shots.py), in the page's theme;
+  // with "reduce motion", its last frame instead
+  const names = { compare: 'Compare', inspector: 'Page inspector', library: 'Library', search: 'Search', upload: 'Upload & extract' };
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let current = 'compare';
   function setTour(shot) {
     current = shot;
     document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.shot === shot));
     document.querySelectorAll('.tour-item').forEach(t => t.hidden = t.dataset.shot !== shot);
-    const file = (root.dataset.theme === 'dark' && darkAvail[shot]) || shot;
     const img = document.getElementById('tour-img');
-    img.src = `screenshots/${file}.png`; img.alt = names[shot] + ' view';
+    img.src = `tours/${shot}-${root.dataset.theme === 'dark' ? 'dark' : 'light'}.${still ? 'png' : 'webp'}`;
+    img.alt = names[shot] + ' view';
     document.getElementById('tour-url').textContent = 'localhost:8000 · ' + names[shot];
   }
   document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => setTour(t.dataset.shot)));
   setTour('compare');
+
+  // hero video: plays by itself while it's on screen and the tab is in front, stays on its last frame once it ends,
+  // and replays on click. Small screens and "reduce motion" get a still instead (see style.css).
+  (function () {
+    const video = document.querySelector('.hero-video');
+    if (!video || getComputedStyle(video).display === 'none') return;
+    let visible = false, wanted = true;
+    const play = () => { if (wanted && visible && !document.hidden) video.play().catch(() => {}); };
+    const update = () => { if (visible && !document.hidden) play(); else if (!video.paused) video.pause(); };
+    video.addEventListener('click', () => { wanted = true; video.currentTime = 0; play(); });
+    video.addEventListener('ended', () => { wanted = false; });
+    document.addEventListener('visibilitychange', update);
+    const start = () => {
+      video.preload = 'auto';
+      new IntersectionObserver((entries) => { visible = entries[entries.length - 1].isIntersecting; update(); },
+                               { threshold: 0.35 }).observe(video);
+    };
+    if (document.readyState === 'complete') start(); else addEventListener('load', start);
+  })();
 </script>
 </body>
 </html>

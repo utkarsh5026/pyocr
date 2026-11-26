@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Search{% endblock %}
 {% block content %}
 <div class="page-head"><div>
@@ -8,12 +9,12 @@
 <form id="lib-search" action="/search">
   <div class="search-bar">
     <input type="search" name="q" id="q" value="{{ q }}" placeholder="Words or a phrase…" autofocus>
-    <button class="btn primary">Search</button>
+    <button class="btn primary">{{ icon('search') }}Search</button>
   </div>
   <div class="chips" style="margin:4px 0 22px">
-    <label><input type="checkbox" name="src" value="native" checked> Native text</label>
-    <label><input type="checkbox" name="src" value="ocr" checked> OCR</label>
-    <label><input type="checkbox" name="src" value="llm" checked> LLM</label>
+    <label><input type="checkbox" name="src" value="native" checked> {{ icon('type') }}Native text</label>
+    <label><input type="checkbox" name="src" value="ocr" checked> {{ icon('cpu') }}OCR</label>
+    <label><input type="checkbox" name="src" value="llm" checked> {{ icon('sparkles') }}LLM</label>
   </div>
 </form>
 <div id="lib-results"></div>

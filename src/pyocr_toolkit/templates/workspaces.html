@@ -7,7 +7,7 @@
     <h1>Workspaces</h1>
     <p>A workspace groups documents uploaded together, such as several PDFs or a zip, under one name you can edit.</p>
   </div>
-  <button type="button" class="btn" id="ws-new">{{ icon('folder') }}New empty workspace</button>
+  <button type="button" class="btn" id="ws-new">{{ icon('folders') }}New empty workspace</button>
 </div>
 {% if spaces %}
 <div class="lib-grid ws-grid">
@@ -15,7 +15,7 @@
   <a class="card ws-card" href="/workspaces/{{ w.id }}">
     <div class="ws-thumbs">
       {% for d in w.docs[:3] %}<img loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=40" alt="">{% endfor %}
-      {% if not w.docs %}<span class="ws-thumbs-empty">{{ icon('folder') }}</span>{% endif %}
+      {% if not w.docs %}<span class="ws-thumbs-empty">{{ icon('folders') }}</span>{% endif %}
     </div>
     <div class="lib-body">
       <b class="file-name" title="{{ w.name }}">{{ w.name }}</b>
@@ -32,7 +32,7 @@
 </div>
 {% else %}
 <div class="empty">
-  <div class="empty-icon">{{ icon('folder') }}</div>
+  <div class="empty-icon">{{ icon('folders') }}</div>
   <h2>No workspaces yet</h2>
   <p>Upload several files at once, or a <b>.zip</b>, and pyocr offers to put them in a workspace.
     You can also start an empty one and add files to it.</p>

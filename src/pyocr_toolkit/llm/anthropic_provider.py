@@ -8,6 +8,7 @@ import re
 import anthropic
 
 from ..config import Settings
+from . import catalog
 from .base import Provider, ProviderError, TranscriptionRequest, TranscriptionResult
 
 # Models that accept the server-side refusal fallback (``fallbacks``). When a
@@ -38,7 +39,7 @@ def _supports_effort(model: str) -> bool:
 
 
 class _ClaudeBase(Provider):
-    suggested_models = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-fable-5-2"]
+    suggested_models = catalog.recommended("anthropic") + ["claude-haiku-5-5"]
     supports_server_fallback = True
 
     def __init__(self, settings: Settings) -> None:
@@ -124,6 +125,7 @@ class AnthropicProvider(_ClaudeBase):
     id = "anthropic"
     label = "Claude (Anthropic API)"
     docs_url = "https://console.anthropic.com/settings/keys"
+    can_list_models = True
     env_vars = [
         ("ANTHROPIC_API_KEY", True, "API key from the Claude Console"),
         ("ANTHROPIC_MODEL", False, "default model, e.g. claude-opus-5-5"),
@@ -141,6 +143,12 @@ class AnthropicProvider(_ClaudeBase):
         return anthropic.AsyncAnthropic(
             api_key=self.settings.anthropic_api_key, timeout=self.settings.llm_timeout_s
         )
+
+    async def list_models(self) -> list[str] | None:
+        try:
+            return [m.id async for m in self.client.models.list(limit=100)]
+        except anthropic.APIError as exc:
+            raise ProviderError(f"Could not list Claude models: {exc}") from exc
 
 
 class AnthropicFoundryProvider(_ClaudeBase):

@@ -23,7 +23,7 @@ from . import __version__, compare, search
 from .config import Settings, get_settings
 from .documents import DocumentError, DocumentStore, OCRUnavailableError, OpenDocument
 from .jobs import JobManager
-from .llm import PROMPT_MODES, ProviderError, build_providers, catalog
+from .llm import MAX_PAGES_PER_REQUEST, PROMPT_MODES, ProviderError, build_providers, catalog
 from .service import LLMSpec, Services, parse_pages
 from .workspaces import WorkspaceStore, ingest, suggest_names
 
@@ -36,10 +36,12 @@ class LLMRunBody(BaseModel):
     model: str | None = None
     prompt_mode: str = "verbatim"
     custom_prompt: str | None = None
+    pages_per_request: int = Field(1, ge=1, le=MAX_PAGES_PER_REQUEST,
+                                   description="pages sent together in one LLM request (1 = one page per request)")
     force: bool = False
 
     def spec(self) -> LLMSpec:
-        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt)
+        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt, self.pages_per_request)
 
 
 class TextRef(BaseModel):
@@ -138,6 +140,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "version": __version__,
             "providers": [p.describe() for p in providers.values()],
             "prompt_modes": [{"id": k, "label": v["label"], "prompt": v["system"]} for k, v in PROMPT_MODES.items()],
+            "max_pages_per_request": MAX_PAGES_PER_REQUEST,
             "tesseract_available": shutil.which("tesseract") is not None,
             "tesseract_language": settings.tesseract_language,
             "max_upload_mb": settings.max_upload_mb,

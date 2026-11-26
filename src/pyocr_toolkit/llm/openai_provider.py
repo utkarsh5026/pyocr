@@ -36,19 +36,18 @@ class _OpenAIChatBase(Provider):
             raise ProviderError(f"{self.label}: could not list models: {exc}") from exc
 
     async def _transcribe(self, req: TranscriptionRequest, model: str) -> TranscriptionResult:
-        data_url = f"data:{req.mime_type};base64,{base64.b64encode(req.image).decode('ascii')}"
+        parts: list[dict] = [{"type": "text", "text": req.user_prompt}]
+        for page in req.page_images():
+            if page.label:
+                parts.append({"type": "text", "text": page.label})
+            data_url = f"data:{page.mime_type};base64,{base64.b64encode(page.image).decode('ascii')}"
+            parts.append({"type": "image_url", "image_url": {"url": data_url, "detail": "high"}})
         try:
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
                     {"role": "system", "content": req.system_prompt},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": req.user_prompt},
-                            {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
-                        ],
-                    },
+                    {"role": "user", "content": parts},
                 ],
                 **{self.token_param: req.max_output_tokens},
             )

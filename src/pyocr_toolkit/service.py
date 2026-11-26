@@ -9,6 +9,12 @@ source":
 * ``llm:<key>``    - one LLM configuration (provider + model + prompt); the key
                      is derived from those three, so it is identical across pages
 * ``llm``          - shorthand for "the most recent LLM result on each page"
+
+LLM pages can also be sent several to a request (``LLMSpec.pages_per_request``),
+the way many production pipelines batch them. The reply is split back into pages
+by marker lines, and every page is still cached on its own, so a batched run is
+just another ``llm:<key>`` source: read, export and compare it like any other,
+including against the same model run one page at a time.
 """
 
 from __future__ import annotations
@@ -24,7 +30,24 @@ import pymupdf
 from .config import Settings
 from .credentials import CredentialStore
 from .documents import DocumentError, OpenDocument
-from .llm import PROMPT_MODES, USER_PROMPT, Provider, ProviderError, TranscriptionRequest, catalog, resolve_prompt
+from .llm import (
+    BATCH_USER_PROMPT,
+    MAX_PAGES_PER_REQUEST,
+    PROMPT_MODES,
+    USER_PROMPT,
+    PageImage,
+    Provider,
+    ProviderError,
+    TranscriptionRequest,
+    TranscriptionResult,
+    batch_rules,
+    catalog,
+    resolve_prompt,
+    split_batch,
+)
+
+#: stop reasons that mean "the output limit cut the reply short" (Claude, OpenAI, Gemini)
+_TRUNCATED = {"max_tokens", "length", "MAX_TOKENS"}
 
 
 @dataclass
@@ -33,6 +56,8 @@ class LLMSpec:
     model: str | None = None
     prompt_mode: str = "verbatim"
     custom_prompt: str | None = None
+    #: pages sent together in one request; 1 = one page per request (the default)
+    pages_per_request: int = 1
 
 
 class Services:
@@ -50,7 +75,12 @@ class Services:
         provider = self.providers.get(spec.provider)
         if provider is None:
             raise ValueError(f"unknown provider '{spec.provider}'")
+        if not 1 <= spec.pages_per_request <= MAX_PAGES_PER_REQUEST:
+            raise ValueError(f"pages per request must be between 1 and {MAX_PAGES_PER_REQUEST}")
         system_prompt = resolve_prompt(spec.prompt_mode, spec.custom_prompt)
+        if spec.pages_per_request > 1:
+            # part of the prompt, so part of the cache key: a batched run is its own source
+            system_prompt += batch_rules(spec.pages_per_request)
         model = (spec.model or provider.default_model or "").strip()
         return provider, model, system_prompt
 
@@ -91,7 +121,15 @@ class Services:
         ``on_start`` is called once this page holds an ``llm_semaphore`` slot, just
         before the provider call. Jobs use it to tell "waiting for a slot" apart
         from "the model is reading this page"; it isn't called for cache hits.
+
+        With a batched spec the page goes out as a batch of one, so it lands in the
+        same source as the rest of that run.
         """
+        if spec.pages_per_request > 1:
+            outcome = (await self.run_llm_batch(doc, [page], spec, force=force, on_start=on_start))[page]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
         provider, model, system_prompt = self.resolve_spec(spec)
         key = doc.llm_cache_key(provider.id, model, system_prompt)
         if not force:
@@ -99,14 +137,7 @@ class Services:
             if cached:
                 return {**cached, "key": key, "cached": True}
 
-        s = self.settings
-        # PNG keeps text edges crisp; fall back to JPEG for huge colour pages
-        # (photos / colour scans) to stay inside provider upload limits.
-        image = await asyncio.to_thread(doc.render, page, s.llm_dpi, "png", s.llm_max_edge_px)
-        mime = "image/png"
-        if len(image) > 3_500_000:
-            image = await asyncio.to_thread(doc.render, page, s.llm_dpi, "jpeg", s.llm_max_edge_px)
-            mime = "image/jpeg"
+        image, mime = await self._render_for_llm(doc, page)
 
         async with self.llm_semaphore:
             if on_start:
@@ -134,6 +165,168 @@ class Services:
         }
         doc.save_llm_result(page, key, record)
         return {**record, "key": key, "cached": False}
+
+    async def _render_for_llm(self, doc: OpenDocument, page: int) -> tuple[bytes, str]:
+        s = self.settings
+        # PNG keeps text edges crisp; fall back to JPEG for huge colour pages
+        # (photos / colour scans) to stay inside provider upload limits.
+        image = await asyncio.to_thread(doc.render, page, s.llm_dpi, "png", s.llm_max_edge_px)
+        if len(image) <= 3_500_000:
+            return image, "image/png"
+        return await asyncio.to_thread(doc.render, page, s.llm_dpi, "jpeg", s.llm_max_edge_px), "image/jpeg"
+
+    # ------------------------------------------------------- batched LLM
+    def plan_llm_chunks(self, doc: OpenDocument, pages: list[int], spec: LLMSpec,
+                        force: bool = False) -> tuple[list[int], list[list[int]]]:
+        """``(cached_pages, chunks)``: how a run over ``pages`` is split into requests.
+
+        With one page per request every page is its own chunk and the cache is checked
+        per page as before. With batching, pages already cached are left out first, so
+        each request carries ``pages_per_request`` pages that really need the model.
+        """
+        n = spec.pages_per_request
+        if n <= 1:
+            return [], [[p] for p in pages]
+        key = self.llm_key(doc, spec)
+        cached = [] if force else [p for p in pages if doc.load_llm_result(p, key)]
+        skip = set(cached)
+        todo = [p for p in pages if p not in skip]
+        return cached, [todo[i:i + n] for i in range(0, len(todo), n)]
+
+    async def _send_pages(self, provider: Provider, model: str, system_prompt: str, pages: list[int],
+                          images: dict[int, tuple[bytes, str]],
+                          on_start: Callable[[], None] | None = None) -> TranscriptionResult:
+        """One request carrying ``pages``, each labelled with its 1-based number."""
+        first_image, first_mime = images[pages[0]]
+        req = TranscriptionRequest(
+            image=first_image, mime_type=first_mime, system_prompt=system_prompt, user_prompt=BATCH_USER_PROMPT,
+            model=model, max_output_tokens=self.settings.llm_batch_max_output_tokens,
+            pages=[PageImage(images[p][0], images[p][1], f"Page {p + 1}") for p in pages],
+        )
+        async with self.llm_semaphore:
+            if on_start:
+                on_start()
+            try:
+                return await provider.transcribe(req)
+            except ProviderError as exc:
+                if "token" in str(exc).lower():
+                    raise ProviderError(f"{exc} (this request carried {len(pages)} page(s); if the model allows "
+                                        f"fewer output tokens, lower LLM_BATCH_MAX_OUTPUT_TOKENS)") from exc
+                raise
+
+    async def run_llm_batch(self, doc: OpenDocument, pages: list[int], spec: LLMSpec, force: bool = False,
+                            on_start: Callable[[], None] | None = None) -> dict[int, dict[str, Any] | Exception]:
+        """Transcribe ``pages`` in one request and split the reply back into pages.
+
+        Returns ``{page: result}`` for every page, where a result is the same dict
+        :meth:`run_llm_page` returns, or the exception for that page. Cached pages are
+        returned without a call. If the batched request itself fails, the error is
+        raised: every page in it failed the same way.
+
+        A page the reply can't be matched to (marker missing or repeated, or cut off by
+        the output limit) is re-sent on its own, with the same prompt, so it still
+        lands in this source; the record says so in ``warnings``. Tokens and latency of
+        the shared request are split evenly over its pages, so per-page and per-source
+        totals still add up to what was paid; ``batch`` holds the request's totals.
+        """
+        provider, model, system_prompt = self.resolve_spec(spec)
+        key = doc.llm_cache_key(provider.id, model, system_prompt)
+        out: dict[int, dict[str, Any] | Exception] = {}
+        todo: list[int] = []
+        for p in pages:
+            cached = None if force else doc.load_llm_result(p, key)
+            if cached:
+                out[p] = {**cached, "key": key, "cached": True}
+            else:
+                todo.append(p)
+        if not todo:
+            return out
+        images = {p: await self._render_for_llm(doc, p) for p in todo}
+        result = await self._send_pages(provider, model, system_prompt, todo, images, on_start)
+
+        texts, problems = split_batch(result.text, [p + 1 for p in todo])
+        truncated = result.stop_reason in _TRUNCATED
+        shared_warnings = [w for w in result.warnings if "max token limit" not in w]
+        if truncated and texts:
+            # the last page in the reply was still being written when the limit hit
+            texts.pop([p + 1 for p in todo if p + 1 in texts][-1])
+            problems.append("the reply hit the output-token limit")
+        size = len(todo)
+        batch = {"pages": todo, "size": size, "input_tokens": result.input_tokens,
+                 "output_tokens": result.output_tokens, "latency_ms": result.latency_ms, "problems": problems}
+
+        def share(total: int | None, i: int) -> int | None:
+            if total is None:
+                return None
+            q, r = divmod(total, size)
+            return q + (1 if i < r else 0)
+
+        def save(i: int, page: int, text: str, res: TranscriptionResult, warnings: list[str],
+                 extra: TranscriptionResult | None = None) -> dict[str, Any]:
+            def plus(a, b):
+                return a if b is None else (a or 0) + b
+            record = {
+                "provider": provider.id,
+                "provider_label": provider.label,
+                "model": res.model,
+                "requested_model": model,
+                "prompt_mode": spec.prompt_mode,
+                "prompt": system_prompt if spec.prompt_mode == "custom" else None,
+                "text": text,
+                "latency_ms": round(plus(result.latency_ms / size, extra.latency_ms if extra else None), 1),
+                "input_tokens": plus(share(result.input_tokens, i), extra.input_tokens if extra else None),
+                "output_tokens": plus(share(result.output_tokens, i), extra.output_tokens if extra else None),
+                "stop_reason": res.stop_reason,
+                "warnings": warnings,
+                "image_bytes": len(images[page][0]),
+                "image_mime": images[page][1],
+                "created_at": time.time(),
+                "pages_per_request": spec.pages_per_request,
+                "batch": {**batch, "retried_alone": extra is not None},
+            }
+            doc.save_llm_result(page, key, record)
+            return {**record, "key": key, "cached": False}
+
+        async def alone(i: int, page: int) -> dict[str, Any] | Exception:
+            reason = "; ".join(problems) or "the reply could not be matched to this page"
+            try:
+                single = await self._send_pages(provider, model, system_prompt, [page], images)
+            except ProviderError as exc:
+                return ProviderError(f"page {page + 1} was not in the batched reply ({reason}) and re-sending "
+                                     f"it alone failed: {exc}")
+            found, why = split_batch(single.text, [page + 1])
+            if page + 1 not in found:
+                return ProviderError(f"page {page + 1}: the model's reply could not be matched to this page "
+                                     f"({'; '.join(why)}); try again or use one page per request")
+            note = f"not in the batched reply ({reason}); transcribed on its own"
+            return save(i, page, found[page + 1], single, [note, *single.warnings], extra=single)
+
+        retry: list[tuple[int, int]] = []
+        for i, page in enumerate(todo):
+            if page + 1 in texts:
+                out[page] = save(i, page, texts[page + 1], result, list(shared_warnings))
+            else:
+                retry.append((i, page))
+        for (_, page), outcome in zip(retry, await asyncio.gather(*(alone(i, p) for i, p in retry))):
+            out[page] = outcome
+        return {p: out[p] for p in pages}
+
+    async def run_llm_pages(self, doc: OpenDocument, pages: list[int], spec: LLMSpec,
+                            force: bool = False) -> dict[int, dict[str, Any] | Exception]:
+        """Transcribe many pages (one or several per request); ``{page: result or exception}``."""
+        if spec.pages_per_request <= 1:
+            results = await asyncio.gather(*(self.run_llm_page(doc, p, spec, force=force) for p in pages),
+                                           return_exceptions=True)
+            return dict(zip(pages, results))
+        cached, chunks = self.plan_llm_chunks(doc, pages, spec, force)
+        groups = ([cached] if cached else []) + chunks
+        results = await asyncio.gather(*(self.run_llm_batch(doc, g, spec, force=force) for g in groups),
+                                       return_exceptions=True)
+        out: dict[int, dict[str, Any] | Exception] = {}
+        for group, res in zip(groups, results):
+            for p in group:
+                out[p] = res if isinstance(res, BaseException) else res[p]
+        return {p: out[p] for p in pages}
 
     async def test_provider(self, provider_id: str, model: str | None) -> dict[str, Any]:
         """Send a tiny generated image and report what came back."""
@@ -207,7 +400,10 @@ class Services:
                 entry = llm.setdefault(r["key"], {
                     "id": f"llm:{r['key']}", "kind": "llm", "key": r["key"],
                     "provider": r["provider"], "model": r["model"], "prompt_mode": r.get("prompt_mode"),
-                    "label": f"{r.get('provider_label') or r['provider']} · {r['model']} · {r.get('prompt_mode')}",
+                    "label": f"{r.get('provider_label') or r['provider']} · {r['model']} · {r.get('prompt_mode')}"
+                             + (f" · {r['pages_per_request']} pages/request" if r.get("pages_per_request", 1) > 1
+                                else ""),
+                    "pages_per_request": r.get("pages_per_request", 1),
                     "pages": [], "input_tokens": 0, "output_tokens": 0, "latency_ms": 0.0,
                     "updated_at": 0.0,
                 })

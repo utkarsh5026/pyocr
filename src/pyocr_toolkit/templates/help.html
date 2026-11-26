@@ -103,6 +103,24 @@
 <p>Every provider + model + prompt combination is stored separately, so you can run several and compare them.
   Results are cached: repeating a request costs nothing unless you click <i>re-run</i>.</p>
 
+<h3 id="batching">Several pages per request</h3>
+<p>Many pipelines send a few pages in one LLM call instead of one call per page. To measure that setup, set
+  <b>Pages per request</b> on the Overview page (or <code>--pages-per-request N</code> on the command line).</p>
+<ul>
+  <li><b>How it works.</b> Each image goes out right after a label such as <i>Page 5</i>. The prompt asks the model to
+    start each page with a line <code>=== PAGE 5 ===</code>, and the reply is split at those lines. Every page is
+    still stored, scored and exported on its own.</li>
+  <li><b>When the reply doesn't match.</b> If a page's marker is missing or repeated, or the output limit cut the
+    reply short, that page is sent again on its own (with the same prompt) and gets a warning. Text is never assigned
+    to a page by guessing.</li>
+  <li><b>Its own source.</b> The page count per request is part of the prompt, so "5 pages per request" is a separate
+    source from one page per request. Compare the two to see whether batching costs accuracy on your documents.</li>
+  <li><b>Cost.</b> Image and output tokens stay the same, so batching saves only the repeated system prompt (roughly
+    10% of input tokens). It mostly means fewer requests. Tokens of a shared request are split evenly over its pages.</li>
+  <li><b>Limits.</b> Up to 20 pages per request. The output limit for batched requests is
+    <code>LLM_BATCH_MAX_OUTPUT_TOKENS</code> (default 32000); lower it if your model allows less.</li>
+</ul>
+
 <h2 id="metrics">Comparing: CER and WER</h2>
 <p>To find out how wrong a text is, compare it with a text you trust more: the <b>reference</b>. The basic quantity is
   <b>edit distance</b> (Levenshtein distance): the smallest number of single-item <i>insertions</i>, <i>deletions</i> and
@@ -190,6 +208,7 @@ pyocr init                                            # write a .env template he
 pyocr doctor                                          # check Tesseract, providers, data dir
 pyocr providers                                       # list providers and their status
 pyocr extract FILE --engine llm -p anthropic --pages 1-5 --format jsonl -o out.jsonl
+pyocr extract FILE --engine llm --pages-per-request 5  # 5 pages in each LLM request
 pyocr extract FILE --engine ocr                       # Tesseract, all pages, text to stdout
 pyocr extract FILE --engine native --format md        # embedded text layer only
 pyocr compare FILE -p openai -m gpt-6.2-sol                 # per-page OCR/native error rate vs an LLM

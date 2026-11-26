@@ -166,6 +166,7 @@ images. For a fully local setup, run Ollama with a vision model and set
 
 ```bash
 pyocr extract report.pdf --engine llm -p anthropic --pages 1-5 --format jsonl -o report.jsonl
+pyocr extract report.pdf --engine llm --pages-per-request 5  # 5 pages in each LLM request
 pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdown to stdout
 pyocr extract born-digital.pdf --engine native              # embedded text only, no network
 pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR / native CER vs an LLM
@@ -175,6 +176,18 @@ python -m pyocr_toolkit --help                              # same CLI without t
 ```
 
 Documents processed on the command line also appear in the web app's library.
+
+### Several pages per LLM request
+
+If your pipeline sends a few pages in one LLM call, set **Pages per request** on the Overview page (or
+`--pages-per-request N`, up to 20) to measure that setup. Each image goes out right after a label like `Page 5`, and the
+model starts each page with `=== PAGE 5 ===`. The reply is split there, and each page is stored, scored and exported on
+its own. A page whose marker is missing or repeated, or that the output limit cut off, is sent again on its own and
+gets a warning, so text is never assigned to a page by guessing. The batch size is part of the prompt, so a batched
+run is its own source: compare it with one page per request to see what batching costs in accuracy. Tokens of a
+shared request are split evenly over its pages. Batching saves only the repeated system prompt (about 10% of input
+tokens), so its main effect is fewer requests. `LLM_BATCH_MAX_OUTPUT_TOKENS` (default 32000) sets the output limit
+for these requests.
 
 ### Batch uploads and workspaces
 

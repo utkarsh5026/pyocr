@@ -13,7 +13,14 @@
         <label><input type="radio" name="kind" value="ocr"> {{ icon('cpu') }}Tesseract OCR</label>
       </div>
       <label>Pages <input name="pages" placeholder="All pages  (or e.g. 1-5, 9)"></label>
-      <div id="llm-options">{% set picker_id = 'ex' %}{% include "_llm_picker.html" %}</div>
+      <div id="llm-options">{% set picker_id = 'ex' %}{% include "_llm_picker.html" %}
+        <label class="per-request">Pages per request
+          <input name="per_request" type="number" min="1" max="20" value="1" inputmode="numeric">
+        </label>
+        <p class="hint">1 sends each page on its own. A higher number sends that many pages
+          in one request, as batching pipelines do. The reply is split back into pages, and the run becomes its own
+          source, so you can compare it with one page per request.</p>
+      </div>
       <label class="check"><input type="checkbox" name="force"> Re-run pages that are already extracted</label>
       <div class="row" style="margin-top:4px">
         <button class="btn primary" type="submit">{{ icon('play') }}Start extraction</button>

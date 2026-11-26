@@ -7,13 +7,17 @@ const PAGE_COUNT = +docRoot.dataset.pageCount;
 let picker;
 
 const kind = () => $("#extract-form input[name=kind]:checked").value;
+const perRequestIn = $("#extract-form input[name=per_request]");
+/** Pages per LLM request (1 = one page per request). */
+const perRequest = () => Math.max(1, Math.min(+perRequestIn.max, Math.floor(+perRequestIn.value) || 1));
 
 function updateForm() {
   $("#llm-options").hidden = kind() !== "llm";
   const pages = $("#extract-form input[name=pages]").value.trim();
   const what = pages ? `pages ${pages}` : `all ${PAGE_COUNT} page${PAGE_COUNT === 1 ? "" : "s"}`;
+  const n = perRequest();
   $("#extract-hint").textContent = kind() === "llm" && picker
-    ? `Sends ${what} as images to ${picker.describe()}`
+    ? `Sends ${what} as images to ${picker.describe()}${n > 1 ? `, ${n} pages per request` : ""}`
     : `Runs locally on ${what}; about 1–5 s per page`;
 }
 
@@ -51,10 +55,12 @@ $("#extract-form").addEventListener("submit", guard(async (e) => {
   const form = e.target;
   const body = { kind: kind(), pages: form.pages.value.trim() || null, force: form.force.checked };
   if (body.kind === "llm") {
-    body.llm = picker.spec();
+    body.llm = { ...picker.spec(), pages_per_request: perRequest() };
+    localStorage.setItem("pyocr.perRequest", String(body.llm.pages_per_request));
     const n = body.pages ? `pages ${body.pages}` : `all ${PAGE_COUNT} pages`;
-    if (!confirm(`Send ${n} to ${picker.describe()}?\n\nPages already transcribed with this model and prompt are ` +
-      (body.force ? "RE-SENT (re-run is on)." : "skipped."))) return;
+    const batch = body.llm.pages_per_request > 1 ? `, ${body.llm.pages_per_request} pages per request` : "";
+    if (!confirm(`Send ${n} to ${picker.describe()}${batch}?\n\nPages already transcribed with this model, prompt ` +
+      "and pages per request are " + (body.force ? "RE-SENT (re-run is on)." : "skipped."))) return;
   }
   const job = await postJSON(`/api/documents/${DOC_ID}/jobs`, body);
   await refreshJobs();
@@ -72,6 +78,9 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
 (async function main() {
   try {
     picker = await initLlmPicker($("#llm-options [data-llm-picker]"));
+    const cfg0 = await getConfig();
+    perRequestIn.max = cfg0.max_pages_per_request || 20;
+    perRequestIn.value = localStorage.getItem("pyocr.perRequest") || "1";
     $("#llm-options").addEventListener("change", updateForm);
     updateForm();
     const cfg = await getConfig();

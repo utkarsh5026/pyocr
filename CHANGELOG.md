@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Several pages per LLM request: set **Pages per request** on the Overview page, `--pages-per-request N` on
+  `pyocr extract`, or `pages_per_request` in the API's LLM body (1–20, default 1). Pages go out as labelled images
+  in one call and the reply is split back into pages at `=== PAGE n ===` markers. A page the reply can't be matched
+  to (marker missing or repeated, or cut off by the output limit) is re-sent on its own, with a warning. A batched
+  run is its own source (`… · N pages/request`), so you can compare it with one page per request; existing
+  single-page results and cache keys are unchanged. Tokens of a shared request are split evenly over its pages, and
+  each page's record has a `batch` object with the request totals. New setting `LLM_BATCH_MAX_OUTPUT_TOKENS`
+  (default 32000).
+
 ## 0.3.0 - 2026-11-27
 
 - Now on PyPI: `pip install pyocr-toolkit`. Releases are built, tested and published from GitHub Actions.

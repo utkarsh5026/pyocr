@@ -184,22 +184,23 @@ async def _extract(args: argparse.Namespace) -> int:
             texts[n] = (await asyncio.to_thread(services.run_ocr_page, doc, n)).text
             print(f"  OCR page {n + 1}/{doc.meta.page_count}", file=sys.stderr)
     else:
-        spec = LLMSpec(args.provider, args.model, args.mode)
-        provider, model, _ = services.resolve_spec(spec)
+        spec = LLMSpec(args.provider, args.model, args.mode, pages_per_request=args.pages_per_request)
+        try:
+            provider, model, _ = services.resolve_spec(spec)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         if not provider.configured:
             print(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}", file=sys.stderr)
             return 2
 
-        async def one(n: int):
-            res = await services.run_llm_page(doc, n, spec)
+        for n, res in (await services.run_llm_pages(doc, pages, spec)).items():
+            if isinstance(res, BaseException):
+                print(f"  page {n + 1} failed: {res}", file=sys.stderr)
+                continue
             note = "cached" if res["cached"] else f"{res['latency_ms'] / 1000:.1f}s"
             print(f"  LLM page {n + 1}: {note}" + "".join(f"  ⚠ {w}" for w in res["warnings"]), file=sys.stderr)
             texts[n] = res["text"]
-
-        results = await asyncio.gather(*(one(n) for n in pages), return_exceptions=True)
-        for n, r in zip(pages, results):
-            if isinstance(r, Exception):
-                print(f"  page {n + 1} failed: {r}", file=sys.stderr)
 
     ordered = [(n, texts.get(n, "")) for n in pages]
     source = args.engine if args.engine != "llm" else f"llm:{args.provider}"
@@ -275,6 +276,8 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("-p", "--provider", default="anthropic", help="for --engine llm")
     e.add_argument("-m", "--model", default=None)
     e.add_argument("--mode", default="verbatim", choices=["verbatim", "markdown"], help="LLM prompt")
+    e.add_argument("--pages-per-request", type=int, default=1, metavar="N",
+                   help="send N pages to the LLM in one request (default 1); a separate source from N=1")
     e.add_argument("--pages", default=None, help="1-based ranges, e.g. 1-3,7 (default: all)")
     e.add_argument("--format", choices=["txt", "md", "json", "jsonl"], default="txt")
     e.add_argument("-o", "--output", type=Path, default=None, help="file to write (default: stdout)")

@@ -1,16 +1,21 @@
 {% extends "base.html" %}
 {% block title %}Search{% endblock %}
 {% block content %}
-<h1>Search all documents</h1>
-<form id="lib-search" class="toolbar" action="/search">
-  <input type="search" name="q" id="q" value="{{ q }}" placeholder="Words or a phrase…" autofocus class="grow">
-  <label class="check"><input type="checkbox" name="src" value="native" checked> native text</label>
-  <label class="check"><input type="checkbox" name="src" value="ocr" checked> OCR</label>
-  <label class="check"><input type="checkbox" name="src" value="llm" checked> LLM</label>
-  <button class="btn primary">Search</button>
+<div class="page-head"><div>
+  <h1>Search all documents</h1>
+  <p>Case-insensitive; phrases match across line breaks. OCR and LLM text is searched where it has been extracted.</p>
+</div></div>
+<form id="lib-search" action="/search">
+  <div class="search-bar">
+    <input type="search" name="q" id="q" value="{{ q }}" placeholder="Words or a phrase…" autofocus>
+    <button class="btn primary">Search</button>
+  </div>
+  <div class="chips" style="margin:4px 0 22px">
+    <label><input type="checkbox" name="src" value="native" checked> Native text</label>
+    <label><input type="checkbox" name="src" value="ocr" checked> OCR</label>
+    <label><input type="checkbox" name="src" value="llm" checked> LLM</label>
+  </div>
 </form>
-<p class="small muted">Case-insensitive; a phrase also matches across line breaks. OCR and LLM text is only
-  searched where it has been extracted.</p>
 <div id="lib-results"></div>
 {% endblock %}
 {% block scripts %}<script src="/static/search.js?v={{ version }}"></script>{% endblock %}

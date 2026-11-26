@@ -16,7 +16,7 @@ async function runLibrarySearch() {
     out.innerHTML = `<p class="muted">No matches for <b>${esc(q)}</b>.</p>`;
     return;
   }
-  out.innerHTML = `<p>${res.total} match${res.total === 1 ? "" : "es"} in ${res.documents.length} document(s)</p>` +
+  out.innerHTML = `<p class="small muted">${res.total} match${res.total === 1 ? "" : "es"} in ${res.documents.length} document(s)</p>` +
     res.documents.map((d) => `
       <section class="card search-doc">
         <div class="section-head"><a href="/documents/${d.document.id}"><b>${esc(d.document.filename)}</b></a>

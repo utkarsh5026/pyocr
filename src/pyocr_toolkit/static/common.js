@@ -213,6 +213,35 @@ document.addEventListener("click", guard(async (e) => {
 
 wireUploads();
 
+// ------------------------------------------------------------------ theme
+/* The inline script in base.html applies the saved theme before first paint;
+ * this wires the toggle button (system -> light -> dark -> system ...) and keeps
+ * "system" in sync if the OS switches between light and dark while the page is open. */
+(function wireTheme() {
+  const root = document.documentElement;
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+  const labels = { system: "Theme: match system", light: "Theme: light", dark: "Theme: dark" };
+  function apply(pref, animate) {
+    if (animate) {
+      root.classList.add("theme-switching");
+      setTimeout(() => root.classList.remove("theme-switching"), 250);
+    }
+    root.dataset.themePref = pref;
+    root.dataset.theme = pref === "dark" || (pref === "system" && media.matches) ? "dark" : "light";
+    const btn = $("#theme-toggle");
+    if (btn) btn.title = `${labels[pref]} (click to change)`;
+  }
+  const order = ["system", "light", "dark"];
+  $("#theme-toggle")?.addEventListener("click", () => {
+    const next = order[(order.indexOf(root.dataset.themePref) + 1) % order.length];
+    try { localStorage.setItem("pyocr.theme", next); } catch (_) { /* private mode */ }
+    apply(next, true);
+    toast(labels[next]);
+  });
+  media.addEventListener("change", () => { if (root.dataset.themePref === "system") apply("system", true); });
+  apply(root.dataset.themePref || "system", false);
+})();
+
 // ------------------------------------------------------------------ diff
 /** HTML for a word diff from the compare API. Leading line breaks stay outside
  *  the coloured spans so they don't leave a highlighted sliver at line ends. */

@@ -1,35 +1,45 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Library{% endblock %}
 {% block content %}
-<div class="section-head">
-  <h1>Library</h1>
-  <input type="search" id="lib-filter" placeholder="Filter by file name…">
+<div class="page-head">
+  <div>
+    <h1>Library</h1>
+    <p>{{ docs|length }} document{{ 's' if docs|length != 1 }}</p>
+  </div>
+  {% if docs %}<input type="search" id="lib-filter" placeholder="Filter by file name…">{% endif %}
 </div>
 {% if docs %}
-<table class="table" id="lib-table">
+<div class="card table-card">
+<table class="table hover" id="lib-table">
   <thead><tr><th></th><th>File</th><th>Pages</th><th>Size</th><th>OCR</th><th>LLM</th><th>Uploaded</th><th></th></tr></thead>
   <tbody>
   {% for d in docs %}
   <tr data-name="{{ d.filename|lower }}">
-    <td><img class="thumb" loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=36" alt=""></td>
-    <td><a href="/documents/{{ d.id }}"><b>{{ d.filename }}</b></a><div class="small">{{ d.filetype|upper }}</div></td>
+    <td style="width:50px"><img class="thumb" loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=36" alt=""></td>
+    <td><a class="file-name" href="/documents/{{ d.id }}">{{ d.filename }}</a><div class="small muted">{{ d.filetype|upper }}</div></td>
     <td>{{ d.page_count }}</td>
-    <td>{{ d.size_bytes|filesize }}</td>
-    <td><progress max="{{ d.page_count }}" value="{{ d.ocr_pages }}"></progress> <span class="small">{{ d.ocr_pages }}/{{ d.page_count }}</span></td>
-    <td><progress max="{{ d.page_count }}" value="{{ d.llm_pages }}"></progress> <span class="small">{{ d.llm_pages }}/{{ d.page_count }}</span></td>
-    <td class="small">{{ d.created_at|datetime }}</td>
+    <td class="muted">{{ d.size_bytes|filesize }}</td>
+    <td><span class="meter"><progress max="{{ d.page_count }}" value="{{ d.ocr_pages }}"></progress> <span class="small muted">{{ d.ocr_pages }}/{{ d.page_count }}</span></span></td>
+    <td><span class="meter"><progress max="{{ d.page_count }}" value="{{ d.llm_pages }}"></progress> <span class="small muted">{{ d.llm_pages }}/{{ d.page_count }}</span></span></td>
+    <td class="small muted">{{ d.created_at|datetime }}</td>
     <td class="actions">
-      <a class="btn small" href="/documents/{{ d.id }}/pages/1">Inspect</a>
-      <a class="btn small" href="/documents/{{ d.id }}/text">Text</a>
-      <a class="btn small" href="/documents/{{ d.id }}/compare">Compare</a>
-      <button class="btn small ghost danger" data-delete="{{ d.id }}" data-name="{{ d.filename }}">Delete</button>
+      <a class="btn small ghost" href="/documents/{{ d.id }}/pages/1">Inspect</a>
+      <a class="btn small ghost" href="/documents/{{ d.id }}/text">Text</a>
+      <a class="btn small ghost" href="/documents/{{ d.id }}/compare">Compare</a>
+      <button class="btn small ghost danger icon-only" data-delete="{{ d.id }}" data-name="{{ d.filename }}" title="Delete" aria-label="Delete {{ d.filename }}">{{ icon('trash') }}</button>
     </td>
   </tr>
   {% endfor %}
   </tbody>
 </table>
+</div>
 {% else %}
-<div class="empty"><h2>No documents yet</h2><p>Use <b>Upload</b> (top right) or drop files anywhere on this page.</p></div>
+<div class="empty">
+  <div class="empty-icon">{{ icon('inbox') }}</div>
+  <h2>No documents yet</h2>
+  <p>Use <b>Upload</b> in the top bar or drop files anywhere on this page.</p>
+</div>
 {% endif %}
 {% endblock %}
 {% block scripts %}<script src="/static/library.js?v={{ version }}"></script>{% endblock %}

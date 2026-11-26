@@ -64,7 +64,7 @@ $$("#extract-form input").forEach((i) => i.addEventListener("input", updateForm)
 $$("#extract-form input[name=kind]").forEach((i) => i.addEventListener("change", updateForm));
 
 $("#delete-doc").addEventListener("click", guard(async (e) => {
-  if (!confirm(`Delete ${e.target.dataset.name} and all of its OCR/LLM results?`)) return;
+  if (!confirm(`Delete ${e.currentTarget.dataset.name} and all of its OCR/LLM results?`)) return;
   await api(`/api/documents/${DOC_ID}`, { method: "DELETE" });
   location.href = "/documents";
 }));

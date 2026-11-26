@@ -75,7 +75,7 @@ Everything you upload and extract is stored in `./data` (change it with `DATA_DI
 |---|---|
 | **Home** `/` | Drop files to upload; see setup status and recent documents. |
 | **Library** `/documents` | All documents, with how much has been OCR'd / transcribed. Filter and delete. |
-| **Overview & extract** `/documents/{id}` | Start background extraction (Tesseract or any LLM) for all pages or a range such as `1-5,9`; follow progress; see every *source* (engine + model + prompt) with token usage; export; page thumbnails. |
+| **Overview** `/documents/{id}` | Start background extraction (Tesseract or any LLM) for all pages or a range such as `1-5,9`; follow progress; see every *source* (engine + model + prompt) with token usage; export; page thumbnails. |
 | **Page inspector** `/documents/{id}/pages/{n}` | Page image next to native, OCR and LLM text; run OCR or an LLM on just this page; per-page diff; search hits drawn on the image. Keyboard: `←/→`, `/`, `1-4`, `t`, `o`. |
 | **Full text** `/documents/{id}/text` | Read the whole document from one source, optionally beside the page images; find, copy, download. |
 | **Compare** `/documents/{id}/compare` | Score source B against source A on every page: document-level CER/WER, CER per page chart, worst pages, word diff for any page. Works for OCR vs LLM, native vs LLM, or **model vs model**. |

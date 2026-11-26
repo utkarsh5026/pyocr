@@ -1,11 +1,12 @@
+{% from "_icons.html" import icon %}
 <div class="doc-header">
   <div class="doc-title">
-    <a href="/documents" class="crumb">Library</a> /
+    <a href="/documents" class="crumb">Library</a><span class="sep">/</span>
     <b title="{{ doc.filename }}">{{ doc.filename }}</b>
     <span class="muted">{{ doc.page_count }} page{{ 's' if doc.page_count != 1 }} · {{ doc.filetype|upper }} · {{ doc.size_bytes|filesize }}</span>
   </div>
   <nav class="doc-tabs">
-    <a href="/documents/{{ doc.id }}" class="{{ 'active' if doc_tab == 'overview' }}">Overview &amp; extract</a>
+    <a href="/documents/{{ doc.id }}" class="{{ 'active' if doc_tab == 'overview' }}">Overview</a>
     <a href="/documents/{{ doc.id }}/pages/1" class="{{ 'active' if doc_tab == 'pages' }}">Page inspector</a>
     <a href="/documents/{{ doc.id }}/text" class="{{ 'active' if doc_tab == 'text' }}">Full text</a>
     <a href="/documents/{{ doc.id }}/compare" class="{{ 'active' if doc_tab == 'compare' }}">Compare</a>

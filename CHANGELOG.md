@@ -13,6 +13,8 @@
 - Icons throughout the UI: the top nav, document tabs, text sources (native / OCR / LLM), action buttons,
   section headings, status badges, the "How it works" steps and empty states. They follow the light/dark
   theme, and on narrow screens the top nav collapses to icons only.
+  A few emojis add colour in decorative spots only (the home page steps and status cards, the upload area,
+  empty states and the error page); everything you click keeps the line icons.
 
 ## 0.2.0
 

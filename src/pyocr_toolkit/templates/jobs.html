@@ -8,7 +8,7 @@
   is kept in memory and resets when the server restarts; the extracted text is stored on disk and is never lost.</p>
 </div></div>
 <div id="all-jobs" class="job-list" data-names='{{ names|tojson }}'>
-  {% if not jobs %}<div class="empty"><div class="empty-icon">{{ icon('layers') }}</div><h2>No jobs yet</h2>
+  {% if not jobs %}<div class="empty"><div class="empty-icon"><span class="emoji" aria-hidden="true">⏳</span></div><h2>No jobs yet</h2>
     <p>Start one from a document's <b>Overview</b> page.</p></div>{% endif %}
 </div>
 {% endblock %}

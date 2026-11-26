@@ -3,7 +3,7 @@
 {% block title %}Error {{ status }}{% endblock %}
 {% block content %}
 <div class="empty">
-  <div class="empty-icon">{{ icon('alert') }}</div>
+  <div class="empty-icon"><span class="emoji" aria-hidden="true">🧐</span></div>
   <h1 style="font-size:48px;margin-bottom:4px">{{ status }}</h1>
   <p>{{ message }}</p>
   <p><a class="btn" href="/documents">{{ icon('chevron-left') }}Back to the library</a></p>

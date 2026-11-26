@@ -693,6 +693,12 @@ h3.h-icon .icon { width: 16px; height: 16px; }
 .seg label .icon, .chips label .icon, label.check .icon { width: 14px; height: 14px; }
 .step-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin-bottom: 6px; }
 .step-icon .icon { width: 18px; height: 18px; }
+/* Emojis only in large decorative tiles (steps, stats, empty states); controls keep the line icons. */
+.emoji { font-family: "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif; line-height: 1; font-style: normal; }
+.step-icon .emoji, .stat-icon .emoji { font-size: 20px; }
+.dz-icon .emoji { font-size: 24px; }
+.empty-icon .emoji { font-size: 28px; }
+#drop-overlay .emoji { font-size: 40px; }
 #drop-overlay > div { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 #drop-overlay .icon { width: 32px; height: 32px; }
 

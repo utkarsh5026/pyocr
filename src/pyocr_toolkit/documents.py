@@ -194,7 +194,7 @@ class OpenDocument:
 
     def render(self, number: int, dpi: int, fmt: str = "png", max_edge_px: int | None = None,
                jpg_quality: int = 90) -> bytes:
-        """Rasterise a page. ``fmt`` is ``png`` or ``jpeg``."""
+        """Rasterise a page. ``fmt`` is ``png``, ``jpeg`` or ``ppm`` (uncompressed, for further processing)."""
         return self.render_image(number, dpi, fmt, max_edge_px, jpg_quality).data
 
     def render_image(self, number: int, dpi: int, fmt: str = "png", max_edge_px: int | None = None,
@@ -209,6 +209,8 @@ class OpenDocument:
             pix = page.get_pixmap(dpi=dpi, alpha=False, colorspace=pymupdf.csRGB)
             if fmt == "jpeg":
                 data, mime = pix.tobytes("jpeg", jpg_quality=jpg_quality), "image/jpeg"
+            elif fmt == "ppm":
+                data, mime = pix.tobytes("ppm"), "image/x-portable-pixmap"
             elif fmt == "raw":
                 data, mime = bytes(pix.samples), "raw"
             else:
@@ -279,8 +281,15 @@ class OpenDocument:
         return self.folder / "llm" / str(number)
 
     @staticmethod
-    def llm_cache_key(provider: str, model: str, prompt: str) -> str:
-        digest = hashlib.sha256(f"{provider}\0{model}\0{prompt}".encode()).hexdigest()[:16]
+    def llm_cache_key(provider: str, model: str, prompt: str, preprocess: str = "") -> str:
+        """Stable id of one LLM configuration, identical on every page of a document.
+
+        ``preprocess`` is the canonical image-preprocessing spec. It is only mixed
+        into the digest when non-empty, so runs on the plain page image keep the
+        keys they had before preprocessing existed (no orphaned caches).
+        """
+        material = f"{provider}\0{model}\0{prompt}" + (f"\0{preprocess}" if preprocess else "")
+        digest = hashlib.sha256(material.encode()).hexdigest()[:16]
         safe_model = re.sub(r"[^A-Za-z0-9._-]+", "_", model)[:60]
         return f"{provider}__{safe_model}__{digest}"
 

@@ -12,6 +12,7 @@ import shutil
 from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
+from urllib.parse import quote
 
 from fastapi import APIRouter, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
@@ -26,6 +27,7 @@ from .documents import DEFAULT_OCR_ENGINE, DocumentError, DocumentStore, OCRUnav
 from .jobs import JobManager
 from .llm import PROMPT_MODES, ProviderError, build_providers, catalog
 from .ocr import build_ocr_engines
+from .preprocess import Preprocess, presets_json, process_bytes
 from .service import LLMSpec, Services, ocr_source_id, parse_pages
 from .workspaces import WorkspaceStore, ingest, suggest_names
 
@@ -38,10 +40,11 @@ class LLMRunBody(BaseModel):
     model: str | None = None
     prompt_mode: str = "verbatim"
     custom_prompt: str | None = None
+    preprocess: str | None = Field(None, description="image preprocessing, e.g. 'gray;contrast=1.5' or a preset id")
     force: bool = False
 
     def spec(self) -> LLMSpec:
-        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt)
+        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt, self.preprocess or "")
 
 
 class TextRef(BaseModel):
@@ -130,6 +133,12 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
     def get_doc(doc_id: str) -> OpenDocument:
         return store.get(doc_id)
 
+    def parse_pre(spec: str | None) -> Preprocess:
+        try:
+            return Preprocess.parse(spec)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     def doc_summary(doc: OpenDocument) -> dict:
         """Meta + extraction coverage, used by the library and overview pages."""
         n = doc.meta.page_count
@@ -153,7 +162,9 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "max_upload_mb": settings.max_upload_mb,
             "preview_dpi": settings.preview_dpi,
             "llm_dpi": settings.llm_dpi,
+            "llm_max_edge_px": settings.llm_max_edge_px,
             "ocr_dpi": settings.ocr_dpi,
+            "preprocess_presets": presets_json(),
         }
 
     @api.get("/models", tags=["models"])
@@ -293,9 +304,35 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         return [doc.page_info(n) for n in doc.iter_pages()]
 
     @api.get("/documents/{doc_id}/pages/{page}/image", tags=["pages"])
-    def page_image(doc_id: str, page: int, dpi: int = Query(None, ge=36, le=600)):
-        png = get_doc(doc_id).render(page, dpi or settings.preview_dpi)
-        return Response(png, media_type="image/png", headers={"Cache-Control": "max-age=3600"})
+    def page_image(doc_id: str, page: int, dpi: int = Query(None, ge=36, le=600),
+                   preprocess: str | None = Query(None, description="apply image preprocessing (preview / thumbnails)")):
+        """Page render for display. With ``preprocess`` the filters run at this ``dpi`` (its own ``dpi=`` step is
+        ignored), which is right for thumbnails; use ``/llm-image`` to see exactly what a model receives."""
+        doc, pre = get_doc(doc_id), parse_pre(preprocess)
+        dpi = dpi or settings.preview_dpi
+        if pre.changes_pixels:
+            body, mime = process_bytes(doc.render(page, dpi, "ppm"), pre)
+        else:
+            body, mime = doc.render(page, dpi), "image/png"
+        return Response(body, media_type=mime, headers={"Cache-Control": "max-age=3600"})
+
+    @api.get("/documents/{doc_id}/pages/{page}/llm-image", tags=["pages"])
+    def page_llm_image(doc_id: str, page: int, preprocess: str | None = None):
+        """The exact image an LLM run sends for this page (LLM_DPI, LLM_MAX_EDGE_PX, PNG/JPEG choice, preprocessing).
+
+        Headers describe it, so the UI can show size and cost-relevant facts without decoding it.
+        """
+        doc, pre = get_doc(doc_id), parse_pre(preprocess)
+        body, mime = services.llm_image(doc, page, pre)
+        return Response(body, media_type=mime, headers={
+            # percent-encoded: header values are latin-1 and the label may contain × or °
+            "Cache-Control": "max-age=600", "X-Preprocess": quote(str(pre)), "X-Preprocess-Label": quote(pre.describe()),
+        })
+
+    @api.get("/preprocess", tags=["pages"])
+    def check_preprocess(spec: str = ""):
+        """Validate and normalise a preprocessing spec (400 with a readable message if it's wrong)."""
+        return parse_pre(spec).to_json()
 
     @api.get("/documents/{doc_id}/sources", tags=["text"])
     def sources(doc_id: str):

@@ -426,6 +426,19 @@ async function initLlmPicker(root) {
   };
 }
 
+// ------------------------------------------------------------------ image preprocessing
+// The spec chosen in "Adjust image" is remembered per document, so the Pages view and the
+// overview's batch extraction use the same one (and therefore the same cache key on every page).
+const preprocessStore = {
+  get: (docId) => { try { return localStorage.getItem(`pyocr.preprocess.${docId}`) || ""; } catch (_) { return ""; } },
+  set: (docId, spec) => {
+    try {
+      if (spec) localStorage.setItem(`pyocr.preprocess.${docId}`, spec);
+      else localStorage.removeItem(`pyocr.preprocess.${docId}`);
+    } catch (_) { /* private mode */ }
+  },
+};
+
 // ------------------------------------------------------------------ jobs
 /** 7 → "7s", 95 → "1m 35s", 4000 → "1h 6m". */
 function fmtDuration(sec) {

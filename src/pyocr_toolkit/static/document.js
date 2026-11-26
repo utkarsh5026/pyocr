@@ -22,8 +22,9 @@ function updateForm() {
       ? `<span class="muted">${esc(engine.description)}</span>`
       : `<span class="warn">${esc(engine.problem)}</span> <a href="/providers">Setup</a>`;
   }
+  const pre = $("#extract-form input[name=preprocess]").value.trim();
   $("#extract-hint").textContent = kind() === "llm" && picker
-    ? `Sends ${what} as images to ${picker.describe()}`
+    ? `Sends ${what} as images${pre ? " (preprocessed)" : ""} to ${picker.describe()}`
     : engine?.kind === "cloud"
       ? `Sends ${what} as images to ${engine.label}`
       : `Runs locally on ${what} with ${engine?.label || "OCR"}`;
@@ -71,8 +72,11 @@ $("#extract-form").addEventListener("submit", guard(async (e) => {
   }
   if (body.kind === "llm") {
     body.llm = picker.spec();
+    body.llm.preprocess = form.preprocess.value.trim() || null;
+    preprocessStore.set(DOC_ID, body.llm.preprocess);
     const n = body.pages ? `pages ${body.pages}` : `all ${PAGE_COUNT} pages`;
-    if (!confirm(`Send ${n} to ${picker.describe()}?\n\nPages already transcribed with this model and prompt are ` +
+    const img = body.llm.preprocess ? `\nImage preprocessing: ${body.llm.preprocess}\n` : "";
+    if (!confirm(`Send ${n} to ${picker.describe()}?\n${img}\nPages already transcribed with this model, prompt and image settings are ` +
       (body.force ? "RE-SENT (re-run is on)." : "skipped."))) return;
   }
   const job = await postJSON(`/api/documents/${DOC_ID}/jobs`, body);
@@ -97,6 +101,9 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
     ocrSelect.innerHTML = ocrEngineOptions(cfg);
     ocrSelect.value = preferredOcrEngine(cfg);
     ocrSelect.addEventListener("change", updateForm);
+    $("#pre-presets").innerHTML = cfg.preprocess_presets.filter((p) => p.spec)
+      .map((p) => `<option value="${esc(p.spec)}">${esc(p.label)}: ${esc(p.hint)}</option>`).join("");
+    $("#extract-form input[name=preprocess]").value = preprocessStore.get(DOC_ID);
     if (!cfg.ocr_engines.some((e) => e.available)) {
       const ocr = $("#extract-form input[value=ocr]");
       ocr.disabled = true;

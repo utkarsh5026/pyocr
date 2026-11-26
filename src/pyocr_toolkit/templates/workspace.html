@@ -28,15 +28,63 @@
       <span id="zoom-label">100%</span>
       <button id="zoom-in" class="btn small ghost icon-only" title="Zoom in" aria-label="Zoom in">{{ icon('zoom-in') }}</button>
       <button id="zoom-fit" class="btn small ghost">{{ icon('maximize') }}Fit</button>
+      <span class="sep"></span>
+      <button id="adjust-toggle" class="btn small ghost" title="Preprocess the image the LLM receives (e)" aria-expanded="false">{{ icon('sliders') }}Adjust</button>
       <span class="sep badges-sep"></span>
       <span id="page-badges"></span>
       <div class="spacer"></div>
-      <a id="open-image" class="btn small ghost" target="_blank" title="Open a high-resolution render">{{ icon('image') }}Hi-res</a>
+      <a id="open-image" class="btn small ghost icon-only" target="_blank" title="Open a high-resolution render" aria-label="Open a high-resolution render">{{ icon('image') }}</a>
+    </div>
+    <div id="adjust-panel" class="adjust" hidden>
+      <div class="adjust-head">
+        <b class="h-icon">{{ icon('sliders') }}Adjust image</b>
+        <span class="small muted">Sent to the LLM for every page.</span>
+        <div class="spacer"></div>
+        <button id="adj-reset" class="btn small ghost" title="Back to the original page image">{{ icon('refresh') }}Reset</button>
+        <button id="adj-close" class="btn small ghost icon-only" title="Close (e)" aria-label="Close">{{ icon('x') }}</button>
+      </div>
+      <div id="adj-presets" class="filter-strip" role="radiogroup" aria-label="Filters"></div>
+      <details id="adj-fine" class="adjust-fine">
+        <summary>Fine-tune</summary>
+        <div class="adjust-grid">
+          <label>Brightness <span class="range"><input type="range" data-adj="brightness" min="0.3" max="2.5" step="0.05"><output></output></span></label>
+          <label>Contrast <span class="range"><input type="range" data-adj="contrast" min="0.3" max="3" step="0.05"><output></output></span></label>
+          <label>Sharpness <span class="range"><input type="range" data-adj="sharpness" min="0" max="4" step="0.1"><output></output></span></label>
+          <label>Denoise <select data-adj="denoise"><option value="0">Off</option><option value="3">Light (median 3)</option><option value="5">Strong (median 5)</option></select></label>
+          <label>Black &amp; white <select data-adj="threshold-mode"><option value="">Off</option><option value="otsu">Automatic (Otsu)</option><option value="fixed">Fixed level</option></select></label>
+          <label data-threshold-level hidden>Level <span class="range"><input type="range" data-adj="threshold" min="1" max="254" step="1"><output></output></span></label>
+          <label>Resolution <select data-adj="dpi"></select></label>
+          <label>Rotate <span class="row tight">
+            <button type="button" class="btn small" data-rotate="-90" title="Rotate left">↺ 90°</button>
+            <button type="button" class="btn small" data-rotate="90" title="Rotate right">↻ 90°</button>
+            <span class="small muted" data-rotate-label></span></span></label>
+          <div class="adjust-checks">
+            <label class="check"><input type="checkbox" data-adj="gray"> Grayscale</label>
+            <label class="check"><input type="checkbox" data-adj="auto"> Auto levels</label>
+            <label class="check"><input type="checkbox" data-adj="equalize"> Equalize</label>
+            <label class="check"><input type="checkbox" data-adj="invert"> Invert</label>
+          </div>
+          <fieldset class="adjust-crop"><legend>Crop margins (%)</legend>
+            <label>Top <input type="number" data-crop="0" min="0" max="45" step="1"></label>
+            <label>Right <input type="number" data-crop="1" min="0" max="45" step="1"></label>
+            <label>Bottom <input type="number" data-crop="2" min="0" max="45" step="1"></label>
+            <label>Left <input type="number" data-crop="3" min="0" max="45" step="1"></label>
+          </fieldset>
+        </div>
+      </details>
+      <div class="adjust-foot">
+        <button id="adj-compare" class="btn small" title="Press and hold to see the original page">{{ icon('eye') }}Hold to compare</button>
+        <code id="adj-spec" title="Same settings from the CLI: pyocr extract FILE --preprocess '…'"></code>
+        <button id="adj-copy" class="btn small ghost icon-only" title="Copy the spec for pyocr extract --preprocess" aria-label="Copy spec">{{ icon('copy') }}</button>
+        <div class="spacer"></div>
+        <span id="adj-info" class="small muted"></span>
+      </div>
     </div>
     <div id="page-scroll" class="page-scroll">
       <div id="page-frame" class="page-frame">
         <img id="page-img" alt="page">
         <div id="highlight-layer"></div>
+        <span id="edited-badge" class="edited-badge" hidden></span>
       </div>
     </div>
   </section>
@@ -70,9 +118,11 @@
 
     <div class="tab-body" data-tab="llm" hidden>
       {% set picker_id = 'ws' %}{% include "_llm_picker.html" %}
+      <div id="llm-image-line" class="image-line small"></div>
       <div class="tab-meta">
         <button id="run-llm" class="btn small primary">{{ icon('sparkles') }}Transcribe this page</button>
         <button id="rerun-llm" class="btn small ghost" title="Ignore the cache and call the model again">{{ icon('refresh') }}Re-run</button>
+        <button id="ab-llm" class="btn small" hidden title="Transcribe the original and the adjusted image with this model, then diff them">{{ icon('diff') }}A/B: original vs adjusted</button>
         <div class="spacer"></div>
         <button class="btn small ghost" data-copy="#llm-text" title="Copy text">{{ icon('copy') }}Copy</button>
       </div>
@@ -100,6 +150,7 @@
         <label class="check"><input type="checkbox" id="cmp-punct"> Ignore punctuation</label>
         <button id="run-compare" class="btn small primary">{{ icon('diff') }}Compare</button>
       </div>
+      <div id="ab-summary" hidden></div>
       <div id="cmp-metrics" class="metrics"></div>
       <div class="legend" id="cmp-legend" hidden>
         <span class="del">missing in candidate</span>

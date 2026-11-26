@@ -361,7 +361,12 @@ details.meta dd { margin: 0; word-break: break-word; }
 .job-list { display: flex; flex-direction: column; gap: 10px; }
 .job { border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; background: var(--surface); }
 .job-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; font-size: 13.5px; }
-.job progress { width: 100%; }
+/* Job bar: successful pages in the accent colour, failed pages in red after them. */
+.jobbar { display: flex; height: 6px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.jobbar > span { height: 100%; transition: width .3s; }
+.jobbar-ok { background: var(--accent); }
+.jobbar-fail { background: var(--bad); }
+.cost { cursor: help; border-bottom: 1px dotted var(--subtle); }
 .job > .small { color: var(--muted); margin-top: 6px; }
 
 /* ---- metrics / compare ---- */
@@ -684,10 +689,7 @@ pre.text.reveal { animation: materialize .45s var(--ease-out) backwards; }
    Polling re-renders the markup, so JS passes a negative delay (--phase)
    that keeps the animation in step instead of restarting every second. */
 .badge.run::before { content: ""; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: currentColor; animation: pulse-dot 1.4s ease-in-out infinite; animation-delay: var(--phase, 0s); }
-.job.is-active progress::-webkit-progress-value {
-  background: var(--ai-grad); background-size: 200% 100%; animation: flow 2.8s linear infinite; animation-delay: var(--phase, 0s);
-}
-.job.is-active progress::-moz-progress-bar {
+.job.is-active .jobbar-ok {
   background: var(--ai-grad); background-size: 200% 100%; animation: flow 2.8s linear infinite; animation-delay: var(--phase, 0s);
 }
 

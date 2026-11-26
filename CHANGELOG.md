@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Better progress for extraction jobs: an estimated time left and seconds per page (cache hits don't skew it),
+  failed pages shown in red on the progress bar with a "done with errors" badge, and LLM pages still waiting
+  for an `LLM_CONCURRENCY` slot listed as "waiting" instead of "working on". `/api/jobs` adds
+  `seconds_per_page`, `eta_seconds` and `waiting_pages`. Transcribing a single page in the workspace now shows
+  an elapsed-time counter.
+- LLM costs at catalog list price, in US dollars and Indian rupees: each job shows its spend so far and, while
+  running, a projection for the whole job; each workspace transcription shows its own cost. Hover for the price
+  basis. New setting `USD_INR_RATE` (default 92.5, not fetched live). Models without a catalog price show
+  "cost unknown". Excludes taxes (e.g. GST) and batch/caching discounts. `/api/jobs` and the page LLM endpoints
+  add a `cost` object. The Models page shows list prices in rupees under the dollar prices.
 - Workspaces: upload several files or a `.zip` at once and keep them together under one editable name.
   The upload dialog suggests names (from the file names, or `adjective-scientist` style like `festive-albattani`).
   New Workspaces page and workspace page (rename, add files, remove documents), workspace badges and filter in

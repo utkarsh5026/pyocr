@@ -395,29 +395,76 @@ async function initLlmPicker(root) {
 }
 
 // ------------------------------------------------------------------ jobs
+/** 7 → "7s", 95 → "1m 35s", 4000 → "1h 6m". */
+function fmtDuration(sec) {
+  const s = Math.max(0, Math.round(sec));
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
+}
+
+/** $0.0042 / $1.23: more digits for the sub-cent amounts a single page costs. */
+function fmtUSD(x) {
+  if (x === 0) return "$0";
+  return x < 0.01 ? (x < 0.0001 ? "<$0.0001" : `$${x.toFixed(4)}`) : `$${x.toFixed(2)}`;
+}
+/** ₹0.39 / ₹1,23,456.78 (Indian digit grouping). */
+function fmtINR(x) {
+  if (x === 0) return "₹0";
+  if (x < 0.01) return "<₹0.01";
+  return "₹" + x.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+/** "$0.42 (₹38.85)" for a `cost` object from the API (Services.cost / Job.cost), with the basis in a tooltip. */
+function costHtml(cost) {
+  if (!cost) return "";
+  const tip = `List price for ${cost.price_model}: $${cost.price_in} in / $${cost.price_out} out per 1M tokens, ` +
+    `at ₹${cost.usd_inr_rate} per $ (USD_INR_RATE). Excludes taxes such as GST and batch/caching discounts; ` +
+    `a self-hosted model costs nothing.`;
+  return `<span class="cost" title="${esc(tip)}">${fmtUSD(cost.usd)} (${fmtINR(cost.inr)})</span>`;
+}
+
 function jobHtml(job, docName) {
   const pctDone = job.total ? Math.round((job.done / job.total) * 100) : 0;
-  const statusCls = { done: "ok", running: "run", queued: "run", failed: "scan", cancelled: "" }[job.status] || "";
-  const dur = job.started_at ? (((job.finished_at || Date.now() / 1000) - job.started_at)).toFixed(0) + "s" : "";
+  const ok = job.done - job.failed;
+  // "done" with some failed pages is a partial success: amber, not green.
+  const statusCls = job.status === "done" && job.failed ? "scan"
+    : { done: "ok", running: "run", queued: "run", failed: "bad", cancelled: "" }[job.status] || "";
+  const status = job.status === "done" && job.failed ? "done with errors" : job.status;
+  const dur = job.started_at ? fmtDuration((job.finished_at || Date.now() / 1000) - job.started_at) : "";
+  const rate = job.seconds_per_page != null ? ` · ~${fmtDuration(job.seconds_per_page)}/page` : "";
+  const eta = job.eta_seconds != null ? ` · ~${fmtDuration(job.eta_seconds)} left` : "";
   const tokens = job.kind === "llm" && (job.input_tokens || job.output_tokens)
     ? ` · ${fmtInt(job.input_tokens)} in / ${fmtInt(job.output_tokens)} out tokens` : "";
+  const c = job.cost;
+  const projected = c && c.projected_usd != null
+    ? ` · <span class="cost" title="Assumes the remaining pages cost what the pages so far did; cached pages make it lower.">` +
+      `~${fmtUSD(c.projected_usd)} (${fmtINR(c.projected_inr)}) for the whole job</span>` : "";
+  const cost = c ? ` · ${costHtml(c)}${projected}`
+    : job.kind === "llm" ? ` · <span title="This model isn't in the catalog, so no price is known.">cost unknown</span>` : "";
+  const failed = job.failed ? `<span class="err">${job.failed} failed</span>` : "0 failed";
+  const pages = (ps) => "p" + ps.map((p) => p + 1).join(", p");
+  const working = job.current_pages.length ? ` · working on ${pages(job.current_pages)}` : "";
+  const waiting = (job.waiting_pages || []).length ? ` · waiting for a model slot: ${pages(job.waiting_pages)}` : "";
   const errors = job.errors.length
     ? `<details class="small"><summary class="err">${job.failed} page(s) failed</summary><ul>${job.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></details>` : "";
   const active = job.status === "running" || job.status === "queued";
+  const w = (n) => (job.total ? (n / job.total) * 100 : 0).toFixed(2);
   // Polling re-renders this markup; a negative delay tied to the clock keeps the
   // running animations (styles.css "Motion") in phase instead of restarting.
   const phase = active ? ` style="--phase:-${(Date.now() % 2800) / 1000}s"` : "";
   return `<div class="job${active ? " is-active" : ""}" data-job="${job.id}"${phase}>
     <div class="job-head">
-      <span class="badge ${statusCls}">${job.status}</span>
+      <span class="badge ${statusCls}">${status}</span>
       <b>${esc(job.label)}</b>
       ${docName ? `<a href="/documents/${job.doc_id}">${esc(docName)}</a>` : ""}
       <div class="spacer"></div>
       ${active ? `<button class="link" data-cancel="${job.id}">cancel</button>` : ""}
     </div>
-    <progress max="${job.total}" value="${job.done}"></progress>
-    <div class="small">${job.done}/${job.total} pages (${pctDone}%) · ${job.cached} from cache · ${job.failed} failed · ${dur}${tokens}
-      ${job.current_pages.length ? ` · working on p${job.current_pages.map((p) => p + 1).join(", p")}` : ""}</div>
+    <div class="jobbar" role="progressbar" aria-valuemin="0" aria-valuemax="${job.total}" aria-valuenow="${job.done}"
+      aria-valuetext="${job.done} of ${job.total} pages, ${job.failed} failed">
+      <span class="jobbar-ok" style="width:${w(ok)}%"></span><span class="jobbar-fail" style="width:${w(job.failed)}%"></span>
+    </div>
+    <div class="small">${job.done}/${job.total} pages (${pctDone}%) · ${job.cached} from cache · ${failed} · ${dur}${rate}${eta}${tokens}${cost}${working}${waiting}</div>
     ${errors}
   </div>`;
 }

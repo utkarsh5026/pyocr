@@ -146,7 +146,7 @@ function showLlmResult(key) {
   const tokens = r.input_tokens != null ? ` · ${fmtInt(r.input_tokens)} in / ${fmtInt(r.output_tokens)} out tokens` : "";
   const warns = (r.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
   $("#llm-meta").innerHTML = `${esc(r.provider_label || r.provider)} · <b>${esc(r.model)}</b> · ` +
-    `${(r.latency_ms / 1000).toFixed(1)}s${tokens} · ${r.text.length} chars${warns}`;
+    `${(r.latency_ms / 1000).toFixed(1)}s${tokens}${r.cost ? ` · ${costHtml(r.cost)}` : ""} · ${r.text.length} chars${warns}`;
   setText($("#llm-text"), r.text);
   renderSide();
 }
@@ -199,6 +199,13 @@ async function runLlm(force = false) {
   const out = $("#llm-text"), emptyMsg = out.dataset.empty;
   out.dataset.empty = "Reading the page…";
   const done = setBusy(btn, "Transcribing…", [[$("#page-frame"), "is-reading"], [out, "is-thinking"]]);
+  // One request, no progress events: an elapsed counter at least shows it's alive.
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    const s = fmtDuration((Date.now() - t0) / 1000);
+    btn.textContent = `Transcribing… ${s}`;
+    out.dataset.empty = `Reading the page… ${s}`;
+  }, 1000);
   try {
     const result = await postJSON(pageUrl(n, "/llm"), body);
     if (!result.cached) state.pages[n].llm_results += 1;
@@ -211,6 +218,7 @@ async function runLlm(force = false) {
       if (result.cached) toast("Showing the cached result. Use “re-run” to call the model again.");
     }
   } finally {
+    clearInterval(tick);
     done();
     if (!out.textContent) out.dataset.empty = emptyMsg;  // failed: put the hint back
   }

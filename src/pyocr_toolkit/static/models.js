@@ -24,6 +24,13 @@ function useButton(m, providerId) {
   return `<button class="btn small ghost" data-use="${esc(m.id || m.name)}" data-pid="${esc(pid)}">Use</button>`;
 }
 
+/** "$4 / $20" with the rupee equivalent ("₹370 / ₹1,850") under it. */
+function priceCell(m, rate) {
+  if (m.price_in == null) return '<span class="muted">–</span>';
+  const inr = (usd) => "₹" + (usd * rate).toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  return `$${m.price_in} / $${m.price_out}<br><span class="muted">${inr(m.price_in)} / ${inr(m.price_out)}</span>`;
+}
+
 let searchTimer;
 async function runSearch() {
   const params = new URLSearchParams({ q: qIn.value.trim(), include_deprecated: depBox.checked });
@@ -34,12 +41,13 @@ async function runSearch() {
   $("#m-results").innerHTML = r.models.length ? r.models.map((m) => `<tr>
       <td>${modelCell(m)}</td>
       <td class="nowrap">${ratingBadge(m)}<br><span class="muted small">${esc(m.evidence)}</span></td>
-      <td class="nowrap small">${m.price_in == null ? '<span class="muted">–</span>' : `$${m.price_in} / $${m.price_out}`}</td>
+      <td class="nowrap small">${priceCell(m, r.usd_inr_rate)}</td>
       <td class="small">${esc(m.note)}</td>
       <td>${useButton(m, provSel.value)}</td></tr>`).join("")
     : `<tr><td colspan="5" class="muted">No catalog model matches. You can still type any name in the model box;
        it will be marked “custom”.</td></tr>`;
-  $("#m-count").textContent = `${r.models.length} model${r.models.length === 1 ? "" : "s"}`;
+  $("#m-count").textContent = `${r.models.length} model${r.models.length === 1 ? "" : "s"} · ` +
+    `rupee prices at ₹${r.usd_inr_rate} per US dollar (set USD_INR_RATE to change), before GST`;
 }
 const scheduleSearch = () => { clearTimeout(searchTimer); searchTimer = setTimeout(guard(runSearch), 150); };
 [qIn].forEach((el) => el.addEventListener("input", scheduleSearch));

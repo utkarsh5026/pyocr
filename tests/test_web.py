@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -12,7 +13,9 @@ from fastapi.testclient import TestClient
 from pyocr_toolkit import cli
 from pyocr_toolkit.api import create_app
 from pyocr_toolkit.config import Settings
-from pyocr_toolkit.service import parse_pages
+from pyocr_toolkit.documents import DocumentStore
+from pyocr_toolkit.jobs import Job, JobManager
+from pyocr_toolkit.service import LLMSpec, Services, parse_pages
 
 from .conftest import HAS_TESSERACT
 from .test_api import FakeProvider
@@ -196,3 +199,67 @@ def test_cli_extract_native(tmp_path, monkeypatch, sample_pdf, capsys):
 def test_env_template_in_sync():
     root = Path(__file__).resolve().parents[1]
     assert (root / ".env.example").read_text() == (root / "src/pyocr_toolkit/env.example").read_text()
+
+
+def test_job_timing_and_eta():
+    job = Job(id="j", doc_id="d", kind="llm", pages=list(range(10)), label="x", status="running", started_at=100.0)
+    assert job.timing(now=110.0) == (None, None)  # nothing has really run yet
+    job.done, job.cached = 4, 2  # cache hits are instant and don't count toward the rate
+    assert job.timing(now=110.0) == (5.0, 30.0)  # 10s / 2 pages; 6 pages left
+    job.status, job.finished_at, job.done = "done", 120.0, 10
+    assert job.timing(now=999.0) == (2.5, None)  # no ETA once finished; uses finished_at
+    data = job.to_json()
+    assert data["seconds_per_page"] == 2.5 and data["eta_seconds"] is None and data["waiting_pages"] == []
+
+
+def test_llm_job_waits_for_a_slot(tmp_path, sample_pdf):
+    """Pages queued behind LLM_CONCURRENCY are 'waiting', not 'working on'."""
+
+    async def scenario():
+        settings = Settings(data_dir=tmp_path, llm_concurrency=1, _env_file=None)
+        services = Services(settings, {"fake": FakeProvider()})
+        store = DocumentStore(settings.documents_dir)
+        doc_id = store.add("sample.pdf", sample_pdf).id
+        manager = JobManager(store, services)
+        async with services.llm_semaphore:  # something else holds the only slot
+            job = manager.start(doc_id, "llm", [0, 1], llm=LLMSpec(provider="fake"))
+            for _ in range(100):
+                if job.waiting_pages:
+                    break
+                await asyncio.sleep(0.01)
+            assert job.waiting_pages == [0] and job.current_pages == []
+            assert job.to_json()["waiting_pages"] == [0]
+        await manager._tasks[job.id]
+        assert job.status == "done" and job.done == 2 and not job.waiting_pages and not job.current_pages
+
+    asyncio.run(scenario())
+
+
+def test_llm_cost_in_usd_and_inr(tmp_path):
+    services = Services(Settings(data_dir=tmp_path, usd_inr_rate=90.0, _env_file=None), {})
+    # claude-opus-5-5 lists at $4 in / $20 out per 1M tokens; dated snapshots match loosely
+    cost = services.cost("anthropic", "claude-opus-5-5-20261001", 1_000_000, 100_000)
+    assert cost["usd"] == 6.0 and cost["inr"] == 540.0 and cost["price_model"] == "claude-opus-5-5"
+    assert services.cost("fake", "fake-1", 10, 20) is None  # not in the catalog: no made-up price
+    stored = {"provider": "anthropic", "model": "weird-alias", "requested_model": "claude-opus-5-5",
+              "input_tokens": 500_000, "output_tokens": 0}
+    assert services.with_cost(stored)["cost"]["usd"] == 2.0  # falls back to the requested model
+
+
+def test_job_cost_projection():
+    job = Job(id="j", doc_id="d", kind="llm", pages=list(range(10)), label="x", status="running",
+              price={"in": 4, "out": 20, "model": "claude-opus-5-5", "usd_inr_rate": 90.0})
+    job.done, job.cached, job.failed = 5, 1, 0  # 4 paid pages
+    job.input_tokens, job.output_tokens = 200_000, 20_000  # $0.80 + $0.40
+    cost = job.cost()
+    assert round(cost["usd"], 6) == 1.2 and round(cost["inr"], 6) == 108.0
+    assert round(cost["projected_usd"], 6) == 2.7  # $0.30/page * (4 done + 5 left)
+    job.status = "done"
+    assert job.cost()["projected_usd"] is None
+    assert Job(id="o", doc_id="d", kind="ocr", pages=[0], label="x").to_json()["cost"] is None
+
+
+def test_llm_results_carry_cost(client, doc_id):
+    r = client.post(f"/api/documents/{doc_id}/pages/0/llm", json={"provider": "fake"}).json()
+    assert "cost" in r and r["cost"] is None  # the fake model has no catalog price
+    assert client.get(f"/api/documents/{doc_id}/pages/0/llm").json()[0]["cost"] is None

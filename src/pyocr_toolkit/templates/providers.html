@@ -79,7 +79,7 @@ choco install tesseract                                 # Windows (or the UB Man
   {{ env_table(st, stacked=true) }}
   {% if e.installed and st|selectattr('editable')|list %}{{ cred_form(e.id, st, e.available, models=false) }}{% endif %}
   {% endif %}
-  {% if e.available and e.summary %}<p class="small muted">In effect: {{ e.summary }}</p>{% endif %}
+  {% if e.available and e.summary and e.id != 'tesseract' %}<p class="small muted">In effect: {{ e.summary }}</p>{% endif %}
   {% if not e.has_boxes %}<p class="small muted">Text only: search hits can't be highlighted on the page image.</p>{% endif %}
   <div class="row">
     <button class="btn small" data-test-engine {{ 'disabled' if not e.available }}>Test</button>

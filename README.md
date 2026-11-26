@@ -64,8 +64,12 @@ source, so you can score engines against each other or against an LLM.
     <td><b>Search</b>: every document, every source, with the source of each hit.<br><br><img src="docs/screenshots/search.png" alt="Search"></td>
   </tr>
   <tr>
-    <td><b>Home</b>: upload, plus setup status for Tesseract and LLM providers.<br><br><img src="docs/screenshots/home.png" alt="Home"></td>
+    <td><b>Home</b>: upload, plus setup status for OCR engines and LLM providers.<br><br><img src="docs/screenshots/home.png" alt="Home"></td>
     <td><b>Compare</b>, in dark mode.<br><br><img src="docs/screenshots/compare-dark.png" alt="Compare view in dark mode"></td>
+  </tr>
+  <tr>
+    <td><b>Providers</b>: every OCR engine and LLM provider with its logo, status, settings and a <i>Test</i> button.<br><br><img src="docs/screenshots/providers.png" alt="Providers page with OCR engine cards"></td>
+    <td><b>Overview</b>: run any OCR engine or LLM over the whole document as a background job.<br><br><img src="docs/screenshots/overview.png" alt="Document overview with the OCR engine picker"></td>
   </tr>
 </table>
 

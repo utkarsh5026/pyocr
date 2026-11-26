@@ -94,7 +94,7 @@ class OpenAIProvider(_OpenAIChatBase):
     can_list_models = True
     env_vars = [
         ("OPENAI_API_KEY", True, "API key from platform.openai.com"),
-        ("OPENAI_MODEL", False, "default model, e.g. gpt-5"),
+        ("OPENAI_MODEL", False, "default model, e.g. gpt-6.2-sol"),
         ("OPENAI_BASE_URL", False, "only for proxies / gateways"),
     ]
     suggested_models = catalog.recommended("openai")
@@ -122,7 +122,7 @@ class AzureOpenAIProvider(_OpenAIChatBase):
     env_vars = [
         ("AZURE_OPENAI_API_KEY", True, "key of your Azure OpenAI resource"),
         ("AZURE_OPENAI_ENDPOINT", True, "https://<resource>.openai.azure.com"),
-        ("AZURE_OPENAI_DEPLOYMENT", False, "name of a vision-capable deployment (gpt-4o, gpt-4.1, gpt-5 ...)"),
+        ("AZURE_OPENAI_DEPLOYMENT", False, "name of a vision-capable deployment (gpt-6.2-sol, gpt-6.1-terra ...)"),
         ("AZURE_OPENAI_API_VERSION", False, "default 2024-10-21"),
     ]
 

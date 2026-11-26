@@ -17,7 +17,7 @@ class GeminiProvider(Provider):
     can_list_models = True
     env_vars = [
         ("GEMINI_API_KEY", True, "API key from Google AI Studio (GOOGLE_API_KEY also works)"),
-        ("GEMINI_MODEL", False, "default model, e.g. gemini-2.5-flash"),
+        ("GEMINI_MODEL", False, "default model, e.g. gemini-3.8-flash"),
     ]
     suggested_models = catalog.recommended("gemini")
 

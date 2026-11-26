@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- New default models: `OPENAI_MODEL` is now `gpt-6.2-sol` (was `gpt-5`, which OpenAI has deprecated) and
+  `GEMINI_MODEL` is now `gemini-3.8-flash` (was `gemini-2.5-flash`, which Google routes to
+  `gemini-3.5-flash-lite` from Dec 1, 2026). Set either variable to keep the old model. Results from the old
+  defaults stay cached as their own source; new runs with the default model create a new one.
+
 - Set provider credentials and endpoints from the **Providers** page. Values are saved server-side in
   `DATA_DIR/credentials.json` (owner-only permissions), applied immediately without a restart, take precedence
   over environment variables, and can be cleared to fall back to the environment. Secret values are never sent

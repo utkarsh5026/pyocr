@@ -89,7 +89,7 @@ def test_providers_page_never_shows_values(tmp_path):
     assert "sk-secret-123" not in html and "sk-secret-123" not in cfg
     assert "✓ set" in html
     # built-in defaults are not reported as "set" by the user
-    assert "default: gemini-2.5-flash" in html
+    assert "default: gemini-3.8-flash" in html
 
 
 def test_llm_job_sources_compare_export(client, doc_id):

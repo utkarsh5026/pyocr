@@ -140,10 +140,10 @@ variables and restart. Keys stay on the server and are never sent to the browser
 | Provider | Required | Optional |
 |---|---|---|
 | Claude (Anthropic API) | `ANTHROPIC_API_KEY` | `ANTHROPIC_MODEL` (default `claude-opus-5-5`), `ANTHROPIC_EFFORT` |
-| OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` (default `gpt-5`), `OPENAI_BASE_URL` |
+| OpenAI | `OPENAI_API_KEY` | `OPENAI_MODEL` (default `gpt-6.2-sol`), `OPENAI_BASE_URL` |
 | Azure OpenAI | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT` | `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION` |
 | Claude on Azure (Foundry) | `ANTHROPIC_FOUNDRY_API_KEY`, `ANTHROPIC_FOUNDRY_RESOURCE` | `ANTHROPIC_FOUNDRY_MODEL` |
-| Google Gemini | `GEMINI_API_KEY` | `GEMINI_MODEL` (default `gemini-2.5-flash`) |
+| Google Gemini | `GEMINI_API_KEY` | `GEMINI_MODEL` (default `gemini-3.8-flash`) |
 | Ollama / vLLM / LM Studio / OpenRouter | `OPENAI_COMPATIBLE_BASE_URL` | `OPENAI_COMPATIBLE_MODEL`, `OPENAI_COMPATIBLE_API_KEY` |
 
 Any model or deployment name can be typed in the UI; the defaults are just starting points. The **Models** page
@@ -157,7 +157,7 @@ images. For a fully local setup, run Ollama with a vision model and set
 pyocr extract report.pdf --engine llm -p anthropic --pages 1-5 --format jsonl -o report.jsonl
 pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdown to stdout
 pyocr extract born-digital.pdf --engine native              # embedded text only, no network
-pyocr compare scan.pdf -p openai -m gpt-5                   # per-page OCR / native CER vs an LLM
+pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR / native CER vs an LLM
 pyocr providers                                             # which providers are ready
 python -m pyocr_toolkit --help                              # same CLI without the script on PATH
 ```

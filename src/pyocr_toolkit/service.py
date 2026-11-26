@@ -21,8 +21,9 @@ from typing import Any
 import pymupdf
 
 from .config import Settings
+from .credentials import CredentialStore
 from .documents import DocumentError, OpenDocument
-from .llm import PROMPT_MODES, USER_PROMPT, Provider, ProviderError, TranscriptionRequest, resolve_prompt
+from .llm import PROMPT_MODES, USER_PROMPT, Provider, ProviderError, TranscriptionRequest, catalog, resolve_prompt
 
 
 @dataclass
@@ -38,6 +39,9 @@ class Services:
         self.settings = settings
         self.providers = providers
         self.llm_semaphore = asyncio.Semaphore(settings.llm_concurrency)
+        # Values saved on the Providers page override env vars; applied here so the
+        # web app and the CLI see the same configuration.
+        self.credentials = CredentialStore(settings, providers)
 
     # ----------------------------------------------------------------- LLM
     def resolve_spec(self, spec: LLMSpec) -> tuple[Provider, str, str]:
@@ -117,6 +121,35 @@ class Services:
             "latency_ms": result.latency_ms,
             "warnings": result.warnings,
         }
+
+    async def provider_models(self, provider_id: str, live: bool = True) -> dict[str, Any]:
+        """Catalog models for a provider, plus (if possible) what its API says this key can use.
+
+        Every name is annotated with :func:`catalog.lookup`, so the UI can say whether it suits
+        transcription. A failed live listing is reported, not raised: the catalog still helps.
+        """
+        provider = self.providers.get(provider_id)
+        if provider is None:
+            raise ValueError(f"unknown provider '{provider_id}'")
+        out: dict[str, Any] = {
+            "provider": provider.id,
+            "default_model": provider.default_model,
+            "catalog": [m.to_json() for m in catalog.search(provider_id=provider.id)],
+            "live": None,
+            "live_supported": provider.can_list_models,
+            "live_error": None,
+        }
+        if live and out["live_supported"]:
+            if not provider.configured:
+                out["live_error"] = f"{provider.label} is not configured; set {', '.join(provider.missing_settings())}"
+            else:
+                try:
+                    names = await provider.list_models()
+                except ProviderError as exc:
+                    out["live_error"] = str(exc)
+                else:
+                    out["live"] = [catalog.lookup(n, provider.id) for n in names or []]
+        return out
 
     # ----------------------------------------------------------------- OCR
     def run_ocr_page(self, doc: OpenDocument, page: int, force: bool = False):

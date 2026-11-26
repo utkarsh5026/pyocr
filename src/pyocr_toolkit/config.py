@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # --- OpenAI --------------------------------------------------------------
     openai_api_key: str | None = None
-    openai_model: str = "gpt-5"
+    openai_model: str = "gpt-6.2-sol"
     openai_base_url: str | None = None
 
     # --- Azure OpenAI --------------------------------------------------------
@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     # --- Google Gemini -------------------------------------------------------
     gemini_api_key: str | None = None
     google_api_key: str | None = None
-    gemini_model: str = "gemini-2.5-flash"
+    gemini_model: str = "gemini-3.8-flash"
 
     # --- Any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter) --
     openai_compatible_base_url: str | None = None

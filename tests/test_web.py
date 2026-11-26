@@ -66,6 +66,7 @@ def test_html_pages_render(client, doc_id):
         ("/search?q=fox", "Search all documents"),
         ("/jobs", "Extraction jobs"),
         ("/providers", "ANTHROPIC_API_KEY"),
+        ("/models", "Models your key can use"),
         ("/help", "first principles"),
     ]:
         r = client.get(url)
@@ -76,7 +77,7 @@ def test_html_pages_render(client, doc_id):
     assert r.status_code == 404 and "unknown document" in r.text and "<html" in r.text
     # static assets referenced by the templates exist
     for asset in ["common.js", "workspace.js", "document.js", "reader.js", "compare.js", "search.js",
-                  "jobs.js", "providers.js", "library.js", "styles.css"]:
+                  "jobs.js", "providers.js", "models.js", "library.js", "styles.css"]:
         assert client.get(f"/static/{asset}").status_code == 200, asset
 
 
@@ -88,7 +89,7 @@ def test_providers_page_never_shows_values(tmp_path):
     assert "sk-secret-123" not in html and "sk-secret-123" not in cfg
     assert "✓ set" in html
     # built-in defaults are not reported as "set" by the user
-    assert "default: gemini-2.5-flash" in html
+    assert "default: gemini-3.8-flash" in html
 
 
 def test_llm_job_sources_compare_export(client, doc_id):

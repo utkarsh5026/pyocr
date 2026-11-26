@@ -20,6 +20,7 @@ from . import __version__
 from .config import Settings
 from .documents import DocumentStore
 from .jobs import JobManager
+from .llm import catalog
 from .service import Services
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
@@ -137,8 +138,17 @@ def build_web(settings: Settings, store: DocumentStore, services: Services, jobs
                 version = (ver.stdout or ver.stderr).splitlines()[0] if (ver.stdout or ver.stderr) else ""
             except (OSError, subprocess.SubprocessError):
                 pass
-        return page(request, "providers.html", "providers", providers=list(services.providers.values()),
+        provs = list(services.providers.values())
+        return page(request, "providers.html", "providers", providers=provs,
+                    cred_status={p.id: services.credentials.status(p) for p in provs},
+                    credentials_path=services.credentials.path,
                     tesseract=tesseract, tesseract_langs=langs, tesseract_version=version, settings=settings)
+
+    @web.get("/models", response_class=HTMLResponse)
+    def models_view(request: Request, provider: str = "", q: str = ""):
+        provs = list(services.providers.values())
+        return page(request, "models.html", "models", providers=provs, provider=provider, q=q,
+                    ratings=catalog.RATINGS, sources=catalog.SOURCES, updated=catalog.CATALOG_UPDATED)
 
     @web.get("/help", response_class=HTMLResponse)
     def help_view(request: Request):

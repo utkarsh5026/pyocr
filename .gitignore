@@ -224,3 +224,6 @@ __marimo__/
 
 # pyocr runtime data (uploaded documents + cached LLM results)
 data/
+
+# Claude Code: personal, machine-local settings
+.claude/settings.local.json

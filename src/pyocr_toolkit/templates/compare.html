@@ -3,33 +3,82 @@
 {% block title %}Compare · {{ doc.filename }}{% endblock %}
 {% block subnav %}{% include "_doctabs.html" %}{% endblock %}
 {% block content %}
-<div id="compare-root" data-doc-id="{{ doc.id }}">
-  <div class="card">
-    <h2>Compare two sources across the whole document</h2>
-    <p class="hint">The <b>reference</b> is the text you trust more; the <b>candidate</b> is the one being judged
-      (e.g. LLM vs Tesseract, or model A vs model B).</p>
-    <div class="toolbar">
-      <label>Reference <select id="src-a">
-        {% for s in sources %}<option value="{{ s.id }}" {{ 'disabled' if not s.page_count }}>{{ s.label }} ({{ s.page_count }}p)</option>{% endfor %}
-      </select></label>
-      <button class="btn small ghost icon-only" id="swap" title="Swap reference and candidate">{{ icon('swap') }}</button>
-      <label>Candidate <select id="src-b">
-        {% for s in sources %}<option value="{{ s.id }}" {{ 'disabled' if not s.page_count }}>{{ s.label }} ({{ s.page_count }}p)</option>{% endfor %}
-      </select></label>
+<div id="compare-root" data-doc-id="{{ doc.id }}" data-page-count="{{ doc.page_count }}">
+  <div class="page-head">
+    <div>
+      <h1>Compare two sources across the whole document</h1>
+      <p>The <b>reference</b> is the text you trust more; the <b>candidate</b> is the one being judged.</p>
+    </div>
+    <div class="row" style="margin:0">
       <label class="check"><input type="checkbox" id="opt-case" checked> Ignore case</label>
       <label class="check"><input type="checkbox" id="opt-punct"> Ignore punctuation</label>
-      <div class="spacer"></div>
-      <button class="btn primary" id="run">Compare</button>
     </div>
   </div>
-  <div id="cmp-overall" class="metrics"></div>
-  <div id="cmp-chart" class="bar-chart" hidden></div>
-  <div class="card table-card" id="cmp-table-wrap"><table class="table" id="cmp-table" hidden>
-    <thead><tr><th>Page</th><th>CER</th><th>WER</th><th>Ref chars</th><th>Cand chars</th><th></th></tr></thead>
-    <tbody></tbody>
-  </table></div>
-  <p class="small muted" id="cmp-hint">Pages missing from either source are listed but not scored. Click a row
-    to see the word-level diff.</p>
+
+  <div class="src-pick">
+    <label class="src-card">
+      <span class="src-letter a">A</span>
+      <span class="src-body"><span class="src-k">Reference</span>
+        <select id="src-a">
+          {% for s in sources %}<option value="{{ s.id }}" {{ 'disabled' if not s.page_count }}>{{ s.label }} ({{ s.page_count }}/{{ doc.page_count }})</option>{% endfor %}
+        </select></span>
+    </label>
+    <button class="btn ghost icon-only swap-btn" id="swap" title="Swap reference and candidate" aria-label="Swap reference and candidate">{{ icon('swap') }}</button>
+    <label class="src-card">
+      <span class="src-letter b">B</span>
+      <span class="src-body"><span class="src-k">Candidate</span>
+        <select id="src-b">
+          {% for s in sources %}<option value="{{ s.id }}" {{ 'disabled' if not s.page_count }}>{{ s.label }} ({{ s.page_count }}/{{ doc.page_count }})</option>{% endfor %}
+        </select></span>
+    </label>
+    <button class="btn primary run-btn" id="run">Compare</button>
+  </div>
+
+  <div id="cmp-overall" class="stat-grid"></div>
+
+  <section id="cmp-chart" class="card chart-card" hidden>
+    <div class="section-head">
+      <h3>Character error rate per page</h3>
+      <span class="small muted">click a bar to see that page's diff</span>
+      <div class="spacer"></div>
+      <div class="legend-inline">
+        <span><i class="swatch good"></i>≤ 2%</span>
+        <span><i class="swatch warn"></i>≤ 10%</span>
+        <span><i class="swatch bad"></i>&gt; 10%</span>
+        <span><i class="swatch missing"></i>not scored</span>
+      </div>
+    </div>
+    <div class="bars" id="cmp-bars"></div>
+  </section>
+
+  <section id="cmp-page" class="card diff-card" hidden>
+    <div class="diff-head">
+      <button class="btn small ghost icon-only" id="pg-prev" title="Previous scored page" aria-label="Previous scored page">{{ icon('chevron-left') }}</button>
+      <b id="pg-title">Page –</b>
+      <button class="btn small ghost icon-only" id="pg-next" title="Next scored page" aria-label="Next scored page">{{ icon('chevron-right') }}</button>
+      <span id="pg-pill" class="badge"></span>
+      <span id="pg-wer" class="small muted"></span>
+      <div class="spacer"></div>
+      <div class="legend-inline">
+        <span><span class="del-mark">text</span> only in A</span>
+        <span><span class="ins-mark">text</span> only in B</span>
+      </div>
+      <a id="pg-open" class="btn small ghost" href="#">Open in inspector {{ icon('arrow-right') }}</a>
+    </div>
+    <div class="diff-cols">
+      <div><div class="src-k">A · <span id="pg-a-label"></span></div><pre class="text" id="pg-a"></pre></div>
+      <div><div class="src-k">B · <span id="pg-b-label"></span></div><pre class="text" id="pg-b"></pre></div>
+    </div>
+  </section>
+
+  <details class="card table-details" id="cmp-table-wrap" hidden>
+    <summary>All pages as a table</summary>
+    <table class="table hover" id="cmp-table">
+      <thead><tr><th>Page</th><th>CER</th><th>WER</th><th>Ref chars</th><th>Cand chars</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </details>
+  <p class="small muted" id="cmp-hint">Pages missing from either source are shown but not scored.</p>
 </div>
 {% endblock %}
 {% block scripts %}<script src="/static/compare.js?v={{ version }}"></script>{% endblock %}

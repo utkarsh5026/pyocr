@@ -38,11 +38,11 @@
 <h2 id="tour">Tour of the pages</h2>
 <dl class="defs">
   <dt><a href="/">Home</a></dt><dd>Upload area, setup status and recent documents.</dd>
-  <dt><a href="/documents">Library</a></dt><dd>Every uploaded document, with how much of it has been OCR'd or transcribed.</dd>
+  <dt><a href="/documents">Library</a></dt><dd>Every uploaded document as a card showing how many pages have native, OCR and LLM text, and how many still have no text at all. Filter by status (<i>Needs text</i>, <i>Scanned</i>, <i>All pages have text</i>) or by name.</dd>
   <dt>Document → Overview</dt><dd>Start background extractions, list every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
   <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text, Tesseract, LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
   <dt>Document → Full text</dt><dd>The whole document from one source, page by page, optionally next to the page images. Find-in-text, copy and download.</dd>
-  <dt>Document → Compare</dt><dd>Scores two sources on every page, gives a whole-document error rate, and shows a diff for any page.</dd>
+  <dt>Document → Compare</dt><dd>Pick a reference (A) and a candidate (B). You get the whole-document error rates, a per-page CER chart (click a bar to open that page) and the selected page's text side by side, with words only in A and only in B highlighted. It opens on the worst page.</dd>
   <dt><a href="/search">Search</a></dt><dd>Search every document in the library at once.</dd>
   <dt><a href="/jobs">Jobs</a></dt><dd>All background extractions with their progress, errors and token usage.</dd>
   <dt><a href="/providers">Providers</a></dt><dd>Which LLMs are configured, which settings are missing, and a <i>Test connection</i> button.</dd>
@@ -195,7 +195,7 @@ POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)
 <table class="table compact">
   <tr><td><kbd>←</kbd> / <kbd>→</kbd> or <kbd>k</kbd> / <kbd>j</kbd></td><td>previous / next page</td></tr>
   <tr><td><kbd>/</kbd></td><td>focus the search box</td></tr>
-  <tr><td><kbd>1</kbd>–<kbd>4</kbd></td><td>switch tab (native, OCR, LLM, compare)</td></tr>
+  <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>switch tab (native, OCR, LLM, compare, side by side). <i>Side by side</i> widens the text panel and shows all three texts in columns that scroll together; it stays on until you pick another tab.</td></tr>
   <tr><td><kbd>t</kbd></td><td>transcribe the page with the selected LLM</td></tr>
   <tr><td><kbd>o</kbd></td><td>run OCR on the page</td></tr>
 </table>

@@ -56,12 +56,22 @@ def build_web(settings: Settings, store: DocumentStore, services: Services, jobs
     def page(request: Request, template: str, nav: str, **ctx) -> HTMLResponse:
         return TEMPLATES.TemplateResponse(request, template, {"nav": nav, **ctx})
 
+    # Pages with a usable embedded text layer never change for a stored file,
+    # so remember them per document instead of re-reading every page.
+    native_cache: dict[str, frozenset[int]] = {}
+
     def summary(doc_id: str) -> dict:
         doc = store.get(doc_id)
         n = doc.meta.page_count
-        ocr = sum(doc.cached_ocr_text(p) is not None for p in range(n))
-        llm = sum(bool(doc.list_llm_results(p)) for p in range(n))
-        return {**doc.meta.__dict__, "ocr_pages": ocr, "llm_pages": llm}
+        if doc_id not in native_cache:
+            native_cache[doc_id] = frozenset(p for p in range(n) if not doc.page_info(p)["looks_scanned"])
+        native = native_cache[doc_id]
+        ocr = {p for p in range(n) if doc.cached_ocr_text(p) is not None}
+        llm = {p for p in range(n) if doc.list_llm_results(p)}
+        missing = n - len(native | ocr | llm)  # pages with no text from any source
+        status = "complete" if missing == 0 else "scanned" if not native else "partial"
+        return {**doc.meta.__dict__, "native_pages": len(native), "ocr_pages": len(ocr),
+                "llm_pages": len(llm), "missing_pages": missing, "status": status}
 
     @web.get("/", response_class=HTMLResponse)
     def home(request: Request):

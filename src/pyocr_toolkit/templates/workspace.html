@@ -28,7 +28,7 @@
       <span id="zoom-label">100%</span>
       <button id="zoom-in" class="btn small ghost icon-only" title="Zoom in">+</button>
       <button id="zoom-fit" class="btn small ghost">Fit</button>
-      <span class="sep"></span>
+      <span class="sep badges-sep"></span>
       <span id="page-badges"></span>
       <div class="spacer"></div>
       <a id="open-image" class="btn small ghost" target="_blank" title="Open a high-resolution render">Hi-res {{ icon('external') }}</a>
@@ -47,6 +47,7 @@
       <button data-tab="ocr">OCR</button>
       <button data-tab="llm">LLM</button>
       <button data-tab="compare">Compare</button>
+      <button data-tab="side" title="Native, OCR and LLM text in columns (5)">Side by side</button>
     </nav>
 
     <div class="tab-body" data-tab="native">
@@ -76,6 +77,14 @@
       </div>
       <div id="llm-meta" class="tab-meta small"></div>
       <pre id="llm-text" class="text"></pre>
+    </div>
+
+    <div class="tab-body" data-tab="side" hidden>
+      <div class="side-cols">
+        <section class="side-col"><div class="side-head"><b>Native</b><span id="side-native-meta"></span></div><pre id="side-native" class="text"></pre></section>
+        <section class="side-col"><div class="side-head"><b>OCR</b><span id="side-ocr-meta"></span></div><pre id="side-ocr" class="text"></pre></section>
+        <section class="side-col"><div class="side-head"><b>LLM</b><span id="side-llm-meta"></span></div><pre id="side-llm" class="text"></pre></section>
+      </div>
     </div>
 
     <div class="tab-body" data-tab="compare" hidden>

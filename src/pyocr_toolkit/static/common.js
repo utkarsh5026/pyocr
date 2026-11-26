@@ -48,11 +48,11 @@ function replayAnimation(el, cls) {
  * (the workspace uses this for the page scan line and the shimmering text box).
  */
 function setBusy(btn, label, extras = []) {
-  const prev = btn.textContent;
+  const prev = btn.innerHTML;  // innerHTML, not textContent, so a button's icon survives
   btn.disabled = true; btn.textContent = label; btn.classList.add("is-busy");
   extras.forEach(([el, cls]) => el?.classList.add(cls));
   return () => {
-    btn.disabled = false; btn.textContent = prev; btn.classList.remove("is-busy");
+    btn.disabled = false; btn.innerHTML = prev; btn.classList.remove("is-busy");
     extras.forEach(([el, cls]) => el?.classList.remove(cls));
   };
 }

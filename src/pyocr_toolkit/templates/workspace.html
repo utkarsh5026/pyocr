@@ -24,14 +24,14 @@
       <span id="page-label">–</span>
       <button id="next-page" class="btn small ghost icon-only" title="Next page (→)">{{ icon('chevron-right') }}</button>
       <span class="sep"></span>
-      <button id="zoom-out" class="btn small ghost icon-only" title="Zoom out">−</button>
+      <button id="zoom-out" class="btn small ghost icon-only" title="Zoom out" aria-label="Zoom out">{{ icon('zoom-out') }}</button>
       <span id="zoom-label">100%</span>
-      <button id="zoom-in" class="btn small ghost icon-only" title="Zoom in">+</button>
-      <button id="zoom-fit" class="btn small ghost">Fit</button>
+      <button id="zoom-in" class="btn small ghost icon-only" title="Zoom in" aria-label="Zoom in">{{ icon('zoom-in') }}</button>
+      <button id="zoom-fit" class="btn small ghost">{{ icon('maximize') }}Fit</button>
       <span class="sep badges-sep"></span>
       <span id="page-badges"></span>
       <div class="spacer"></div>
-      <a id="open-image" class="btn small ghost" target="_blank" title="Open a high-resolution render">Hi-res {{ icon('external') }}</a>
+      <a id="open-image" class="btn small ghost" target="_blank" title="Open a high-resolution render">{{ icon('image') }}Hi-res</a>
     </div>
     <div id="page-scroll" class="page-scroll">
       <div id="page-frame" class="page-frame">
@@ -43,11 +43,11 @@
 
   <section class="panel">
     <nav class="tabs" role="tablist">
-      <button data-tab="native" class="active">Native</button>
-      <button data-tab="ocr">OCR</button>
-      <button data-tab="llm">LLM</button>
-      <button data-tab="compare">Compare</button>
-      <button data-tab="side" title="Native, OCR and LLM text in columns (5)">Side by side</button>
+      <button data-tab="native" class="active">{{ icon('type') }}Native</button>
+      <button data-tab="ocr">{{ icon('cpu') }}OCR</button>
+      <button data-tab="llm">{{ icon('sparkles') }}LLM</button>
+      <button data-tab="compare">{{ icon('diff') }}Compare</button>
+      <button data-tab="side" title="Native, OCR and LLM text in columns (5)">{{ icon('columns') }}Side by side</button>
     </nav>
 
     <div class="tab-body" data-tab="native">
@@ -59,15 +59,15 @@
     <div class="tab-body" data-tab="ocr" hidden>
       <div class="tab-meta"><span id="ocr-meta"></span><div class="spacer"></div>
         <button class="btn small ghost" data-copy="#ocr-text" title="Copy text">{{ icon('copy') }}Copy</button>
-        <button id="run-ocr" class="btn small">Run OCR</button></div>
+        <button id="run-ocr" class="btn small">{{ icon('play') }}<span class="lbl">Run OCR</span></button></div>
       <pre id="ocr-text" class="text"></pre>
     </div>
 
     <div class="tab-body" data-tab="llm" hidden>
       {% set picker_id = 'ws' %}{% include "_llm_picker.html" %}
       <div class="tab-meta">
-        <button id="run-llm" class="btn small primary">Transcribe this page</button>
-        <button id="rerun-llm" class="btn small ghost" title="Ignore the cache and call the model again">Re-run</button>
+        <button id="run-llm" class="btn small primary">{{ icon('sparkles') }}Transcribe this page</button>
+        <button id="rerun-llm" class="btn small ghost" title="Ignore the cache and call the model again">{{ icon('refresh') }}Re-run</button>
         <div class="spacer"></div>
         <button class="btn small ghost" data-copy="#llm-text" title="Copy text">{{ icon('copy') }}Copy</button>
       </div>
@@ -81,9 +81,9 @@
 
     <div class="tab-body" data-tab="side" hidden>
       <div class="side-cols">
-        <section class="side-col"><div class="side-head"><b>Native</b><span id="side-native-meta"></span></div><pre id="side-native" class="text"></pre></section>
-        <section class="side-col"><div class="side-head"><b>OCR</b><span id="side-ocr-meta"></span></div><pre id="side-ocr" class="text"></pre></section>
-        <section class="side-col"><div class="side-head"><b>LLM</b><span id="side-llm-meta"></span></div><pre id="side-llm" class="text"></pre></section>
+        <section class="side-col"><div class="side-head"><b>{{ icon('type') }}Native</b><span id="side-native-meta"></span></div><pre id="side-native" class="text"></pre></section>
+        <section class="side-col"><div class="side-head"><b>{{ icon('cpu') }}OCR</b><span id="side-ocr-meta"></span></div><pre id="side-ocr" class="text"></pre></section>
+        <section class="side-col"><div class="side-head"><b>{{ icon('sparkles') }}LLM</b><span id="side-llm-meta"></span></div><pre id="side-llm" class="text"></pre></section>
       </div>
     </div>
 
@@ -93,7 +93,7 @@
         <label>vs <select id="cmp-hyp"></select></label>
         <label class="check"><input type="checkbox" id="cmp-case" checked> Ignore case</label>
         <label class="check"><input type="checkbox" id="cmp-punct"> Ignore punctuation</label>
-        <button id="run-compare" class="btn small primary">Compare</button>
+        <button id="run-compare" class="btn small primary">{{ icon('diff') }}Compare</button>
       </div>
       <div id="cmp-metrics" class="metrics"></div>
       <div class="legend" id="cmp-legend" hidden>

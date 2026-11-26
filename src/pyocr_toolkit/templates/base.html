@@ -22,13 +22,13 @@
 <header class="topbar">
   <a class="brand" href="/"><span class="logo">{{ icon('scan') }}</span>pyocr <span>toolkit</span></a>
   <nav class="mainnav">
-    <a href="/" class="{{ 'active' if nav == 'home' }}">Home</a>
-    <a href="/documents" class="{{ 'active' if nav == 'library' }}">Library</a>
-    <a href="/search" class="{{ 'active' if nav == 'search' }}">Search</a>
-    <a href="/jobs" class="{{ 'active' if nav == 'jobs' }}">Jobs</a>
-    <a href="/providers" class="{{ 'active' if nav == 'providers' }}">Providers</a>
-    <a href="/models" class="{{ 'active' if nav == 'models' }}">Models</a>
-    <a href="/help" class="{{ 'active' if nav == 'help' }}">Help</a>
+    <a href="/" class="{{ 'active' if nav == 'home' }}" title="Home">{{ icon('home') }}<span>Home</span></a>
+    <a href="/documents" class="{{ 'active' if nav == 'library' }}" title="Library">{{ icon('folder') }}<span>Library</span></a>
+    <a href="/search" class="{{ 'active' if nav == 'search' }}" title="Search">{{ icon('search') }}<span>Search</span></a>
+    <a href="/jobs" class="{{ 'active' if nav == 'jobs' }}" title="Jobs">{{ icon('layers') }}<span>Jobs</span></a>
+    <a href="/providers" class="{{ 'active' if nav == 'providers' }}" title="Providers">{{ icon('key') }}<span>Providers</span></a>
+    <a href="/models" class="{{ 'active' if nav == 'models' }}" title="Models">{{ icon('grid') }}<span>Models</span></a>
+    <a href="/help" class="{{ 'active' if nav == 'help' }}" title="Help">{{ icon('help') }}<span>Help</span></a>
   </nav>
   <div class="spacer"></div>
   <form class="quicksearch" action="/search" method="get" role="search">
@@ -54,12 +54,12 @@
   {% block content %}{% endblock %}
 </main>
 <footer class="footer">
-  pyocr-toolkit {{ version }} · <a href="/help">Help</a> · <a href="/docs">API docs</a> ·
-  <a href="https://github.com/utkarsh5026/pyocr">GitHub</a>
+  pyocr-toolkit {{ version }} · <a href="/help">{{ icon('help') }}Help</a> · <a href="/docs">{{ icon('code') }}API docs</a> ·
+  <a href="https://github.com/utkarsh5026/pyocr">{{ icon('github') }}GitHub</a>
 </footer>
 {% endblock %}
 
-<div id="drop-overlay" hidden><div>Drop PDFs or images to upload</div></div>
+<div id="drop-overlay" hidden><div><span class="emoji" aria-hidden="true">📥</span>Drop PDFs or images to upload</div></div>
 <div id="toast" hidden role="status"></div>
 <script src="/static/common.js?v={{ version }}"></script>
 {% block scripts %}{% endblock %}

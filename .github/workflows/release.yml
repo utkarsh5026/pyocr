@@ -1,0 +1,86 @@
+# Publishes pyocr-toolkit to PyPI with Trusted Publishing (OIDC), so no API token is stored in the repo.
+#
+# - Publishing a GitHub Release (tag vX.Y.Z) uploads to PyPI.
+# - Running this workflow by hand (Actions -> Release -> Run workflow) uploads to TestPyPI, for a dry run.
+#
+# One-time setup: on pypi.org and test.pypi.org, add a (pending) trusted publisher for
+# owner utkarsh5026, repo pyocr, workflow release.yml, environment "pypi" / "testpypi" respectively.
+
+name: Release
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check the versions agree (and match the tag on a release)
+        run: |
+          py_version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          init_version=$(python -c "import re; print(re.search(r'__version__\s*=\s*[\"\']([^\"\']+)', open('src/pyocr_toolkit/__init__.py').read()).group(1))")
+          echo "pyproject.toml: $py_version  __init__.py: $init_version"
+          test "$py_version" = "$init_version" || { echo "::error::pyproject.toml and __init__.py versions differ"; exit 1; }
+          if [ "${{ github.event_name }}" = "release" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            test "$tag" = "$py_version" || { echo "::error::tag $GITHUB_REF_NAME does not match version $py_version"; exit 1; }
+          fi
+      - name: Install Tesseract
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr tesseract-ocr-eng
+      - name: Lint and test
+        run: |
+          pip install -e ".[dev]"
+          ruff check src tests
+          pytest -q
+      - name: Build wheel and sdist
+        run: pip install build twine && python -m build && twine check --strict dist/*
+      - name: Install the wheel in a clean venv and smoke test
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install dist/*.whl
+          cd /tmp && /tmp/venv/bin/pyocr --version
+          /tmp/venv/bin/python -c "from fastapi.testclient import TestClient; from pyocr_toolkit.api import create_app; c = TestClient(create_app()); assert c.get('/').status_code == 200; assert c.get('/static/common.js').status_code == 200"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish-pypi:
+    if: github.event_name == 'release'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/pyocr-toolkit/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  publish-testpypi:
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/pyocr-toolkit/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/

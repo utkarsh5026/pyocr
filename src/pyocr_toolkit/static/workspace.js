@@ -155,7 +155,7 @@ function showLlmResult(key) {
   const warns = (r.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
   const image = r.preprocess_label ? ` · image: <span class="badge accent" title="${esc(r.preprocess)}">${esc(r.preprocess_label)}</span>` : "";
   $("#llm-meta").innerHTML = `${esc(r.provider_label || r.provider)} · <b>${esc(r.model)}</b> · ` +
-    `${(r.latency_ms / 1000).toFixed(1)}s${tokens} · ${r.text.length} chars${image}${warns}`;
+    `${(r.latency_ms / 1000).toFixed(1)}s${tokens}${r.cost ? ` · ${costHtml(r.cost)}` : ""} · ${r.text.length} chars${image}${warns}`;
   setText($("#llm-text"), r.text);
   renderSide();
 }
@@ -208,6 +208,13 @@ async function runLlm(force = false) {
   const out = $("#llm-text"), emptyMsg = out.dataset.empty;
   out.dataset.empty = "Reading the page…";
   const done = setBusy(btn, "Transcribing…", [[$("#page-frame"), "is-reading"], [out, "is-thinking"]]);
+  // One request, no progress events: an elapsed counter at least shows it's alive.
+  const t0 = Date.now();
+  const tick = setInterval(() => {
+    const s = fmtDuration((Date.now() - t0) / 1000);
+    btn.textContent = `Transcribing… ${s}`;
+    out.dataset.empty = `Reading the page… ${s}`;
+  }, 1000);
   try {
     const result = await postJSON(pageUrl(n, "/llm"), body);
     if (!result.cached) state.pages[n].llm_results += 1;
@@ -220,6 +227,7 @@ async function runLlm(force = false) {
       if (result.cached) toast("Showing the cached result. Use “re-run” to call the model again.");
     }
   } finally {
+    clearInterval(tick);
     done();
     if (!out.textContent) out.dataset.empty = emptyMsg;  // failed: put the hint back
   }
@@ -607,17 +615,19 @@ async function runAB() {
 }
 
 function renderAB(a, b) {
+  // each cell returns HTML; text goes through esc()
   const rows = [
-    ["Image sent", (r) => `${(r.image_mime || "").replace("image/", "").toUpperCase()} · ${fmtSize(r.image_bytes)}`],
-    ["Input tokens", (r) => fmtInt(r.input_tokens)],
-    ["Output tokens", (r) => fmtInt(r.output_tokens)],
-    ["Time", (r) => `${(r.latency_ms / 1000).toFixed(1)} s${r.cached ? " (cached)" : ""}`],
-    ["Characters", (r) => fmtInt(r.text.length)],
+    ["Image sent", (r) => esc(`${(r.image_mime || "").replace("image/", "").toUpperCase()} · ${fmtSize(r.image_bytes)}`)],
+    ["Input tokens", (r) => esc(fmtInt(r.input_tokens))],
+    ["Output tokens", (r) => esc(fmtInt(r.output_tokens))],
+    ["Cost", (r) => (r.cost ? costHtml(r.cost) : '<span class="muted">unknown</span>')],
+    ["Time", (r) => esc(`${(r.latency_ms / 1000).toFixed(1)} s${r.cached ? " (cached)" : ""}`)],
+    ["Characters", (r) => esc(fmtInt(r.text.length))],
   ];
   const box = $("#ab-summary");
   box.innerHTML = `<table class="table compact ab-table"><thead><tr><th></th><th>A · original image</th>
       <th>B · adjusted <span class="small muted">${esc(b.preprocess_label || "")}</span></th></tr></thead><tbody>` +
-    rows.map(([k, f]) => `<tr><td class="muted">${k}</td><td>${esc(f(a))}</td><td>${esc(f(b))}</td></tr>`).join("") +
+    rows.map(([k, f]) => `<tr><td class="muted">${k}</td><td>${f(a)}</td><td>${f(b)}</td></tr>`).join("") +
     `</tbody></table><p class="small muted">The diff shows what the preprocessing changed in the transcription
     (A is the reference, B the candidate). Different isn't automatically better: to see which is <i>right</i>,
     compare each against text you trust, such as the native layer of a born-digital PDF or a page you've checked.</p>`;

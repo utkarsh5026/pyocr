@@ -169,7 +169,8 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
 <h3>Which LLM should our pipeline use?</h3>
 <ol><li>Take a born-digital PDF, which has exact native text.</li><li>Run two or three models on the same pages.</li>
   <li>Compare native text (reference) against each model (candidate). Lower CER means a more faithful model. Also look at
-    the token counts on the Overview page for cost.</li>
+    the cost on the Overview page: each job shows its spend at list price in US dollars and rupees
+    (set <code>USD_INR_RATE</code> to today's rate).</li>
   <li>Compare model A against model B on your real scans to see where they disagree.</li></ol>
 <h3>Just get clean text out of a hard PDF</h3>
 <ol><li>Extract with an LLM using the Markdown prompt.</li><li>Open <i>Full text</i>, check it next to the page images, then download as Markdown or JSONL.</li></ol>

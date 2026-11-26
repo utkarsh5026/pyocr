@@ -8,6 +8,11 @@ and re-running it only processes the missing pages.
 
 Jobs live in memory: restarting the server forgets the job list (not the
 results).
+
+Progress is reported in pages. ``current_pages`` are pages the engine is working
+on right now; LLM pages that are still waiting for an ``LLM_CONCURRENCY`` slot
+(another job or a workspace run holds it) are in ``waiting_pages`` instead, so
+the UI doesn't claim the model is reading a page it hasn't been sent yet.
 """
 
 from __future__ import annotations
@@ -19,6 +24,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from .documents import DocumentStore
+from .llm import catalog
 from .preprocess import Preprocess
 from .service import LLMSpec, Services
 
@@ -45,10 +51,49 @@ class Job:
     started_at: float | None = None
     finished_at: float | None = None
     current_pages: list[int] = field(default_factory=list)
+    waiting_pages: list[int] = field(default_factory=list)
+    #: catalog list price for LLM jobs: {"in", "out" (USD per 1M tokens), "model", "usd_inr_rate"}; None if unknown
+    price: dict[str, Any] | None = None
 
     @property
     def total(self) -> int:
         return len(self.pages)
+
+    def timing(self, now: float | None = None) -> tuple[float | None, float | None]:
+        """``(seconds_per_page, eta_seconds)`` from the pages processed so far.
+
+        Cache hits are near-instant, so they're left out of the rate: the rate is
+        elapsed time over pages that really ran (failures included, since they
+        cost time too). With N workers this is wall time per page, i.e. it already
+        accounts for concurrency. Both are ``None`` until a page has really run;
+        the ETA is only given while the job is running.
+        """
+        if self.started_at is None:
+            return None, None
+        processed = self.done - self.cached
+        if processed <= 0:
+            return None, None
+        end = self.finished_at or (now if now is not None else time.time())
+        per_page = (end - self.started_at) / processed
+        eta = per_page * (self.total - self.done) if self.status == "running" else None
+        return per_page, eta
+
+    def cost(self) -> dict[str, Any] | None:
+        """Spend so far at list price, plus a projection for the whole job while it runs.
+
+        The projection assumes remaining pages cost what the paid pages so far did on
+        average; pages that turn out to be cached make the real total lower.
+        """
+        if not self.price:
+            return None
+        usd = (self.input_tokens * self.price["in"] + self.output_tokens * self.price["out"]) / 1_000_000
+        rate = self.price["usd_inr_rate"]
+        paid = self.done - self.cached - self.failed
+        projected = usd / paid * (paid + self.total - self.done) if self.status == "running" and paid > 0 else None
+        return {"usd": usd, "inr": usd * rate, "projected_usd": projected,
+                "projected_inr": projected * rate if projected is not None else None,
+                "usd_inr_rate": rate, "price_in": self.price["in"], "price_out": self.price["out"],
+                "price_model": self.price["model"]}
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -56,6 +101,8 @@ class Job:
         data["pages"] = len(self.pages)
         data["first_page"] = self.pages[0] if self.pages else None
         data["errors"] = self.errors[-20:]
+        data["seconds_per_page"], data["eta_seconds"] = self.timing()
+        data["cost"] = self.cost()
         return data
 
 
@@ -77,6 +124,7 @@ class JobManager:
     def start(self, doc_id: str, kind: JobKind, pages: list[int], llm: LLMSpec | None = None,
               force: bool = False) -> Job:
         doc = self.store.get(doc_id)  # validates the id
+        price: dict[str, Any] | None = None
         if kind == "llm":
             if llm is None:
                 raise ValueError("LLM job needs a provider")
@@ -87,10 +135,14 @@ class JobManager:
             pre = Preprocess.parse(llm.preprocess)
             if not pre.is_identity:
                 label += f" · image: {pre.describe()}"
+            found = catalog.price(model, provider.id)
+            if found:
+                price = {"in": found[0], "out": found[1], "model": found[2],
+                         "usd_inr_rate": self.services.settings.usd_inr_rate}
         else:
             label = f"Tesseract OCR ({self.services.settings.tesseract_language})"
         job = Job(id=uuid.uuid4().hex[:12], doc_id=doc.meta.id, kind=kind, pages=pages, label=label,
-                  llm=asdict(llm) if llm else None, force=force)
+                  llm=asdict(llm) if llm else None, force=force, price=price)
         self.jobs[job.id] = job
         self._tasks[job.id] = asyncio.get_running_loop().create_task(self._run(job))
         return job
@@ -114,7 +166,13 @@ class JobManager:
         async def worker() -> None:
             while not queue.empty():
                 page = queue.get_nowait()
-                job.current_pages.append(page)
+                # LLM pages wait for a semaphore slot before the model sees them.
+                (job.waiting_pages if job.kind == "llm" else job.current_pages).append(page)
+
+                def started(page: int = page) -> None:
+                    job.waiting_pages.remove(page)
+                    job.current_pages.append(page)
+
                 try:
                     if job.kind == "ocr":
                         if not job.force and doc.cached_ocr_text(page) is not None:
@@ -122,7 +180,7 @@ class JobManager:
                         else:
                             await asyncio.to_thread(self.services.run_ocr_page, doc, page, job.force)
                     else:
-                        res = await self.services.run_llm_page(doc, page, spec, force=job.force)
+                        res = await self.services.run_llm_page(doc, page, spec, force=job.force, on_start=started)
                         if res.get("cached"):
                             job.cached += 1
                         else:
@@ -134,7 +192,9 @@ class JobManager:
                     job.failed += 1
                     job.errors.append(f"page {page + 1}: {exc}")
                 finally:
-                    job.current_pages.remove(page)
+                    for active in (job.current_pages, job.waiting_pages):
+                        if page in active:
+                            active.remove(page)
                     job.done += 1
 
         concurrency = self.ocr_concurrency if job.kind == "ocr" else self.services.settings.llm_concurrency
@@ -146,3 +206,4 @@ class JobManager:
         finally:
             job.finished_at = time.time()
             job.current_pages.clear()
+            job.waiting_pages.clear()

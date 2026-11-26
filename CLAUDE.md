@@ -15,7 +15,7 @@ source. Edit AGENTS.md, not this file, when a rule changes.
 | `/add-provider <name>` | Adds a new LLM provider end to end (class, settings, env templates, registry, test, docs) |
 | `/add-page <name>` | Adds a new server-rendered page (route, template, JS, nav, test, Help) |
 | `/smoke` | Starts the app on a spare port and hits every page and key API route |
-| `/release <version>` | Bumps the version in both places, writes the CHANGELOG entry, runs checks |
+| `/release <version> [--dry-run] [--testpypi]` | Bumps the version, writes the CHANGELOG entry, runs checks, then (after you confirm) commits, tags and creates the GitHub Release, which publishes to PyPI |
 
 ### Subagents (`.claude/agents/`)
 

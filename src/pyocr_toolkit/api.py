@@ -163,6 +163,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         """Search the built-in catalog of vision models, rated for page transcription."""
         return {
             "updated": catalog.CATALOG_UPDATED,
+            "usd_inr_rate": settings.usd_inr_rate,  # prices are USD; the page also shows them in ₹
             "ratings": {k: v[0] for k, v in catalog.RATINGS.items()},
             "sources": [{"label": a, "url": b} for a, b in catalog.SOURCES],
             "models": [m.to_json() for m in catalog.search(q, provider, rating, include_deprecated)],
@@ -326,7 +327,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
     # --------------------------------------------------------------------- LLM
     @api.get("/documents/{doc_id}/pages/{page}/llm", tags=["llm"])
     def llm_results(doc_id: str, page: int):
-        return get_doc(doc_id).list_llm_results(page)
+        return [services.with_cost(r) for r in get_doc(doc_id).list_llm_results(page)]
 
     @api.post("/documents/{doc_id}/pages/{page}/llm", tags=["llm"])
     async def run_llm(doc_id: str, page: int, body: LLMRunBody):
@@ -337,7 +338,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             services.resolve_spec(body.spec())
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return await services.run_llm_page(doc, page, body.spec(), force=body.force)
+        return services.with_cost(await services.run_llm_page(doc, page, body.spec(), force=body.force))
 
     @api.delete("/documents/{doc_id}/pages/{page}/llm/{key}", status_code=204, tags=["llm"])
     def delete_llm_result(doc_id: str, page: int, key: str):

@@ -12,14 +12,44 @@
         <label><input type="radio" name="kind" value="llm" checked> {{ icon('sparkles') }}LLM transcription</label>
         <label><input type="radio" name="kind" value="ocr"> {{ icon('cpu') }}Tesseract OCR</label>
       </div>
-      <label>Pages <input name="pages" placeholder="All pages  (or e.g. 1-5, 9)"></label>
+      <div class="field">
+        <div class="field-head">
+          <label for="ex-pages">Pages</label>
+          <span class="field-note" id="pages-summary" aria-live="polite"></span>
+        </div>
+        <input id="ex-pages" name="pages" placeholder="All pages  (or e.g. 1-5, 9)" autocomplete="off" spellcheck="false">
+        <div class="chips page-presets" id="page-presets" aria-label="Quick selections">
+          <button type="button" data-preset="all">All</button>
+          <button type="button" data-preset="first">First 5</button>
+          <button type="button" data-preset="scans" hidden>Scans only</button>
+          <button type="button" data-preset="missing" hidden>Not extracted yet</button>
+        </div>
+        <div class="page-map" id="page-map" role="group" aria-label="Pages to extract (click to toggle, shift-click for a range)"></div>
+        <div class="page-map-legend">
+          <span>Click a page to toggle it, Shift-click to select a range</span>
+          <span class="legend-key"><i class="key-scan"></i>scan</span>
+          <span class="legend-key"><i class="key-done"></i><span id="legend-done">has text from this engine</span></span>
+        </div>
+      </div>
       <div id="llm-options">{% set picker_id = 'ex' %}{% include "_llm_picker.html" %}
-        <label class="per-request">Pages per request
-          <input name="per_request" type="number" min="1" max="20" value="1" inputmode="numeric">
-        </label>
-        <p class="hint">1 sends each page on its own. A higher number sends that many pages
-          in one request, as batching pipelines do. The reply is split back into pages, and the run becomes its own
-          source, so you can compare it with one page per request.</p>
+        <div class="field per-request">
+          <div class="field-head">
+            <span class="field-label" id="per-request-label">Pages per request</span>
+            <span class="field-note" id="per-request-summary" aria-live="polite"></span>
+          </div>
+          <div class="row per-request-row">
+            <div class="seg" role="radiogroup" aria-labelledby="per-request-label" id="per-request-presets">
+              {% for n in [1, 2, 3, 4, 5, 10] %}
+              <label><input type="radio" name="per_request_preset" value="{{ n }}"{{ ' checked' if n == 1 }}> {{ n }}</label>
+              {% endfor %}
+            </div>
+            <label class="per-request-other">Other
+              <input name="per_request" type="number" min="1" max="20" placeholder="e.g. 8" inputmode="numeric" aria-label="Pages per request, other value">
+            </label>
+          </div>
+          <p class="hint">Send several pages in one call, as batching pipelines do. The reply is split back into pages, and
+            the run becomes its own source, so you can compare it with one page per request.</p>
+        </div>
       </div>
       <label class="check"><input type="checkbox" name="force"> Re-run pages that are already extracted</label>
       <div class="row" style="margin-top:4px">

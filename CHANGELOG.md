@@ -10,6 +10,11 @@
   single-page results and cache keys are unchanged. Tokens of a shared request are split evenly over its pages, and
   each page's record has a `batch` object with the request totals. New setting `LLM_BATCH_MAX_OUTPUT_TOKENS`
   (default 32000).
+- Easier page selection on the Overview page. The page-range box checks what you type as you type ("9 of 14 pages",
+  or what's wrong with the range) and stays in sync with a clickable page map (Shift-click for a range), with
+  presets for all pages, the first 5, scans only, and pages with no text from the chosen engine yet. The map marks
+  scans and pages that already have text. "Pages per request" has presets (1, 2, 3, 4, 5, 10), a box for any other
+  value, and shows how many requests the job will make.
 
 ## 0.3.0 - 2026-11-27
 

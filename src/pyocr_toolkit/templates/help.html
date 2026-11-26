@@ -41,7 +41,9 @@
   <dt><a href="/">Home</a></dt><dd>Upload area, setup status and recent documents.</dd>
   <dt><a href="/documents">Library</a></dt><dd>Every uploaded document as a card showing how many pages have native, OCR and LLM text, and how many still have no text at all. Filter by status (<i>Needs text</i>, <i>Scanned</i>, <i>All pages have text</i>), by workspace or by name.</dd>
   <dt><a href="/workspaces">Workspaces</a></dt><dd>Named groups of documents, usually one batch upload each. Open one to rename it, add files, or take documents out of it.</dd>
-  <dt>Document → Overview</dt><dd>Start background extractions, list every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
+  <dt>Document → Overview</dt><dd>Start background extractions: type a page range or click pages on the page map
+    (Shift-click selects a range; presets pick scans only or pages with no text from that engine yet), and choose how many
+    pages go in each LLM request. Also lists every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
   <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text, Tesseract, LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
   <dt>Document → Full text</dt><dd>The whole document from one source, page by page, optionally next to the page images. Find-in-text, copy and download.</dd>
   <dt>Document → Compare</dt><dd>Pick a reference (A) and a candidate (B). You get the whole-document error rates, a per-page CER chart (click a bar to open that page) and the selected page's text side by side, with words only in A and only in B highlighted. It opens on the worst page.</dd>

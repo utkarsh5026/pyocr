@@ -576,6 +576,103 @@ body.app .topbar { position: static; }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 8px); } }
 
 /* ==========================================================================
+   Motion
+   --------------------------------------------------------------------------
+   Small, quick animations that explain what changed: content settles in,
+   controls respond to presses, and anything waiting on a model "breathes"
+   until the answer arrives. Everything here is switched off by the
+   prefers-reduced-motion rule at the bottom of the file.
+   ========================================================================== */
+:root {
+  --ease-out: cubic-bezier(.2, .8, .3, 1);   /* fast start, soft landing */
+  --ai-grad: linear-gradient(110deg, var(--accent), #a855f7, #06b6d4, var(--accent));
+}
+:root[data-theme="dark"] { --ai-grad: linear-gradient(110deg, var(--accent), #c084fc, #22d3ee, var(--accent)); }
+
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+@keyframes fade { from { opacity: 0; } }
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse-dot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(.7); } }
+@keyframes flow { to { background-position: 200% 0; } }
+@keyframes shimmer { from { background-position: 150% 0; } to { background-position: -50% 0; } }
+@keyframes scan { from { background-position: 0 -40%; } to { background-position: 0 140%; } }
+@keyframes glow { 0%, 100% { box-shadow: var(--shadow-lg), 0 0 0 1px var(--accent-ring); } 50% { box-shadow: var(--shadow-lg), 0 0 0 4px var(--accent-ring); } }
+@keyframes materialize { from { opacity: 0; filter: blur(3px); transform: translateY(4px); } }
+
+/* Page content settles in on load (not the workspace: it is an app shell). */
+main.container { animation: rise .35s var(--ease-out) backwards; }
+.empty { animation: rise .45s var(--ease-out) backwards; }
+
+/* Card grids cascade in, ~30 ms apart, capped so long lists don't drag. */
+.stat, .doc-card, .lib-card, .page-tile, .provider-grid > * { animation: rise .4s var(--ease-out) backwards; animation-delay: calc(var(--i, 10) * 30ms); }
+:is(.stat, .doc-card, .lib-card, .page-tile, .provider-grid > *):nth-child(1) { --i: 0; }
+:is(.stat, .doc-card, .lib-card, .page-tile, .provider-grid > *):nth-child(2) { --i: 1; }
+:is(.stat, .doc-card, .lib-card, .page-tile, .provider-grid > *):nth-child(3) { --i: 2; }
+:is(.stat, .doc-card, .lib-card, .page-tile, .provider-grid > *):nth-child(4) { --i: 3; }
+:is(.stat, .doc-card, .lib-card, .page-tile, .provider-grid > *):nth-child(5) { --i: 4; }
+:is(.stat, .doc-card, .lib-card, .page-tile, .provider-grid > *):nth-child(6) { --i: 5; }
+:is(.stat, .doc-card, .lib-card, .page-tile, .provider-grid > *):nth-child(7) { --i: 6; }
+:is(.stat, .doc-card, .lib-card, .page-tile, .provider-grid > *):nth-child(8) { --i: 7; }
+:is(.stat, .doc-card, .lib-card, .page-tile, .provider-grid > *):nth-child(9) { --i: 8; }
+
+/* Hover lift on clickable cards. */
+.lib-card, .doc-card, .stat { transition: border-color .15s, box-shadow .2s, transform .2s var(--ease-out); }
+.lib-card:hover, a.doc-card:hover, a.stat:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+
+/* Buttons give a little under the cursor. */
+.btn { transition: background .15s, border-color .15s, color .15s, box-shadow .15s, transform .08s; }
+.btn:active:not(:disabled) { transform: scale(.97); }
+
+/* Tab panels and freshly rendered results fade in. */
+.tab-body:not([hidden]) { animation: fade .2s ease backwards; }
+#search-results:not([hidden]), .metrics > *, #cmp-diff:not(:empty), #cmp-overall > * { animation: rise .25s var(--ease-out) backwards; }
+#drop-overlay:not([hidden]) { animation: fade .15s ease backwards; }
+#toast.leaving { opacity: 0; transform: translate(-50%, 6px); transition: opacity .18s ease, transform .18s ease; }
+
+/* Page image cross-fades while the next page renders. */
+.page-frame img { transition: opacity .2s ease; }
+.page-frame img.loading { opacity: .4; }
+
+/* ---- busy / "AI is working" states ------------------------------------- */
+/* Any button doing work: small spinner, full opacity so it doesn't look broken. */
+.btn.is-busy, .btn.is-busy:disabled { opacity: 1; cursor: progress; }
+.btn.is-busy::before {
+  content: ""; width: 12px; height: 12px; border-radius: 50%; flex: none;
+  border: 2px solid currentColor; border-right-color: transparent; animation: spin .7s linear infinite;
+}
+/* The model button gets a slowly flowing gradient while it waits. */
+.btn.primary.is-busy { background: var(--ai-grad); background-size: 200% 100%; border-color: transparent; animation: flow 2.4s linear infinite; }
+
+/* The page being read: a soft scan line sweeps down it and the frame breathes. */
+.page-frame.is-reading { animation: glow 1.8s ease-in-out infinite; }
+.page-frame.is-reading::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background: linear-gradient(180deg, transparent, color-mix(in srgb, var(--accent) 22%, transparent) 45%,
+    color-mix(in srgb, var(--accent) 45%, transparent) 50%, transparent 52%) no-repeat;
+  background-size: 100% 30%; animation: scan 1.8s ease-in-out infinite alternate;
+}
+
+/* The text box that will receive the answer shimmers like a placeholder. */
+pre.text.is-thinking {
+  color: var(--subtle);
+  background-image: linear-gradient(100deg, transparent 30%, color-mix(in srgb, var(--accent) 10%, transparent) 50%, transparent 70%);
+  background-size: 200% 100%; animation: shimmer 1.6s ease-in-out infinite;
+}
+/* ...and the answer materialises out of a slight blur when it lands. */
+pre.text.reveal { animation: materialize .45s var(--ease-out) backwards; }
+
+/* Running jobs: a pulsing dot in the badge and a light sweep over the bar.
+   Polling re-renders the markup, so JS passes a negative delay (--phase)
+   that keeps the animation in step instead of restarting every second. */
+.badge.run::before { content: ""; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: currentColor; animation: pulse-dot 1.4s ease-in-out infinite; animation-delay: var(--phase, 0s); }
+.job.is-active progress::-webkit-progress-value {
+  background: var(--ai-grad); background-size: 200% 100%; animation: flow 2.8s linear infinite; animation-delay: var(--phase, 0s);
+}
+.job.is-active progress::-moz-progress-bar {
+  background: var(--ai-grad); background-size: 200% 100%; animation: flow 2.8s linear infinite; animation-delay: var(--phase, 0s);
+}
+
+/* ==========================================================================
    Responsive
    ========================================================================== */
 @media (max-width: 1100px) {

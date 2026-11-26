@@ -73,7 +73,9 @@ async function gotoPage(n) {
   $(`#page-list li[data-page="${n}"]`)?.scrollIntoView({ block: "nearest" });
 
   const img = $("#page-img");
-  img.onload = applyZoom;
+  img.classList.add("loading");  // dimmed until the new render arrives
+  img.onload = () => { img.classList.remove("loading"); applyZoom(); };
+  img.onerror = () => img.classList.remove("loading");
   img.src = pageUrl(n, `/image?dpi=${state.config.preview_dpi}`);
   applyZoom();
 
@@ -178,21 +180,25 @@ function switchTab(name) {
 // ------------------------------------------------------------------ actions
 async function runOcr(force = true) {
   const n = state.page, btn = $("#run-ocr");
-  btn.disabled = true; btn.textContent = "Running OCR…";
+  const done = setBusy(btn, "Running OCR…", [[$("#page-frame"), "is-reading"], [$("#ocr-text"), "is-thinking"]]);
   try {
     const layer = await api(pageUrl(n, `/text/ocr?force=${force}`));
     state.pages[n].has_ocr_cache = true;
     refreshPageBadges(n);
     if (n === state.page) { state.ocr = layer; renderCompareOptions(); }
   } finally {
-    if (n === state.page) renderOcr();
+    done();
+    renderOcr();
+    if (n === state.page) replayAnimation($("#ocr-text"), "reveal");
   }
 }
 
 async function runLlm(force = false) {
   const n = state.page, btn = $("#run-llm");
   const body = state.picker.spec(force);
-  btn.disabled = true; btn.textContent = "Transcribing…";
+  const out = $("#llm-text"), emptyMsg = out.dataset.empty;
+  out.dataset.empty = "Reading the page…";
+  const done = setBusy(btn, "Transcribing…", [[$("#page-frame"), "is-reading"], [out, "is-thinking"]]);
   try {
     const result = await postJSON(pageUrl(n, "/llm"), body);
     if (!result.cached) state.pages[n].llm_results += 1;
@@ -200,11 +206,13 @@ async function runLlm(force = false) {
     if (n === state.page) {
       state.llmResults = await api(pageUrl(n, "/llm"));
       renderLlm(result.key);
+      replayAnimation(out, "reveal");
       renderCompareOptions();
       if (result.cached) toast("Showing the cached result. Use “re-run” to call the model again.");
     }
   } finally {
-    btn.disabled = false; btn.textContent = "Transcribe this page";
+    done();
+    if (!out.textContent) out.dataset.empty = emptyMsg;  // failed: put the hint back
   }
 }
 

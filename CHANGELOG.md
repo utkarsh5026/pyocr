@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Subtle UI motion: pages and card grids ease in, cards lift on hover, buttons respond to presses, tab panels
+  and results fade in, and toasts fade out. While Tesseract or an LLM is working on a page, a scan line sweeps
+  the page image, the button shows a spinner (with a flowing gradient for the model), the text box shimmers,
+  and the finished text fades in. Running jobs get a pulsing badge and a moving progress bar. All of it turns
+  off when the OS asks for reduced motion.
+
 ## 0.2.0
 
 - Multi-page web app with bookmarkable URLs: Home, Library, document Overview & extract, Page inspector,

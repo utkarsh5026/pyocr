@@ -28,7 +28,33 @@ function toast(msg, isError = false) {
   el.className = isError ? "error" : "";
   el.hidden = false;
   clearTimeout(_toastTimer);
-  _toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 8000 : 3000);
+  _toastTimer = setTimeout(() => {
+    el.classList.add("leaving");  // fade out (styles.css), then hide
+    _toastTimer = setTimeout(() => { el.hidden = true; }, 180);
+  }, isError ? 8000 : 3000);
+}
+
+/** Replay a one-shot CSS animation class (e.g. "reveal") on an element. */
+function replayAnimation(el, cls) {
+  el.classList.remove(cls);
+  void el.offsetWidth;  // force a reflow so removing + re-adding restarts it
+  el.classList.add(cls);
+  el.addEventListener("animationend", () => el.classList.remove(cls), { once: true });
+}
+
+/**
+ * Show that `btn` is working: spinner + label, disabled. Returns a function that
+ * restores the button. Extra elements get `cls` toggled for the same duration
+ * (the workspace uses this for the page scan line and the shimmering text box).
+ */
+function setBusy(btn, label, extras = []) {
+  const prev = btn.textContent;
+  btn.disabled = true; btn.textContent = label; btn.classList.add("is-busy");
+  extras.forEach(([el, cls]) => el?.classList.add(cls));
+  return () => {
+    btn.disabled = false; btn.textContent = prev; btn.classList.remove("is-busy");
+    extras.forEach(([el, cls]) => el?.classList.remove(cls));
+  };
 }
 
 /** Wrap an async handler so errors become toasts instead of silent failures. */
@@ -178,7 +204,10 @@ function jobHtml(job, docName) {
   const errors = job.errors.length
     ? `<details class="small"><summary class="err">${job.failed} page(s) failed</summary><ul>${job.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></details>` : "";
   const active = job.status === "running" || job.status === "queued";
-  return `<div class="job" data-job="${job.id}">
+  // Polling re-renders this markup; a negative delay tied to the clock keeps the
+  // running animations (styles.css "Motion") in phase instead of restarting.
+  const phase = active ? ` style="--phase:-${(Date.now() % 2800) / 1000}s"` : "";
+  return `<div class="job${active ? " is-active" : ""}" data-job="${job.id}"${phase}>
     <div class="job-head">
       <span class="badge ${statusCls}">${job.status}</span>
       <b>${esc(job.label)}</b>

@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pyocr · OCR inspector</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">pyocr <span>OCR inspector</span></div>
+
+  <label class="btn primary" title="PDF, XPS, EPUB, PNG, JPEG, TIFF, ... (anything PyMuPDF opens)">
+    Upload
+    <input id="file-input" type="file" hidden
+           accept=".pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
+  </label>
+  <select id="doc-select" title="Previously uploaded documents"><option value="">— no document —</option></select>
+  <button id="delete-doc" class="btn ghost" title="Delete this document and its cached results" hidden>Delete</button>
+
+  <div class="spacer"></div>
+
+  <div class="llm-controls">
+    <select id="provider-select" title="LLM provider"></select>
+    <input id="model-input" list="model-list" placeholder="model" title="Model / deployment name">
+    <datalist id="model-list"></datalist>
+    <select id="prompt-select" title="Prompt"></select>
+  </div>
+  <button id="report-btn" class="btn" disabled>Report</button>
+</header>
+
+<div id="drop-overlay" hidden><div>Drop a PDF or image to upload</div></div>
+
+<main id="app">
+  <aside class="sidebar">
+    <form id="search-form" class="search">
+      <input id="search-input" type="search" placeholder="Search document…" disabled>
+      <div class="search-sources">
+        <label><input type="checkbox" value="native" checked> native</label>
+        <label><input type="checkbox" value="ocr" checked> OCR</label>
+        <label><input type="checkbox" value="llm" checked> LLM</label>
+      </div>
+    </form>
+    <div id="search-results" hidden></div>
+
+    <div class="batch">
+      <button id="batch-ocr" class="btn small" disabled title="Run Tesseract on every page">OCR all pages</button>
+      <button id="batch-llm" class="btn small" disabled title="Run the selected LLM on every page">LLM all pages</button>
+      <div id="batch-progress" hidden><progress max="1" value="0"></progress><span></span>
+        <button id="batch-cancel" class="link">cancel</button></div>
+    </div>
+    <ol id="page-list" class="pages"></ol>
+  </aside>
+
+  <section class="viewer">
+    <div class="viewer-toolbar">
+      <button id="prev-page" class="btn small" disabled>‹</button>
+      <span id="page-label">–</span>
+      <button id="next-page" class="btn small" disabled>›</button>
+      <span class="sep"></span>
+      <button id="zoom-out" class="btn small">−</button>
+      <span id="zoom-label">100%</span>
+      <button id="zoom-in" class="btn small">+</button>
+      <button id="zoom-fit" class="btn small">fit</button>
+      <span class="sep"></span>
+      <span id="page-badges"></span>
+    </div>
+    <div id="page-scroll" class="page-scroll">
+      <div id="empty-state" class="empty">
+        <h2>Upload a PDF or image to start</h2>
+        <p>See the embedded text layer, run Tesseract OCR, ask an LLM to transcribe the page verbatim,
+          and compare them side by side.</p>
+      </div>
+      <div id="page-frame" class="page-frame" hidden>
+        <img id="page-img" alt="page">
+        <div id="highlight-layer"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <nav class="tabs">
+      <button data-tab="native" class="active">Native text</button>
+      <button data-tab="ocr">Tesseract OCR</button>
+      <button data-tab="llm">LLM</button>
+      <button data-tab="compare">Compare</button>
+    </nav>
+
+    <div class="tab-body" data-tab="native">
+      <div class="tab-meta" id="native-meta"></div>
+      <pre id="native-text" class="text"></pre>
+    </div>
+
+    <div class="tab-body" data-tab="ocr" hidden>
+      <div class="tab-meta"><span id="ocr-meta"></span>
+        <button id="run-ocr" class="btn small">Run OCR</button></div>
+      <pre id="ocr-text" class="text"></pre>
+    </div>
+
+    <div class="tab-body" data-tab="llm" hidden>
+      <div class="tab-meta">
+        <select id="llm-result-select" title="Stored transcriptions for this page"></select>
+        <button id="run-llm" class="btn small primary">Transcribe page</button>
+        <button id="rerun-llm" class="btn small ghost" title="Ignore cache and call the model again">re-run</button>
+      </div>
+      <details id="custom-prompt-box" hidden>
+        <summary>Custom prompt</summary>
+        <textarea id="custom-prompt" rows="8"></textarea>
+      </details>
+      <div id="llm-meta" class="tab-meta small"></div>
+      <pre id="llm-text" class="text"></pre>
+    </div>
+
+    <div class="tab-body" data-tab="compare" hidden>
+      <div class="compare-controls">
+        <label>Reference <select id="cmp-ref"></select></label>
+        <label>vs <select id="cmp-hyp"></select></label>
+        <label><input type="checkbox" id="cmp-case" checked> ignore case</label>
+        <label><input type="checkbox" id="cmp-punct"> ignore punctuation</label>
+        <button id="run-compare" class="btn small primary">Compare</button>
+      </div>
+      <div id="cmp-metrics" class="metrics"></div>
+      <div class="legend" id="cmp-legend" hidden>
+        <span class="del">missing in candidate</span>
+        <span class="ins">extra in candidate</span>
+        <span class="rep"><s>reference</s> → candidate</span>
+      </div>
+      <pre id="cmp-diff" class="text diff"></pre>
+    </div>
+  </section>
+</main>
+
+<dialog id="report-dialog">
+  <header><h3>Document report</h3><button class="link" id="report-close">close</button></header>
+  <p class="small">Error rates are measured against the most recent LLM transcription of each page
+    (CER = character error rate, lower is better). Pages need an LLM run and/or OCR run to be scored.</p>
+  <div class="export">
+    Export text:
+    <a id="export-native" class="link">native</a> ·
+    <a id="export-ocr" class="link">OCR</a> ·
+    <a id="export-llm" class="link">LLM</a> ·
+    <a id="export-llm-json" class="link">LLM (json)</a>
+  </div>
+  <div id="report-body"></div>
+</dialog>
+
+<div id="toast" hidden></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

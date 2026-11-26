@@ -25,6 +25,7 @@ pytest tests/test_providers.py -q  # one file
 pytest -k compare -q               # by name
 pyocr serve --open                 # run the app on http://127.0.0.1:8000
 pyocr doctor                       # check Tesseract / providers / data dir
+make                               # grouped list of dev tasks (aliases for `python makefile.py <task>`)
 ```
 
 Done means: `ruff check src tests` and `pytest -q` both pass. OCR tests skip automatically when `tesseract`
@@ -47,6 +48,8 @@ src/pyocr_toolkit/
   templates/     Jinja2; base.html holds the nav; partials start with _
   static/        styles.css + one vanilla-JS file per page; common.js shared helpers
 tests/           conftest.py builds sample PDF/PNG in memory; test_api.py has FakeProvider
+Makefile         thin aliases: every target runs `python makefile.py <target>`
+makefile.py      rich-rendered task runner; add a task there AND its target in Makefile (test_makefile.py checks)
 docs/            static GitHub Pages site (index.html, style.css, screenshots/), deployed by .github/workflows/pages.yml
 ```
 

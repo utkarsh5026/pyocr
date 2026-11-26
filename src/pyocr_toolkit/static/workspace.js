@@ -120,7 +120,7 @@ function renderOcr() {
   } else {
     meta.textContent = "Not run yet for this page.";
   }
-  $("#run-ocr").textContent = layer ? "Re-run OCR" : "Run OCR";
+  $("#run-ocr .lbl").textContent = layer ? "Re-run OCR" : "Run OCR";
   $("#run-ocr").disabled = !state.config.tesseract_available;
   setText($("#ocr-text"), layer ? layer.text : "", "Click “Run OCR” (or press o) to OCR this page with Tesseract.");
   renderSide();

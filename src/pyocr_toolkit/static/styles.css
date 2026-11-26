@@ -273,9 +273,8 @@ pre.code { background: var(--bg-sunken); border: 1px solid var(--border); border
 .stat .stat-icon { width: 38px; height: 38px; border-radius: 10px; background: var(--surface-2); display: grid; place-items: center; color: var(--muted); flex: none; }
 .stat .v { font-size: 20px; font-weight: 650; letter-spacing: -.02em; line-height: 1.2; }
 .stat .k { color: var(--muted); font-size: 12.5px; }
-.steps { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; counter-reset: step; }
-.steps li { counter-increment: step; display: flex; flex-direction: column; gap: 4px; }
-.steps li::before { content: counter(step); width: 26px; height: 26px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 650; font-size: 12.5px; margin-bottom: 6px; }
+.steps { list-style: none; padding: 0; margin: 0; display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+.steps li { display: flex; flex-direction: column; gap: 4px; }
 .steps b { font-weight: 600; }
 .steps span { color: var(--muted); font-size: 13px; }
 .doc-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
@@ -675,6 +674,28 @@ pre.text.reveal { animation: materialize .45s var(--ease-out) backwards; }
 /* ==========================================================================
    Responsive
    ========================================================================== */
+/* Icons next to labels: nav, tabs, headings, badges, step tiles. */
+.mainnav a, .doc-tabs a, .crumb, .footer a, .h-icon, .tabs button, .side-head b, .cov-k, .badge, label.check, .menu summary, details > summary, .good {
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.tabs button { justify-content: center; gap: 5px; }
+.mainnav a .icon, .doc-tabs a .icon, .tabs button .icon { width: 15px; height: 15px; opacity: .8; }
+.mainnav a.active .icon, .doc-tabs a.active .icon, .tabs button.active .icon { color: var(--accent); opacity: 1; }
+.h-icon .icon { width: 18px; height: 18px; color: var(--accent); }
+h3.h-icon .icon { width: 16px; height: 16px; }
+.section-head .h-icon, .h-icon { display: flex; }
+.footer a { gap: 4px; }
+.footer .icon, .crumb .icon { width: 13px; height: 13px; }
+.badge .icon, .cov-k .icon, .good .icon { width: 12px; height: 12px; stroke-width: 2.2; }
+.badge { gap: 4px; }
+.cov-k { gap: 4px; }
+.side-head b .icon { width: 14px; height: 14px; color: var(--accent); }
+.seg label .icon, .chips label .icon, label.check .icon { width: 14px; height: 14px; }
+.step-icon { width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; margin-bottom: 6px; }
+.step-icon .icon { width: 18px; height: 18px; }
+#drop-overlay > div { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+#drop-overlay .icon { width: 32px; height: 32px; }
+
 @media (max-width: 1100px) {
   #workspace, #workspace.side { grid-template-columns: 190px 1fr; grid-template-rows: 1fr 1fr; }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -689,6 +710,7 @@ pre.text.reveal { animation: materialize .45s var(--ease-out) backwards; }
   .topbar { padding: 0 12px; gap: 6px; overflow-x: auto; }
   .brand span { display: none; }
   .mainnav a { padding: 6px 8px; }
+  .mainnav a span { display: none; }
   .upload-label { display: none; }
 }
 @media (max-width: 640px) {

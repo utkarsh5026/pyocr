@@ -86,7 +86,7 @@ def test_providers_page_never_shows_values(tmp_path):
         html = c.get("/providers").text
         cfg = c.get("/api/config").text
     assert "sk-secret-123" not in html and "sk-secret-123" not in cfg
-    assert "✓ set" in html
+    assert "</svg>set</span>" in html  # check icon + "set"
     # built-in defaults are not reported as "set" by the user
     assert "default: gemini-2.5-flash" in html
 

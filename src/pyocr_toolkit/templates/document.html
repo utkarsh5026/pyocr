@@ -5,27 +5,27 @@
 {% block content %}
 <div class="grid-2" data-doc-id="{{ doc.id }}" data-page-count="{{ doc.page_count }}" id="doc-root">
   <section class="card">
-    <h2>Extract text</h2>
+    <h2 class="h-icon">{{ icon('sparkles') }}Extract text</h2>
     <p class="hint">Runs in the background. Pages already extracted with the same engine, model and prompt are skipped.</p>
     <form id="extract-form" class="form">
       <div class="seg" role="radiogroup" aria-label="Engine">
-        <label><input type="radio" name="kind" value="llm" checked> LLM transcription</label>
-        <label><input type="radio" name="kind" value="ocr"> Tesseract OCR</label>
+        <label><input type="radio" name="kind" value="llm" checked> {{ icon('sparkles') }}LLM transcription</label>
+        <label><input type="radio" name="kind" value="ocr"> {{ icon('cpu') }}Tesseract OCR</label>
       </div>
       <label>Pages <input name="pages" placeholder="All pages  (or e.g. 1-5, 9)"></label>
       <div id="llm-options">{% set picker_id = 'ex' %}{% include "_llm_picker.html" %}</div>
       <label class="check"><input type="checkbox" name="force"> Re-run pages that are already extracted</label>
       <div class="row" style="margin-top:4px">
-        <button class="btn primary" type="submit">Start extraction</button>
+        <button class="btn primary" type="submit">{{ icon('play') }}Start extraction</button>
         <span class="small muted" id="extract-hint"></span>
       </div>
     </form>
-    <h3 style="margin-top:24px">Jobs</h3>
+    <h3 class="h-icon" style="margin-top:24px">{{ icon('clock') }}Jobs</h3>
     <div id="job-list" class="job-list"><p class="small muted">No jobs started for this document yet.</p></div>
   </section>
 
   <section class="card">
-    <h2>Extracted text sources</h2>
+    <h2 class="h-icon">{{ icon('layers') }}Extracted text sources</h2>
     <p class="hint">Each engine, model and prompt you run becomes a source you can read, export or compare.</p>
     <table class="table compact">
       <thead><tr><th>Source</th><th>Pages</th><th>Tokens in / out</th><th></th></tr></thead>
@@ -37,8 +37,8 @@
         <td class="small muted">{% if s.kind == 'llm' %}{{ "{:,}".format(s.input_tokens) }} / {{ "{:,}".format(s.output_tokens) }}{% else %}–{% endif %}</td>
         <td class="actions">
           {% if s.page_count %}
-          <a class="btn small ghost" href="/documents/{{ doc.id }}/text?source={{ s.id|urlencode }}">Read</a>
-          <details class="menu"><summary class="btn small ghost">Export {{ icon('chevron-down') }}</summary>
+          <a class="btn small ghost" href="/documents/{{ doc.id }}/text?source={{ s.id|urlencode }}">{{ icon('book') }}Read</a>
+          <details class="menu"><summary class="btn small ghost">{{ icon('download') }}Export {{ icon('chevron-down') }}</summary>
             <div>
               {% for fmt, name in [('txt','Plain text'),('md','Markdown'),('json','JSON'),('jsonl','JSONL (page per line)')] %}
               <a href="/api/documents/{{ doc.id }}/export?source={{ s.id|urlencode }}&fmt={{ fmt }}">{{ name }}</a>
@@ -55,10 +55,10 @@
       <a class="btn" href="/documents/{{ doc.id }}/compare">Compare sources {{ icon('arrow-right') }}</a>
       <a class="btn ghost" href="/api/documents/{{ doc.id }}/source">{{ icon('download') }}Original</a>
       <div class="spacer"></div>
-      <button class="btn ghost danger" id="delete-doc" data-name="{{ doc.filename }}">Delete</button>
+      <button class="btn ghost danger" id="delete-doc" data-name="{{ doc.filename }}">{{ icon('trash') }}Delete</button>
     </div>
     {% if doc.metadata %}
-    <details class="meta"><summary>File metadata</summary>
+    <details class="meta"><summary>{{ icon('info') }}File metadata</summary>
       <dl>{% for k, v in doc.metadata.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}</dl>
     </details>
     {% endif %}
@@ -67,7 +67,7 @@
 
 <section>
   <div class="section-head">
-    <h2>Pages</h2>
+    <h2 class="h-icon">{{ icon('file') }}Pages</h2>
     <div class="legend-inline">
       <span><span class="badge scan">scan</span> no text layer</span>
       <span><span class="badge ok">OCR</span> Tesseract done</span>

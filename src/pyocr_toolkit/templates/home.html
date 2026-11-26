@@ -39,17 +39,17 @@
 {% endif %}
 
 <section>
-  <h2>How it works</h2>
+  <h2 class="h-icon">{{ icon('info') }}How it works</h2>
   <ol class="steps">
-    <li><b>Upload</b><span>Any PDF or image. Pages without a real text layer are flagged as scans.</span></li>
-    <li><b>Extract</b><span>Run Tesseract or an LLM on a page, a range or the whole document.</span></li>
-    <li><b>Inspect &amp; compare</b><span>Page image next to each text, word-level diffs and error rates.</span></li>
-    <li><b>Export</b><span>TXT, Markdown, JSON or JSONL, ready for RAG and ingestion.</span></li>
+    <li><span class="step-icon">{{ icon('upload') }}</span><b>Upload</b><span>Any PDF or image. Pages without a real text layer are flagged as scans.</span></li>
+    <li><span class="step-icon">{{ icon('sparkles') }}</span><b>Extract</b><span>Run Tesseract or an LLM on a page, a range or the whole document.</span></li>
+    <li><span class="step-icon">{{ icon('diff') }}</span><b>Inspect &amp; compare</b><span>Page image next to each text, word-level diffs and error rates.</span></li>
+    <li><span class="step-icon">{{ icon('download') }}</span><b>Export</b><span>TXT, Markdown, JSON or JSONL, ready for RAG and ingestion.</span></li>
   </ol>
 </section>
 
 <section>
-  <div class="section-head"><h2>Recent documents</h2>{% if recent %}<a href="/documents" class="small">View all →</a>{% endif %}</div>
+  <div class="section-head"><h2 class="h-icon">{{ icon('clock') }}Recent documents</h2>{% if recent %}<a href="/documents" class="small">View all {{ icon('arrow-right') }}</a>{% endif %}</div>
   {% if recent %}
   <div class="doc-cards">
     {% for d in recent %}

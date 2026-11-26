@@ -10,6 +10,9 @@
   the page image, the button shows a spinner (with a flowing gradient for the model), the text box shimmers,
   and the finished text fades in. Running jobs get a pulsing badge and a moving progress bar. All of it turns
   off when the OS asks for reduced motion.
+- Icons throughout the UI: the top nav, document tabs, text sources (native / OCR / LLM), action buttons,
+  section headings, status badges, the "How it works" steps and empty states. They follow the light/dark
+  theme, and on narrow screens the top nav collapses to icons only.
 
 ## 0.2.0
 

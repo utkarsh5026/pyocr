@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Text · {{ doc.filename }}{% endblock %}
+{% block subnav %}{% include "_doctabs.html" %}{% endblock %}
+{% block content %}
+<div id="reader-root" data-doc-id="{{ doc.id }}">
+  <div class="toolbar sticky">
+    <label>Source
+      <select id="source-select">
+        {% for s in sources %}
+        <option value="{{ s.id }}" {{ 'disabled' if not s.page_count }}>{{ s.label }} ({{ s.page_count }}/{{ doc.page_count }} pages)</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="check"><input type="checkbox" id="show-images"> show page images</label>
+    <input type="search" id="find" placeholder="Find in text…">
+    <span id="find-count" class="small"></span>
+    <div class="spacer"></div>
+    <button class="btn small" id="copy-all">Copy all</button>
+    <details class="menu right"><summary class="btn small">Download ▾</summary>
+      <div id="downloads"></div>
+    </details>
+  </div>
+  <div id="reader-summary" class="small"></div>
+  <div id="reader-pages" class="reader-pages"></div>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/reader.js?v={{ version }}"></script>{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Compare · {{ doc.filename }}{% endblock %}
+{% block subnav %}{% include "_doctabs.html" %}{% endblock %}
+{% block content %}
+<div id="compare-root" data-doc-id="{{ doc.id }}">
+  <div class="card">
+    <h2>Compare two sources across the whole document</h2>
+    <p class="small">Pick a <b>reference</b> (the text you trust more) and a <b>candidate</b> (the text being judged).
+      Typical setups: <i>LLM vs Tesseract</i> (is OCR good enough?), <i>native text vs LLM</i> on born-digital
+      PDFs (is the LLM faithful?), or <i>model A vs model B</i> (do two LLMs agree?).</p>
+    <div class="toolbar">
+      <label>Reference <select id="src-a">
+        {% for s in sources %}<option value="{{ s.id }}" {{ 'disabled' if not s.page_count }}>{{ s.label }} ({{ s.page_count }}p)</option>{% endfor %}
+      </select></label>
+      <button class="btn small ghost" id="swap" title="Swap reference and candidate">⇄</button>
+      <label>Candidate <select id="src-b">
+        {% for s in sources %}<option value="{{ s.id }}" {{ 'disabled' if not s.page_count }}>{{ s.label }} ({{ s.page_count }}p)</option>{% endfor %}
+      </select></label>
+      <label class="check"><input type="checkbox" id="opt-case" checked> ignore case</label>
+      <label class="check"><input type="checkbox" id="opt-punct"> ignore punctuation</label>
+      <button class="btn primary" id="run">Compare</button>
+    </div>
+  </div>
+  <div id="cmp-overall" class="metrics"></div>
+  <div id="cmp-chart" class="bar-chart" hidden></div>
+  <table class="table" id="cmp-table" hidden>
+    <thead><tr><th>Page</th><th>CER</th><th>WER</th><th>Ref chars</th><th>Cand chars</th><th></th></tr></thead>
+    <tbody></tbody>
+  </table>
+  <p class="small muted" id="cmp-hint">Pages missing from either source are listed but not scored. Click a row
+    to see the word-level diff.</p>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/compare.js?v={{ version }}"></script>{% endblock %}

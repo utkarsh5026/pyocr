@@ -1,0 +1,12 @@
+{# Provider / model / prompt picker. common.js fills it from /api/config. #}
+<div class="llm-picker" data-llm-picker>
+  <label>Provider <select data-provider></select></label>
+  <label>Model <input data-model list="{{ picker_id|default('pk') }}-models" autocomplete="off">
+    <datalist id="{{ picker_id|default('pk') }}-models"></datalist></label>
+  <label>Prompt <select data-prompt></select></label>
+  <details data-custom-box hidden class="custom-prompt">
+    <summary>Custom prompt</summary>
+    <textarea data-custom rows="7"></textarea>
+  </details>
+  <div class="picker-status small" data-status></div>
+</div>

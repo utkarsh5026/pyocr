@@ -1,0 +1,233 @@
+/* Shared helpers for every page. Loaded before the page-specific script. */
+"use strict";
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, opts);
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const body = await res.json(); detail = body.detail || detail; } catch (_) { /* not json */ }
+    if (typeof detail !== "string") detail = JSON.stringify(detail);
+    throw new Error(detail);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+function postJSON(path, body) {
+  return api(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body ?? {}) });
+}
+
+let _toastTimer;
+function toast(msg, isError = false) {
+  const el = $("#toast");
+  if (!el) return alert(msg);
+  el.textContent = msg;
+  el.className = isError ? "error" : "";
+  el.hidden = false;
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.hidden = true; }, isError ? 8000 : 3000);
+}
+
+/** Wrap an async handler so errors become toasts instead of silent failures. */
+const guard = (fn) => async (...args) => { try { return await fn(...args); } catch (e) { toast(e.message, true); } };
+
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const pct = (x) => (x == null ? "–" : (x * 100).toFixed(1) + "%");
+const fmtInt = (n) => (n == null ? "–" : Number(n).toLocaleString());
+function errorRateClass(rate) {
+  if (rate == null) return "";
+  return rate <= 0.02 ? "good" : rate <= 0.1 ? "warn" : "bad";
+}
+function queryRegex(q) {
+  const terms = (q || "").trim().split(/\s+/).filter(Boolean).map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return terms.length ? new RegExp(terms.join("\\s+"), "gi") : null;
+}
+/** HTML for `text` with matches of `q` wrapped in <mark>. */
+function highlight(text, q) {
+  const re = queryRegex(q);
+  if (!re || !text) return esc(text);
+  let html = "", last = 0;
+  for (const m of text.matchAll(re)) {
+    html += esc(text.slice(last, m.index)) + "<mark>" + esc(m[0]) + "</mark>";
+    last = m.index + m[0].length;
+  }
+  return html + esc(text.slice(last));
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast("Copied to clipboard"); }
+  catch (_) { toast("Copy failed: the browser blocked clipboard access", true); }
+}
+
+// ------------------------------------------------------------------ config
+let _configPromise;
+function getConfig() {
+  _configPromise ??= api("/api/config");
+  return _configPromise;
+}
+
+// ------------------------------------------------------------------ uploads
+async function uploadFiles(files) {
+  files = Array.from(files || []);
+  if (!files.length) return;
+  const uploaded = [];
+  for (const [i, file] of files.entries()) {
+    toast(`Uploading ${file.name}${files.length > 1 ? ` (${i + 1}/${files.length})` : ""}…`);
+    const fd = new FormData();
+    fd.append("file", file);
+    try {
+      uploaded.push(await api("/api/documents", { method: "POST", body: fd }));
+    } catch (e) {
+      toast(`${file.name}: ${e.message}`, true);
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+  }
+  if (uploaded.length === 1) location.href = `/documents/${uploaded[0].id}`;
+  else if (uploaded.length > 1) location.href = "/documents";
+}
+
+function wireUploads() {
+  $$(".upload-input").forEach((input) => input.addEventListener("change", (e) => {
+    uploadFiles(e.target.files);
+    e.target.value = "";
+  }));
+  const overlay = $("#drop-overlay");
+  let depth = 0;
+  const hasFiles = (e) => Array.from(e.dataTransfer?.types || []).includes("Files");
+  window.addEventListener("dragenter", (e) => { if (!hasFiles(e)) return; e.preventDefault(); depth++; overlay.hidden = false; });
+  window.addEventListener("dragleave", () => { if (--depth <= 0) { depth = 0; overlay.hidden = true; } });
+  window.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); depth = 0; overlay.hidden = true;
+    uploadFiles(e.dataTransfer.files);
+  });
+}
+
+// ------------------------------------------------------------------ LLM picker
+/**
+ * Turn a `[data-llm-picker]` block into a working provider/model/prompt picker.
+ * The choice is remembered in localStorage and shared between pages.
+ */
+async function initLlmPicker(root) {
+  const cfg = await getConfig();
+  const provSel = $("[data-provider]", root), modelIn = $("[data-model]", root), promptSel = $("[data-prompt]", root);
+  const customBox = $("[data-custom-box]", root), customTa = $("[data-custom]", root), status = $("[data-status]", root);
+  const datalist = document.getElementById(modelIn.getAttribute("list"));
+
+  const providers = [...cfg.providers].sort((a, b) => b.configured - a.configured);
+  provSel.innerHTML = providers.map((p) =>
+    `<option value="${esc(p.id)}">${esc(p.label)}${p.configured ? "" : " (not configured)"}</option>`).join("");
+  promptSel.innerHTML = cfg.prompt_modes.map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("") +
+    '<option value="custom">Custom prompt…</option>';
+
+  const saved = localStorage.getItem("pyocr.provider");
+  if (saved && providers.some((p) => p.id === saved)) provSel.value = saved;
+  promptSel.value = localStorage.getItem("pyocr.prompt") || "verbatim";
+  customTa.value = localStorage.getItem("pyocr.customPrompt") || cfg.prompt_modes[0].prompt;
+
+  const provider = () => cfg.providers.find((p) => p.id === provSel.value);
+  function syncProvider() {
+    const p = provider();
+    localStorage.setItem("pyocr.provider", p.id);
+    modelIn.value = localStorage.getItem(`pyocr.model.${p.id}`) || p.default_model || "";
+    modelIn.placeholder = p.model_hint;
+    datalist.innerHTML = p.suggested_models.map((m) => `<option value="${esc(m)}">`).join("");
+    status.innerHTML = p.configured ? "" :
+      `<span class="warn">Not configured: set ${esc(p.missing.join(", "))}. See <a href="/providers">Providers</a>.</span>`;
+  }
+  function syncPrompt() {
+    localStorage.setItem("pyocr.prompt", promptSel.value);
+    customBox.hidden = promptSel.value !== "custom";
+    if (!customBox.hidden) customBox.open = true;
+  }
+  provSel.addEventListener("change", syncProvider);
+  promptSel.addEventListener("change", syncPrompt);
+  modelIn.addEventListener("change", () => localStorage.setItem(`pyocr.model.${provider().id}`, modelIn.value.trim()));
+  customTa.addEventListener("change", () => localStorage.setItem("pyocr.customPrompt", customTa.value));
+  syncProvider();
+  syncPrompt();
+
+  return {
+    provider,
+    /** Request body for the LLM endpoints; throws if the provider isn't usable. */
+    spec(force = false) {
+      const p = provider();
+      if (!p.configured) throw new Error(`${p.label} is not configured: set ${p.missing.join(", ")}`);
+      const body = { provider: p.id, model: modelIn.value.trim() || null, prompt_mode: promptSel.value, force };
+      if (body.prompt_mode === "custom") body.custom_prompt = customTa.value;
+      return body;
+    },
+    describe() {
+      const p = provider();
+      return `${p.label} · ${modelIn.value.trim() || p.default_model || "?"} · ${promptSel.value}`;
+    },
+  };
+}
+
+// ------------------------------------------------------------------ jobs
+function jobHtml(job, docName) {
+  const pctDone = job.total ? Math.round((job.done / job.total) * 100) : 0;
+  const statusCls = { done: "ok", running: "run", queued: "run", failed: "scan", cancelled: "" }[job.status] || "";
+  const dur = job.started_at ? (((job.finished_at || Date.now() / 1000) - job.started_at)).toFixed(0) + "s" : "";
+  const tokens = job.kind === "llm" && (job.input_tokens || job.output_tokens)
+    ? ` · ${fmtInt(job.input_tokens)} in / ${fmtInt(job.output_tokens)} out tokens` : "";
+  const errors = job.errors.length
+    ? `<details class="small"><summary class="err">${job.failed} page(s) failed</summary><ul>${job.errors.map((e) => `<li>${esc(e)}</li>`).join("")}</ul></details>` : "";
+  const active = job.status === "running" || job.status === "queued";
+  return `<div class="job" data-job="${job.id}">
+    <div class="job-head">
+      <span class="badge ${statusCls}">${job.status}</span>
+      <b>${esc(job.label)}</b>
+      ${docName ? `<a href="/documents/${job.doc_id}">${esc(docName)}</a>` : ""}
+      <div class="spacer"></div>
+      ${active ? `<button class="link" data-cancel="${job.id}">cancel</button>` : ""}
+    </div>
+    <progress max="${job.total}" value="${job.done}"></progress>
+    <div class="small">${job.done}/${job.total} pages (${pctDone}%) · ${job.cached} from cache · ${job.failed} failed · ${dur}${tokens}
+      ${job.current_pages.length ? ` · working on p${job.current_pages.map((p) => p + 1).join(", p")}` : ""}</div>
+    ${errors}
+  </div>`;
+}
+
+/** Poll a job until it finishes, calling onUpdate(job) each time. */
+async function watchJob(jobId, onUpdate, intervalMs = 1000) {
+  for (;;) {
+    const job = await api(`/api/jobs/${jobId}`);
+    onUpdate(job);
+    if (!["running", "queued"].includes(job.status)) return job;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+}
+
+document.addEventListener("click", guard(async (e) => {
+  const btn = e.target.closest("[data-cancel]");
+  if (btn) {
+    await postJSON(`/api/jobs/${btn.dataset.cancel}/cancel`);
+    toast("Cancelling…");
+  }
+}));
+
+wireUploads();
+
+// ------------------------------------------------------------------ diff
+/** HTML for a word diff from the compare API. Leading line breaks stay outside
+ *  the coloured spans so they don't leave a highlighted sliver at line ends. */
+function renderDiff(segments) {
+  const lead = (t) => t.match(/^\n*/)[0];
+  const wrap = (text, cls, title) => `${lead(text)} <span class="${cls}" title="${title}">${esc(text.slice(lead(text).length))}</span> `;
+  return segments.map((s) => {
+    switch (s.op) {
+      case "equal": return esc(s.ref);
+      case "delete": return wrap(s.ref, "del", "in reference only");
+      case "insert": return wrap(s.hyp, "ins", "in candidate only");
+      default: {
+        const l = lead(s.ref).length >= lead(s.hyp).length ? lead(s.ref) : lead(s.hyp);
+        return `${l} <span class="rep"><s>${esc(s.ref.trimStart())}</s>→<ins>${esc(s.hyp.trimStart())}</ins></span> `;
+      }
+    }
+  }).join(" ");
+}

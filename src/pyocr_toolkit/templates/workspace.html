@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Page {{ page_no }} · {{ doc.filename }}{% endblock %}
+{% block body_class %}app{% endblock %}
+{% block subnav %}{% include "_doctabs.html" %}{% endblock %}
+{% block main %}
+<main id="workspace" data-doc-id="{{ doc.id }}" data-page="{{ page_no - 1 }}" data-is-pdf="{{ 'true' if doc.is_pdf else 'false' }}">
+  <aside class="sidebar">
+    <form id="search-form" class="search">
+      <input id="search-input" type="search" placeholder="Search this document…  ( / )">
+      <div class="search-sources">
+        <label><input type="checkbox" value="native" checked> native</label>
+        <label><input type="checkbox" value="ocr" checked> OCR</label>
+        <label><input type="checkbox" value="llm" checked> LLM</label>
+      </div>
+    </form>
+    <div id="search-results" hidden></div>
+    <ol id="page-list" class="pages"></ol>
+  </aside>
+
+  <section class="viewer">
+    <div class="viewer-toolbar">
+      <button id="prev-page" class="btn small" title="Previous page (←)">‹</button>
+      <span id="page-label">–</span>
+      <button id="next-page" class="btn small" title="Next page (→)">›</button>
+      <span class="sep"></span>
+      <button id="zoom-out" class="btn small">−</button>
+      <span id="zoom-label">100%</span>
+      <button id="zoom-in" class="btn small">+</button>
+      <button id="zoom-fit" class="btn small">fit</button>
+      <span class="sep"></span>
+      <span id="page-badges"></span>
+      <div class="spacer"></div>
+      <a id="open-image" class="btn small ghost" target="_blank" title="Open a high-resolution render">hi-res ↗</a>
+    </div>
+    <div id="page-scroll" class="page-scroll">
+      <div id="page-frame" class="page-frame">
+        <img id="page-img" alt="page">
+        <div id="highlight-layer"></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <nav class="tabs">
+      <button data-tab="native" class="active">Native text</button>
+      <button data-tab="ocr">Tesseract OCR</button>
+      <button data-tab="llm">LLM</button>
+      <button data-tab="compare">Compare</button>
+    </nav>
+
+    <div class="tab-body" data-tab="native">
+      <div class="tab-meta"><span id="native-meta"></span><div class="spacer"></div>
+        <button class="btn small ghost" data-copy="#native-text">copy</button></div>
+      <pre id="native-text" class="text"></pre>
+    </div>
+
+    <div class="tab-body" data-tab="ocr" hidden>
+      <div class="tab-meta"><span id="ocr-meta"></span><div class="spacer"></div>
+        <button class="btn small ghost" data-copy="#ocr-text">copy</button>
+        <button id="run-ocr" class="btn small">Run OCR</button></div>
+      <pre id="ocr-text" class="text"></pre>
+    </div>
+
+    <div class="tab-body" data-tab="llm" hidden>
+      {% set picker_id = 'ws' %}{% include "_llm_picker.html" %}
+      <div class="tab-meta">
+        <button id="run-llm" class="btn small primary">Transcribe this page</button>
+        <button id="rerun-llm" class="btn small ghost" title="Ignore the cache and call the model again">re-run</button>
+        <div class="spacer"></div>
+        <button class="btn small ghost" data-copy="#llm-text">copy</button>
+      </div>
+      <div class="tab-meta">
+        <label class="grow">Stored results <select id="llm-result-select" title="Transcriptions stored for this page"></select></label>
+        <button id="delete-llm" class="btn small ghost danger" title="Delete this stored result">delete</button>
+      </div>
+      <div id="llm-meta" class="tab-meta small"></div>
+      <pre id="llm-text" class="text"></pre>
+    </div>
+
+    <div class="tab-body" data-tab="compare" hidden>
+      <div class="compare-controls">
+        <label>Reference <select id="cmp-ref"></select></label>
+        <label>vs <select id="cmp-hyp"></select></label>
+        <label><input type="checkbox" id="cmp-case" checked> ignore case</label>
+        <label><input type="checkbox" id="cmp-punct"> ignore punctuation</label>
+        <button id="run-compare" class="btn small primary">Compare</button>
+      </div>
+      <div id="cmp-metrics" class="metrics"></div>
+      <div class="legend" id="cmp-legend" hidden>
+        <span class="del">missing in candidate</span>
+        <span class="ins">extra in candidate</span>
+        <span class="rep"><s>reference</s> → candidate</span>
+      </div>
+      <pre id="cmp-diff" class="text diff"></pre>
+    </div>
+  </section>
+</main>
+{% endblock %}
+{% block scripts %}<script src="/static/workspace.js?v={{ version }}"></script>{% endblock %}

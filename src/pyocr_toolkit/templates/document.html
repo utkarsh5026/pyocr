@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}{{ doc.filename }}{% endblock %}
+{% block subnav %}{% include "_doctabs.html" %}{% endblock %}
+{% block content %}
+<div class="grid-2" data-doc-id="{{ doc.id }}" data-page-count="{{ doc.page_count }}" id="doc-root">
+  <section class="card">
+    <h2>Extract text</h2>
+    <p class="small">Run an engine over the whole document or a page range. Work happens in the background:
+      you can leave this page and come back. Pages that already have a result for the same engine/model/prompt
+      are skipped unless you tick “re-run”.</p>
+    <form id="extract-form" class="form">
+      <div class="seg">
+        <label><input type="radio" name="kind" value="llm" checked> LLM transcription</label>
+        <label><input type="radio" name="kind" value="ocr"> Tesseract OCR</label>
+      </div>
+      <label>Pages <input name="pages" placeholder="all  (or e.g. 1-5,9)"></label>
+      <div id="llm-options">{% set picker_id = 'ex' %}{% include "_llm_picker.html" %}</div>
+      <label class="check"><input type="checkbox" name="force"> re-run pages that are already extracted</label>
+      <div class="row">
+        <button class="btn primary" type="submit">Start extraction</button>
+        <span class="small" id="extract-hint"></span>
+      </div>
+    </form>
+    <h3>Jobs</h3>
+    <div id="job-list" class="job-list"><p class="small muted">No jobs started for this document yet.</p></div>
+  </section>
+
+  <section class="card">
+    <h2>Extracted text sources</h2>
+    <p class="small">Every engine/model/prompt combination you have run is a <i>source</i>. Read it, export it, or
+      compare two sources against each other.</p>
+    <table class="table compact">
+      <thead><tr><th>Source</th><th>Pages</th><th>Tokens (in/out)</th><th></th></tr></thead>
+      <tbody>
+      {% for s in sources %}
+      <tr>
+        <td><b title="{{ s.id }}">{{ s.label }}</b></td>
+        <td><span class="{{ 'good' if s.page_count == doc.page_count else 'muted' }}">{{ s.page_count }}/{{ doc.page_count }}</span></td>
+        <td class="small">{% if s.kind == 'llm' %}{{ "{:,}".format(s.input_tokens) }} / {{ "{:,}".format(s.output_tokens) }}{% else %}–{% endif %}</td>
+        <td class="actions">
+          {% if s.page_count %}
+          <a class="btn small" href="/documents/{{ doc.id }}/text?source={{ s.id|urlencode }}">Read</a>
+          <details class="menu"><summary class="btn small">Export ▾</summary>
+            <div>
+              {% for fmt, name in [('txt','Plain text'),('md','Markdown'),('json','JSON'),('jsonl','JSONL (page per line)')] %}
+              <a href="/api/documents/{{ doc.id }}/export?source={{ s.id|urlencode }}&fmt={{ fmt }}">{{ name }}</a>
+              {% endfor %}
+            </div>
+          </details>
+          {% else %}<span class="small muted">not extracted</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="row">
+      <a class="btn" href="/documents/{{ doc.id }}/compare">Compare sources →</a>
+      <a class="btn ghost" href="/api/documents/{{ doc.id }}/source">Download original</a>
+      <button class="btn ghost danger" id="delete-doc" data-name="{{ doc.filename }}">Delete document</button>
+    </div>
+    {% if doc.metadata %}
+    <details class="meta"><summary>File metadata</summary>
+      <dl>{% for k, v in doc.metadata.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}</dl>
+    </details>
+    {% endif %}
+  </section>
+</div>
+
+<section>
+  <div class="section-head">
+    <h2>Pages</h2>
+    <div class="legend small">
+      <span class="badge scan">scan</span> no text layer ·
+      <span class="badge ok">OCR</span> Tesseract done ·
+      <span class="badge ok">LLM</span> transcribed
+    </div>
+  </div>
+  <div id="page-grid" class="page-grid"><p class="muted">Loading pages…</p></div>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/document.js?v={{ version }}"></script>{% endblock %}

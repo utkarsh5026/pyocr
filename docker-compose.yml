@@ -1,0 +1,15 @@
+# docker compose up -d   →  http://localhost:8000
+services:
+  pyocr:
+    build: .
+    image: pyocr-toolkit
+    ports:
+      - "127.0.0.1:8000:8000"   # only reachable from this machine; there is no login
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - pyocr-data:/data
+    restart: unless-stopped
+volumes:
+  pyocr-data:

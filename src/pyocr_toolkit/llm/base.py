@@ -91,6 +91,10 @@ class Provider(abc.ABC):
     def configured(self) -> bool:
         return not self.missing_settings()
 
+    def schema_support(self, model: str | None) -> tuple[str, str]:
+        """How a structured-extraction schema is handled for ``model``: (``ok`` | ``warn``, sentence for the UI)."""
+        return "warn", f"{self.label} can't enforce a schema: it's given in the prompt, so check the fields"
+
     def reset_client(self) -> None:
         """Forget the cached SDK client so the next call picks up changed settings."""
         if hasattr(self, "_client"):

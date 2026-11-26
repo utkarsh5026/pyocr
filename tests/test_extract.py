@@ -228,9 +228,27 @@ def test_check_schema_endpoint_and_config(client):
     presets = client.get("/api/config").json()["extract_presets"]
     assert [p["id"] for p in presets] == ["invoice", "receipt", "form"]
     ok = client.post("/api/extract/check-schema", json={"extract_schema": "receipt"}).json()
-    assert ok["preset"] == "receipt" and ok["fields"] == 10
+    assert ok["ok"] and ok["preset"] == "receipt" and ok["fields"] == 10
+    assert ok["example"]["items"] == [{"description": "text as printed", "quantity": "text as printed",
+                                       "price": "text as printed"}]
     bad = client.post("/api/extract/check-schema", json={"extract_schema": "[]"})
-    assert bad.status_code == 400 and "JSON object" in bad.json()["detail"]
+    assert bad.status_code == 200 and not bad.json()["ok"] and "JSON object" in bad.json()["error"]
+
+    # the chosen provider/model says how it will handle the schema
+    def provider_note(provider, model):
+        r = client.post("/api/extract/check-schema",
+                        json={"extract_schema": "invoice", "provider": provider, "model": model}).json()
+        return r["notes"][0]
+
+    assert provider_note("anthropic", "claude-opus-5-5")["level"] == "ok"
+    assert provider_note("anthropic", "claude-opus-4-6")["level"] == "warn"
+    assert provider_note("openai", "gpt-5")["level"] == "ok"
+    assert provider_note("openai_compatible", "qwen")["level"] == "warn"
+    assert provider_note("gemini", None)["level"] == "ok"
+
+    broken = client.post("/api/extract/check-schema", json={"extract_schema": "{type: 'object',}"}).json()
+    assert not broken["ok"] and (broken["line"], broken["column"]) == (1, 2)
+    assert json.loads(broken["repaired"]) == {"type": "object"}
 
 
 def test_extract_job_runs_every_page(client, doc_id):
@@ -249,3 +267,81 @@ def test_extract_job_runs_every_page(client, doc_id):
     assert job["label"].endswith("extract (Invoice)")
     results = client.get(f"/api/documents/{doc_id}/pages/1/llm").json()
     assert results[0]["data"] == INVOICE_REPLY
+
+
+# ------------------------------------------------------------------ helping write schemas
+@pytest.mark.parametrize("text, expected, change", [
+    ("{name: 'Acme', n: 1.5,}", {"name": "Acme", "n": 1.5}, "quoted keys"),
+    ('{"a": True, "b": None}', {"a": True, "b": None}, "wrote True as true"),
+    ('{"a": "x"\n "b": [1 2]}', {"a": "x", "b": [1, 2]}, "added missing commas"),
+    ('{"a": [1, 2,],}', {"a": [1, 2]}, "removed trailing commas"),
+    ('{"a": {"b": 1}', {"a": {"b": 1}}, "closed 1 unclosed bracket"),
+    ('{"a": 1}}', {"a": 1}, "removed an extra closing bracket"),
+    ('{"a": 1 // why\n /* note */}', {"a": 1}, "removed comments"),
+    ('```json\n{"a": 1}\n```', {"a": 1}, "removed the ``` code fence"),
+    ("{\u201ca\u201d: \u201cx\u201d}", {"a": "x"}, "replaced curly quotes with straight ones"),
+    ('{"type": string}', {"type": "string"}, "quoted bare words"),
+    ("{'it\\'s': 'say \"hi\"'}", {"it's": 'say "hi"'}, "used double quotes for strings"),
+])
+def test_repair_json(text, expected, change):
+    fixed, changes = extract.repair_json(text)
+    assert json.loads(fixed) == expected and change in changes
+
+
+def test_repair_json_gives_up_on_non_json():
+    assert extract.repair_json("hello <world>")[0] is None
+
+
+def test_lint_suggests_fixes():
+    notes = extract.lint({
+        "type": "object", "propertes": {}, "required": ["ghost"],
+        "properties": {"a": {"type": "string", "maxLenght": 3}, "b": {}, "c": {"type": "object"},
+                       "d": {"type": "string", "not": {"const": "x"}}},
+    })
+    messages = [(n["path"], n["message"]) for n in notes]
+    assert ("(root)", "'propertes' isn't a JSON Schema keyword, so it's ignored (did you mean 'properties'?)") in messages
+    assert ("(root)", "'required' lists 'ghost', which isn't in 'properties'") in messages
+    assert ("a", "'maxLenght' isn't a JSON Schema keyword, so it's ignored (did you mean 'maxLength'?)") in messages
+    assert ("b", "has no type, so the model may return anything; set \"type\"") in messages
+    assert ("c", "is an object without 'properties', so it will always be {}") in messages
+    assert ("d", "'not' isn't supported by providers' strict modes, so it's ignored") in messages
+    # unknown keywords never reach a provider
+    schema = extract.normalize({"type": "object", "properties": {"a": {"type": "string", "maxLenght": 3}}})
+    assert schema["properties"]["a"] == {"type": ["string", "null"]}
+
+
+def test_type_typos_and_openapi_nullable():
+    with pytest.raises(extract.SchemaError, match="unknown type 'str' \\(did you mean 'string'\\?\\)"):
+        extract.normalize({"type": "object", "properties": {"a": {"type": "str"}}})
+    with pytest.raises(extract.SchemaError, match="did you mean 'number'"):
+        extract.normalize({"type": "object", "properties": {"a": {"type": "float"}}})
+    with pytest.raises(extract.SchemaError, match="'required' must be a list"):
+        extract.normalize({"type": "object", "properties": {"a": {"type": "string"}}, "required": "a"})
+    schema = extract.normalize({"type": "object", "properties": {"a": {"type": "string", "nullable": True}},
+                                "required": ["a"]})
+    assert schema["properties"]["a"] == {"type": ["string", "null"]}
+
+
+def test_example_and_notes():
+    schema = extract.normalize({"type": "object", "properties": {
+        "total": {"type": "number", "minimum": 0}, "when": {"type": "string", "format": "date"},
+        "kind": {"enum": ["a", "b"]}, "paid": {"type": "boolean"}, "code": {"type": "string", "format": "iban"},
+        "rows": {"type": "array", "items": {"type": "object", "properties": {"n": {"type": "integer"}}}},
+    }, "required": ["total"]})
+    assert extract.example(schema) == {"total": 12.5, "when": "2025-03-14", "kind": "a", "paid": True,
+                                       "code": "text as printed", "rows": [{"n": 3}]}
+    notes = " | ".join(n["message"] for n in extract.schema_notes(schema))
+    assert "total (minimum)" in notes and "code ('iban')" in notes
+    assert "Number fields" in notes and "rows[].n" in notes
+    assert "never null" in notes and ": total" in notes
+
+
+def test_check_reports_without_raising():
+    assert extract.check("")["error"].startswith("the schema is empty")
+    r = extract.check('{"type": "object", "properties": {"x": {"type": "int"}, "y": {"type": ["bool", "null"]}}}')
+    assert not r["ok"] and "did you mean 'integer'" in r["error"]
+    assert r["repairs"] == ["type 'int' → 'integer'", "type 'bool' → 'boolean'"]
+    assert extract.check(r["repaired"])["ok"]
+    r = extract.check('{"type": "object", "properties": {"x": {"type": "string"}}, "titel": "T"}')
+    assert r["ok"] and r["fields"] == 1 and r["example"] == {"x": "text as printed"}
+    assert any("did you mean 'title'" in n["message"] for n in r["notes"])

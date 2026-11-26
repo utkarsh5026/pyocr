@@ -27,6 +27,7 @@ transcription honest. Converting to numbers or dates is a later, separate step.
 from __future__ import annotations
 
 import copy
+import difflib
 import json
 import re
 from dataclasses import dataclass
@@ -130,6 +131,27 @@ _LOCAL_ONLY = {"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "mu
                "maxLength", "pattern", "minItems", "maxItems", "uniqueItems", "minProperties", "maxProperties"}
 _FORMATS = {"date-time", "time", "date", "duration", "email", "hostname", "uri", "ipv4", "ipv6", "uuid"}
 _TYPES = {"object", "array", "string", "integer", "number", "boolean", "null"}
+# Keywords copied through as they are; anything not listed anywhere here is dropped (and reported by lint()).
+_KEEP = {"type", "required", "enum", "const", "description", "additionalProperties", "format"} | _LOCAL_ONLY
+_STRUCTURE = {"properties", "items", "anyOf", "oneOf", "allOf", "$ref", "$defs", "definitions", "nullable"}
+KEYWORDS = _DROP | _KEEP | _STRUCTURE
+# Real JSON Schema, but no provider's strict mode accepts it.
+_UNSUPPORTED = {"not", "if", "then", "else", "patternProperties", "propertyNames", "dependentRequired",
+                "dependentSchemas", "prefixItems", "contains", "minContains", "maxContains", "unevaluatedProperties",
+                "unevaluatedItems", "contentEncoding", "contentMediaType", "$anchor", "$dynamicRef"}
+# Type names people write from other languages -> the JSON Schema name.
+TYPE_ALIASES = {"str": "string", "text": "string", "char": "string", "date": "string", "datetime": "string",
+                "int": "integer", "long": "integer", "float": "number", "double": "number", "decimal": "number",
+                "money": "number", "bool": "boolean", "list": "array", "tuple": "array", "dict": "object",
+                "map": "object", "none": "null", "nil": "null"}
+
+
+def _type_hint(t: Any) -> str:
+    alias = TYPE_ALIASES.get(str(t).lower())
+    if alias:
+        return f" (did you mean '{alias}'?)"
+    close = difflib.get_close_matches(str(t), _TYPES, n=1, cutoff=0.6)
+    return f" (did you mean '{close[0]}'?)" if close else f" (use one of: {', '.join(sorted(_TYPES))})"
 
 
 def _allows_null(node: dict[str, Any]) -> bool:
@@ -176,21 +198,26 @@ def normalize(schema: Any) -> dict[str, Any]:
             extra = {k: v for k, v in node.items() if k not in ("$ref", *_DROP)}
             return walk({**defs[name], **extra}, path, (*stack, name))
         out: dict[str, Any] = {}
+        where = path or "schema"
         for key, value in node.items():
-            if key in _DROP or key in ("$defs", "definitions"):
-                continue
             if key == "properties":
+                if not isinstance(value, dict):
+                    raise SchemaError(f"{where}: 'properties' must be an object of field name -> schema")
                 out[key] = {k: walk(v, f"{path}.{k}" if path else k, stack) for k, v in value.items()}
             elif key == "items":
                 out[key] = walk(value, f"{path}[]", stack)
             elif key in ("anyOf", "oneOf", "allOf"):
+                if not isinstance(value, list):
+                    raise SchemaError(f"{where}: '{key}' must be a list of schemas")
                 out["anyOf" if key == "oneOf" else key] = walk(value, path, stack)
-            else:
+            elif key == "required" and not (isinstance(value, list) and all(isinstance(x, str) for x in value)):
+                raise SchemaError(f"{where}: 'required' must be a list of field names, e.g. [\"total\"]")
+            elif key in _KEEP:
                 out[key] = value
         types = out.get("type")
         for t in types if isinstance(types, list) else [types] if types else []:
             if t not in _TYPES:
-                raise SchemaError(f"{path or 'schema'}: unknown type '{t}'")
+                raise SchemaError(f"{where}: unknown type '{t}'{_type_hint(t)}")
         if out.get("type") == "object" or "properties" in out:
             out["type"] = "object"
             props = out.get("properties", {})
@@ -200,6 +227,8 @@ def normalize(schema: Any) -> dict[str, Any]:
             out["additionalProperties"] = False
         if out.get("type") == "array" and "items" not in out:
             out["items"] = {"type": "string"}
+        if node.get("nullable") is True:  # OpenAPI style; JSON Schema says type: [x, "null"]
+            out = _nullable(out)
         return out
 
     result = walk(schema, "", ())
@@ -396,6 +425,382 @@ def count_fields(data: Any, schema: dict[str, Any]) -> tuple[int, int]:
     walk(data, schema)
     return filled, total
 
+# ------------------------------------------------------------------ helping people write schemas
+# What the schema editor shows: notes ("did you mean 'properties'?"), an example of the
+# output, and a repaired version of JSON that doesn't parse. Kept here (not in the
+# browser) so it's tested and has one implementation.
 
-__all__ = ["PRESETS", "Preset", "SchemaError", "canonical", "count_fields", "normalize", "parse_reply",
-           "presets_json", "provider_schema", "resolve", "validate"]
+def _note(level: str, path: str, message: str) -> dict[str, str]:
+    """``level``: ``error`` (can't be used), ``warn`` (probably not what you meant), ``info``, ``ok``."""
+    return {"level": level, "path": path or "(root)", "message": message}
+
+
+def _join(path: str, key: str) -> str:
+    return f"{path}.{key}" if path else key
+
+
+def lint(raw: Any) -> list[dict[str, str]]:
+    """Mistakes in a schema as written: unknown keywords (with suggestions), bad ``required``, untyped fields.
+
+    Runs on the raw schema, before :func:`normalize`, which would silently drop
+    what it doesn't know. Paths read like ``line_items[].amount``.
+    """
+    notes: list[dict[str, str]] = []
+    if not isinstance(raw, dict):
+        return notes
+
+    def walk(node: Any, path: str, is_field: bool) -> None:
+        if not isinstance(node, dict):
+            if is_field:
+                notes.append(_note("error", path, "a field's schema must be an object, e.g. {\"type\": \"string\"}"))
+            return
+        for key, value in node.items():
+            if key in KEYWORDS:
+                continue
+            if key in _UNSUPPORTED:
+                notes.append(_note("warn", path, f"'{key}' isn't supported by providers' strict modes, so it's ignored"))
+                continue
+            close = difflib.get_close_matches(key, KEYWORDS, n=1, cutoff=0.7)
+            hint = f" (did you mean '{close[0]}'?)" if close else ""
+            if not close and isinstance(value, dict) and ("type" in value or "properties" in value):
+                hint = " (fields go inside \"properties\")"
+            notes.append(_note("warn", path, f"'{key}' isn't a JSON Schema keyword, so it's ignored{hint}"))
+        props = node.get("properties")
+        if isinstance(props, dict):
+            required = node.get("required", [])
+            for name in required if isinstance(required, list) else []:
+                if isinstance(name, str) and name not in props:
+                    notes.append(_note("warn", path, f"'required' lists '{name}', which isn't in 'properties'"))
+            if not props and path:
+                notes.append(_note("warn", path, "has no fields, so it will always be {}"))
+            for name, sub in props.items():
+                walk(sub, _join(path, name), True)
+        elif node.get("type") == "object" and path:
+            notes.append(_note("warn", path, "is an object without 'properties', so it will always be {}"))
+        if "items" in node:
+            walk(node["items"], f"{path}[]", True)
+        for key in ("anyOf", "oneOf", "allOf"):
+            for sub in node.get(key, []) if isinstance(node.get(key), list) else []:
+                walk(sub, path, False)
+        if node.get("oneOf") is not None:
+            notes.append(_note("info", path, "'oneOf' is treated as 'anyOf' (strict modes only support anyOf)"))
+        if "additionalProperties" in node and node["additionalProperties"] is not False:
+            notes.append(_note("info", path, "'additionalProperties' is always false here: strict modes need closed objects"))
+        if node.get("enum") == []:
+            notes.append(_note("warn", path, "'enum' is empty, so no value can match"))
+        if is_field and not ({"type", "enum", "const", "anyOf", "oneOf", "allOf", "$ref", "properties"} & node.keys()):
+            notes.append(_note("warn", path, "has no type, so the model may return anything; set \"type\""))
+        for name, sub in {**node.get("$defs", {}), **node.get("definitions", {})}.items() if path == "" else []:
+            walk(sub, f"$defs.{name}", False)
+
+    walk(raw, "", False)
+    return notes
+
+
+def _fields(schema: dict[str, Any], path: str = "", depth: int = 1):
+    """Yield (path, node, depth) for every field of a normalized schema, nullable wrappers unwrapped."""
+    for name, node in (schema.get("properties") or {}).items():
+        inner = next((o for o in node.get("anyOf", []) if o.get("type") != "null"), node) if "anyOf" in node else node
+        sub = _join(path, name)
+        yield sub, node, depth
+        if inner.get("properties"):
+            yield from _fields(inner, sub, depth + 1)
+        items = inner.get("items")
+        if isinstance(items, dict):
+            items = next((o for o in items.get("anyOf", []) if o.get("type") != "null"), items)
+            if items.get("properties"):
+                yield from _fields(items, f"{sub}[]", depth + 1)
+
+
+def schema_notes(schema: dict[str, Any]) -> list[dict[str, str]]:
+    """Things worth knowing about a normalized schema before paying for a run."""
+    notes: list[dict[str, str]] = []
+    fields = list(_fields(schema))
+    local, formats, numbers, required = [], [], [], []
+    for path, node, _ in fields:
+        flat = json.dumps(node)
+        local += [f"{path} ({k})" for k in _LOCAL_ONLY if f'"{k}"' in flat and not node.get("properties")]
+        fmt = node.get("format") or next((o.get("format") for o in node.get("anyOf", []) if o.get("format")), None)
+        if fmt and fmt not in _FORMATS:
+            formats.append(f"{path} ('{fmt}')")
+        if re.search(r'"type": (\[)?"(number|integer)"', flat) and not node.get("properties") and "items" not in node:
+            numbers.append(path)
+        if not _allows_null(node):
+            required.append(path)
+    if local:
+        notes.append(_note("info", "", "Not sent to the model, because strict modes don't accept them; pyocr checks them "
+                                       "after the reply: " + ", ".join(sorted(set(local))[:8])))
+    if formats:
+        notes.append(_note("warn", "", "Unknown 'format', ignored: " + ", ".join(formats)
+                           + f". Supported: {', '.join(sorted(_FORMATS))}"))
+    if numbers:
+        notes.append(_note("info", "", "Number fields make the model convert what's printed ('$1,250.00' → 1250): "
+                                       + ", ".join(numbers[:8]) + ". Use text to keep values exactly as printed."))
+    if required:
+        notes.append(_note("info", "", "Always need a value (never null), so the model has to fill them even when they "
+                                       "aren't on the page: " + ", ".join(required[:8])
+                           + (" …" if len(required) > 8 else "")))
+    depth = max((d for _, _, d in fields), default=0)
+    if depth > 5:
+        notes.append(_note("warn", "", f"Nested {depth} levels deep. Some providers limit nesting, and flat schemas "
+                                       "are easier for models to fill"))
+    if len(fields) > 100:
+        notes.append(_note("warn", "", f"{len(fields)} fields: large schemas cost more tokens per page, and some "
+                                       "providers limit their size"))
+    return notes
+
+
+_FORMAT_EXAMPLES = {"date": "2025-03-14", "date-time": "2025-03-14T09:30:00Z", "time": "09:30:00",
+                    "duration": "P3D", "email": "name@example.com", "hostname": "example.com",
+                    "uri": "https://example.com", "ipv4": "192.0.2.1", "ipv6": "2001:db8::1",
+                    "uuid": "123e4567-e89b-12d3-a456-426614174000"}
+
+
+def example(schema: dict[str, Any]) -> Any:
+    """A sample reply for a normalized schema, to show what the output will look like.
+
+    Every list gets one entry and every field a placeholder of its type (nullable
+    fields show their non-null type; the editor says missing fields come back null).
+    """
+
+    def walk(node: dict[str, Any]) -> Any:
+        if "const" in node:
+            return node["const"]
+        if node.get("enum"):
+            return node["enum"][0]
+        options = [o for o in node.get("anyOf", []) if o.get("type") != "null"]
+        if options:
+            return walk({**options[0], **{k: v for k, v in node.items() if k != "anyOf"}})
+        for sub in node.get("allOf", []):
+            node = {**node, **sub}
+        t = node.get("type")
+        if isinstance(t, list):
+            t = next((x for x in t if x != "null"), "null")
+        if t == "object" or "properties" in node:
+            return {k: walk(v) for k, v in node.get("properties", {}).items()}
+        if t == "array":
+            return [walk(node.get("items") or {"type": "string"})]
+        if t == "integer":
+            return 3
+        if t == "number":
+            return 12.5
+        if t == "boolean":
+            return True
+        if t == "null":
+            return None
+        return _FORMAT_EXAMPLES.get(node.get("format", ""), "text as printed")
+
+    return walk(schema)
+
+
+# --- repairing JSON people typed by hand
+_TOKEN = re.compile(r"""
+    (?P<ws>\s+) | (?P<line>//[^\n]*|\#[^\n]*) | (?P<block>/\*.*?(?:\*/|$)) |
+    (?P<p>[{}\[\]:,]) |
+    (?P<num>-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?) |
+    (?P<word>[A-Za-z_$][\w$.\-]*)
+""", re.X | re.S)
+_QUOTES = {'"': '"', "'": "'", "“": "”", "‘": "’"}
+_LITERALS = {"true": "true", "false": "false", "null": "null", "True": "true", "False": "false", "None": "null",
+             "undefined": "null"}
+
+
+def repair_json(text: str) -> tuple[str | None, list[str]]:
+    """Fix the usual hand-typing mistakes; returns (pretty JSON or None, what was changed).
+
+    Handles code fences, comments, single or curly quotes, unquoted keys and words,
+    Python ``True``/``False``/``None``, trailing or missing commas, and missing or
+    extra closing brackets. Returns ``None`` when the result still isn't JSON.
+    """
+    changes: list[str] = []
+
+    def changed(what: str) -> None:
+        if what not in changes:
+            changes.append(what)
+
+    body = text.strip()
+    m = _FENCE.match(body)
+    if m:
+        body = m.group(1)
+        changed("removed the ``` code fence")
+    elif body.startswith("```"):  # an opening fence without its closing one
+        body = body.split("\n", 1)[1] if "\n" in body else ""
+        changed("removed the ``` code fence")
+    tokens: list[tuple[str, str]] = []  # (kind, json text): kind is open/close/colon/comma/value/key-candidate
+    i, n = 0, len(body)
+    while i < n:
+        c = body[i]
+        if c in _QUOTES:
+            close, j, raw = _QUOTES[c], i + 1, []
+            while j < n and body[j] != close and body[j] != "\n":
+                if body[j] == "\\" and j + 1 < n:
+                    raw.append(body[j:j + 2])
+                    j += 2
+                    continue
+                raw.append(body[j])
+                j += 1
+            closed = j < n and body[j] == close
+            if not closed:
+                changed("closed an unterminated string")
+            content = "".join(raw)
+            if c != '"':
+                changed("used double quotes for strings" if c == "'" else "replaced curly quotes with straight ones")
+                content = re.sub(r'(?<!\\)"', r'\\"', content.replace("\\'", "'"))
+            try:
+                value = json.loads(f'"{content}"', strict=False)
+            except json.JSONDecodeError:
+                value = content
+            tokens.append(("str", json.dumps(value, ensure_ascii=False)))
+            i = j + 1 if closed else j
+            continue
+        m = _TOKEN.match(body, i)
+        if not m:
+            return None, changes
+        i = m.end()
+        kind = m.lastgroup
+        if kind in ("line", "block"):
+            changed("removed comments")
+        elif kind == "p":
+            tokens.append(({"{": "open", "[": "open", "}": "close", "]": "close", ":": "colon", ",": "comma"}[m.group()],
+                           m.group()))
+        elif kind == "num":
+            num = m.group()
+            fixed = ("0" + num if num.startswith(".") else num.replace("-.", "-0.")).rstrip(".")
+            tokens.append(("val", fixed))
+        elif kind == "word":
+            tokens.append(("word", m.group()))
+
+    out: list[str] = []
+    stack: list[str] = []
+    prev = "start"  # what the last emitted token was: start/open/value/colon/comma
+    for k, (kind, tok) in enumerate(tokens):
+        nxt = tokens[k + 1][0] if k + 1 < len(tokens) else "end"
+        if kind == "word":
+            if nxt == "colon":
+                kind, tok = "str", json.dumps(tok)
+                changed("quoted keys")
+            elif tok in _LITERALS:
+                if tok != _LITERALS[tok]:
+                    changed(f"wrote {tok} as {_LITERALS[tok]}")
+                kind, tok = "val", _LITERALS[tok]
+            else:
+                kind, tok = "str", json.dumps(tok)
+                changed("quoted bare words")
+        if kind in ("str", "val", "open"):
+            if prev == "value":
+                out.append(",")
+                changed("added missing commas")
+            if kind == "open":
+                stack.append("}" if tok == "{" else "]")
+                prev = "open"
+            else:
+                prev = "value"
+            out.append(tok)
+        elif kind == "close":
+            if not stack:
+                changed("removed an extra closing bracket")
+                continue
+            want = stack.pop()
+            if tok != want:
+                changed(f"replaced a mismatched '{tok}' with '{want}'")
+            out.append(want)
+            prev = "value"
+        elif kind == "comma":
+            if nxt in ("close", "end"):
+                changed("removed trailing commas")
+                continue
+            if prev in ("open", "comma", "start", "colon"):
+                changed("removed extra commas")
+                continue
+            out.append(",")
+            prev = "comma"
+        elif kind == "colon":
+            out.append(":")
+            prev = "colon"
+    if stack:
+        changed(f"closed {len(stack)} unclosed bracket{'s' if len(stack) > 1 else ''}")
+        out.extend(reversed(stack))
+    try:
+        data = json.loads("".join(out))
+    except json.JSONDecodeError:
+        return None, changes
+    return json.dumps(data, ensure_ascii=False, indent=2), changes
+
+
+def _fix_type_names(raw: Any) -> tuple[Any, list[str]]:
+    """Replace type names from other languages (``str``, ``bool``, ``float``...) with JSON Schema's."""
+    changes: list[str] = []
+
+    def fix(t: Any) -> Any:
+        if isinstance(t, str) and t not in _TYPES and t.lower() in TYPE_ALIASES:
+            new = TYPE_ALIASES[t.lower()]
+            if f"type '{t}' → '{new}'" not in changes:
+                changes.append(f"type '{t}' → '{new}'")
+            return new
+        return t
+
+    def walk(node: Any) -> Any:
+        if isinstance(node, list):
+            return [walk(x) for x in node]
+        if not isinstance(node, dict):
+            return node
+        out = {}
+        for k, v in node.items():
+            if k == "type":
+                out[k] = [fix(x) for x in v] if isinstance(v, list) else fix(v)
+            elif k == "properties" and isinstance(v, dict):
+                out[k] = {name: walk(sub) for name, sub in v.items()}
+            else:
+                out[k] = walk(v)
+        return out
+
+    return walk(raw), changes
+
+
+def check(spec: str | dict) -> dict[str, Any]:
+    """Everything the schema editor shows for ``spec`` (a preset id, JSON text or a dict).
+
+    Never raises: an unusable schema comes back with ``ok: False`` and an ``error``
+    (plus ``line``/``column`` and a ``repaired`` version when the JSON itself is broken).
+    """
+    out: dict[str, Any] = {"ok": False, "error": None, "line": None, "column": None, "repaired": None,
+                           "repairs": [], "notes": [], "schema": None, "example": None, "label": None,
+                           "preset": None, "fields": 0}
+    raw: Any = spec
+    if isinstance(spec, str) and spec.strip() in PRESETS:
+        raw = PRESETS[spec.strip()].model.model_json_schema()
+        out["preset"] = spec.strip()
+    elif isinstance(spec, str):
+        if not spec.strip():
+            out["error"] = "the schema is empty: add a field, or pick a preset to start from"
+            return out
+        try:
+            raw = json.loads(spec)
+        except json.JSONDecodeError as exc:
+            out.update(error=f"not valid JSON: {exc.msg}", line=exc.lineno, column=exc.colno)
+            fixed, changes = repair_json(spec)
+            if fixed is not None:
+                out.update(repaired=fixed, repairs=changes)
+            return out
+    out["notes"] = lint(raw) if out["preset"] is None else []
+    try:
+        schema, label, _ = resolve(out["preset"] or raw)
+    except SchemaError as exc:
+        out["error"] = str(exc)
+        fixed, changes = _fix_type_names(raw)
+        if changes:
+            try:
+                normalize(fixed)
+            except SchemaError:
+                pass
+            else:
+                out.update(repaired=json.dumps(fixed, ensure_ascii=False, indent=2), repairs=changes)
+        return out
+    out.update(ok=True, schema=schema, label=label, example=example(schema), fields=count_fields({}, schema)[1])
+    out["notes"] += schema_notes(schema)
+    return out
+
+
+__all__ = ["KEYWORDS", "PRESETS", "Preset", "SchemaError", "canonical", "check", "count_fields", "example", "lint",
+           "normalize", "parse_reply", "presets_json", "provider_schema", "repair_json", "resolve", "schema_notes",
+           "validate"]

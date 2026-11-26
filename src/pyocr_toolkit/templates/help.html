@@ -108,9 +108,23 @@
 
 <h2 id="extract">Structured data: fields instead of text</h2>
 <p>Pick <b>Structured data (fields → JSON)</b> as the prompt, then choose what to extract: <b>Invoice</b>,
-  <b>Receipt</b>, <b>Form fields</b> (every label and its value), or <b>Custom JSON Schema</b>. Open
-  <i>JSON Schema</i> to see exactly what the model is asked for; editing it turns it into your own schema, and it is
-  checked as you type.</p>
+  <b>Receipt</b>, <b>Form fields</b> (every label and its value), or <b>My own fields</b>. Open
+  <i>Edit fields &amp; see an example</i> to change them; any edit turns a preset into your own schema.</p>
+<ul>
+  <li><b>Fields</b> tab: add fields one per row with a name, a type (Text, Number, Whole number, Yes / no, One of a
+    list, List of text, Table, Group of fields), an optional hint for the model, and <i>Required</i>. Tables and groups
+    hold their own columns or fields. You don't need to know JSON Schema.</li>
+  <li><b>JSON Schema</b> tab: the same schema as JSON, with colours, line numbers and the line of a syntax error
+    marked. <b>Fix syntax</b> repairs what people usually get wrong when typing JSON by hand: single or curly quotes,
+    unquoted keys, missing or trailing commas, missing brackets, comments, Python's <code>True</code> / <code>None</code>,
+    and type names such as <code>str</code>, <code>int</code> or <code>bool</code>. Both tabs edit one schema.</li>
+  <li>Every change is checked. You see what's wrong and how to fix it (“'propertes' isn't a JSON Schema keyword (did
+    you mean 'properties'?)”), whether the chosen provider and model enforce the schema or only get it in the prompt,
+    and hints such as “Number fields make the model convert what's printed”.</li>
+  <li><b>Example output</b> shows what a result will look like, as the field table or as JSON, before you pay for a run.</li>
+  <li>Leave <i>Required</i> off unless a field is always printed: a required field can't be <i>not on page</i>, so the
+    model may guess.</li>
+</ul>
 <ul>
   <li>The schema is enforced by the provider where it can be (Claude structured outputs, OpenAI and Azure
     <code>response_format</code>, Gemini <code>response_json_schema</code>). Older Claude models and

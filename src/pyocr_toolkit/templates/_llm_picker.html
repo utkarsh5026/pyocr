@@ -8,15 +8,43 @@
     <summary>Custom prompt</summary>
     <textarea data-custom rows="7"></textarea>
   </details>
+  {# Structured extraction: pick a preset or build a schema. Checked live by /api/extract/check-schema. #}
   <div data-schema-box hidden class="schema-box">
     <div class="schema-row">
       <label>Fields to extract <select data-schema-preset></select></label>
       <span class="small muted" data-schema-hint></span>
     </div>
-    <details data-schema-edit class="custom-prompt">
-      <summary>JSON Schema <span class="muted">(edit to make your own)</span></summary>
-      <textarea data-schema rows="10" spellcheck="false" aria-label="JSON Schema"></textarea>
-      <div class="small" data-schema-status></div>
+    <div class="schema-summary small" data-schema-status></div>
+    <details data-schema-edit class="schema-edit">
+      <summary>Edit fields &amp; see an example <span class="muted">(editing makes it your own schema)</span></summary>
+      <div class="mini-tabs" role="tablist" aria-label="Schema editor">
+        <button type="button" role="tab" data-schema-tab="fields">Fields</button>
+        <button type="button" role="tab" data-schema-tab="json">JSON Schema</button>
+      </div>
+      <div data-schema-pane="fields" class="schema-builder"></div>
+      <div data-schema-pane="json" hidden>
+        <textarea data-schema rows="14" spellcheck="false" wrap="off" autocomplete="off" aria-label="JSON Schema"></textarea>
+        <div class="schema-json-bar small">
+          <span data-schema-syntax class="grow"></span>
+          <button type="button" class="btn small primary" data-schema-fix hidden>Fix syntax</button>
+          <button type="button" class="btn small ghost" data-schema-format title="Re-indent the JSON">Format</button>
+        </div>
+        <p class="small muted schema-tip">Tab indents (Esc, then Tab, leaves the editor). Fix syntax repairs quotes,
+          commas, brackets, comments and Python-style True / None.</p>
+      </div>
+      <ul class="schema-notes" data-schema-notes></ul>
+      <div class="schema-preview">
+        <div class="schema-preview-head">
+          <b>Example output</b>
+          <span class="small muted">placeholder values; a field that isn't on the page comes back as <code>null</code></span>
+          <div class="mini-tabs">
+            <button type="button" data-preview="table">Table</button>
+            <button type="button" data-preview="json">JSON</button>
+          </div>
+        </div>
+        <div data-preview-table></div>
+        <pre data-preview-json class="code" hidden></pre>
+      </div>
     </details>
   </div>
   <div class="picker-status small" data-status></div>

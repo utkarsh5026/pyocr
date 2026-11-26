@@ -53,6 +53,8 @@ class LLMRunBody(BaseModel):
 
 class SchemaCheckBody(BaseModel):
     extract_schema: str | dict
+    provider: str | None = Field(None, description="add a note on how this provider/model handles the schema")
+    model: str | None = None
 
 
 class TextRef(BaseModel):
@@ -309,13 +311,18 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
 
     @api.post("/extract/check-schema", tags=["llm"])
     def check_schema(body: SchemaCheckBody):
-        """Validate a structured-extraction schema; returns the normalized form the model will get."""
-        try:
-            schema, label, preset = extract.resolve(body.extract_schema)
-        except ValueError as exc:
-            raise HTTPException(400, str(exc)) from exc
-        return {"schema": schema, "label": label, "preset": preset,
-                "fields": extract.count_fields({}, schema)[1]}
+        """Check a structured-extraction schema as it's being written (always 200; see ``ok``).
+
+        Returns the normalized schema, an ``example`` of the output, ``notes``
+        (mistakes with suggestions, what the chosen provider does with the schema),
+        and for broken JSON the ``line``/``column`` plus a ``repaired`` version.
+        """
+        result = extract.check(body.extract_schema)
+        provider = providers.get(body.provider or "")
+        if provider is not None and result["ok"]:
+            level, message = provider.schema_support((body.model or provider.default_model or "").strip() or None)
+            result["notes"].insert(0, {"level": level, "path": "(provider)", "message": message})
+        return result
 
     @api.get("/documents/{doc_id}/sources", tags=["text"])
     def sources(doc_id: str):

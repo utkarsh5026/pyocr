@@ -10,10 +10,18 @@
   The LLM tab shows the result as a field table (fields found, line items, schema problems on their field) with the
   raw JSON one click away. Every reply is parsed and validated against the schema; results store `data`,
   `data_errors`, `fields_filled` and `fields_total` next to the text.
+- **Schema editor**: build your own schema field by field (name, type, hint for the model, required; tables and
+  groups nest) without writing JSON Schema, or edit it as JSON in an editor with colours, line numbers and the
+  error line marked. *Fix syntax* repairs quotes, unquoted keys, missing or trailing commas, unclosed brackets,
+  comments, Python `True`/`None` and type names such as `str` or `bool`. Each edit is checked: mistakes come with
+  suggestions ("did you mean 'properties'?"), and a note says whether the chosen provider and model enforce the
+  schema or only get it in the prompt. An example output, as the field table or as JSON, shows what a result will
+  look like before you pay for a run.
 - The schema is part of the LLM cache key, so each schema is its own source. Plain transcriptions keep their
   existing keys, so cached results are unaffected.
 - API: `prompt_mode: "extract"` with `extract_schema` (a preset id or a JSON Schema) on
-  `POST /api/documents/{id}/pages/{n}/llm` and in job bodies, `POST /api/extract/check-schema`, `extract_presets` in
+  `POST /api/documents/{id}/pages/{n}/llm` and in job bodies, `POST /api/extract/check-schema` (validation notes,
+  example output, syntax error position and a repaired version; takes an optional `provider` and `model`), `extract_presets` in
   `/api/config`, and a per-page `data` object in JSON / JSONL exports of an extraction. CLI:
   `pyocr extract --mode extract --schema invoice|receipt|form|<file.json>`.
 - **Adjust image** (page inspector, shortcut `e`): preprocess the page image before it is sent to an LLM, then

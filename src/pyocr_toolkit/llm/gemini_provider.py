@@ -36,6 +36,9 @@ class GeminiProvider(Provider):
     def missing_settings(self) -> list[str]:
         return [] if self.api_key else ["GEMINI_API_KEY (or GOOGLE_API_KEY)"]
 
+    def schema_support(self, model: str | None) -> tuple[str, str]:
+        return "ok", f"{model or 'Gemini'} enforces this schema (response_json_schema)"
+
     @property
     def client(self) -> genai.Client:
         if self._client is None:

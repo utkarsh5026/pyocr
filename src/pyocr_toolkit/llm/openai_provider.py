@@ -31,6 +31,13 @@ class _OpenAIChatBase(Provider):
             self._client = self._make_client()
         return self._client
 
+    def schema_support(self, model: str | None) -> tuple[str, str]:
+        if self.schema_in_prompt:
+            return "warn", ("Depends on the server: it gets the schema as response_format and in the prompt. "
+                            "Check the fields, and pick a model that is good at JSON")
+        extra = " (the deployment's model and API version must support structured outputs)" if self.id == "azure_openai" else ""
+        return "ok", f"{model or self.label} enforces this schema (strict structured outputs){extra}"
+
     async def list_models(self) -> list[str] | None:
         try:
             return sorted([m.id async for m in self.client.models.list()])

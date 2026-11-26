@@ -70,6 +70,14 @@ class _ClaudeBase(Provider):
     def _make_client(self) -> anthropic.AsyncAnthropic:
         raise NotImplementedError
 
+    def schema_support(self, model: str | None) -> tuple[str, str]:
+        if model and _supports_structured_outputs(model):
+            return "ok", f"{model} enforces this schema (Claude structured outputs)"
+        return "warn", (f"{model or 'This model'} can't enforce a schema, so it's given in the prompt; check the fields. "
+                        "Fable, Opus 5+ / 4.8, Sonnet 5+ and Haiku 5.5 / 4.5 enforce it"
+                        + (" (name the deployment after the model, e.g. claude-opus-5-5)" if self.id == "azure_claude"
+                           else ""))
+
     @property
     def client(self):
         if self._client is None:

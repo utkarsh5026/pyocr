@@ -5,7 +5,7 @@
 <section class="hero">
   <div>
     <h1>See exactly what your text extraction produces.</h1>
-    <p class="lead">Put a document's <b>embedded text</b>, <b>Tesseract OCR</b> and <b>LLM transcriptions</b>
+    <p class="lead">Put a document's <b>embedded text</b>, <b>OCR</b> (Tesseract, EasyOCR, PaddleOCR, cloud OCR…) and <b>LLM transcriptions</b>
       side by side, measure how far apart they are, and export clean text for your GenAI pipeline.</p>
   </div>
   <label class="dropzone" id="home-drop">
@@ -29,8 +29,9 @@
   </a>
   <a class="card stat" href="/providers">
     <span class="stat-icon">{{ icon('cpu') }}</span>
-    <div><div class="v {{ 'good' if tesseract else 'bad' }}">{{ 'Ready' if tesseract else 'Missing' }}</div>
-    <div class="k">Tesseract OCR</div></div>
+    {% set ready = ocr_engines|selectattr('available')|list %}
+    <div><div class="v {{ 'good' if ready else 'bad' }}">{{ ready|length }} / {{ ocr_engines|length }}</div>
+    <div class="k">OCR engines ready</div></div>
   </a>
 </section>
 {% if not configured %}
@@ -42,7 +43,7 @@
   <h2>How it works</h2>
   <ol class="steps">
     <li><b>Upload</b><span>Any PDF or image. Pages without a real text layer are flagged as scans.</span></li>
-    <li><b>Extract</b><span>Run Tesseract or an LLM on a page, a range or the whole document.</span></li>
+    <li><b>Extract</b><span>Run an OCR engine or an LLM on a page, a range or the whole document.</span></li>
     <li><b>Inspect &amp; compare</b><span>Page image next to each text, word-level diffs and error rates.</span></li>
     <li><b>Export</b><span>TXT, Markdown, JSON or JSONL, ready for RAG and ingestion.</span></li>
   </ol>

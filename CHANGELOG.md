@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as
+  `pip install "pyocr-toolkit[easyocr]"`), and Google Cloud Vision, Azure AI Document Intelligence, AWS Textract
+  and Mistral OCR (cloud, configured with environment variables). Each engine is a separate source
+  (`ocr:<engine>`; `ocr` stays Tesseract) that can be searched, compared and exported.
+- Page inspector, Overview extract form, background jobs and the CLI (`--engine ocr:<engine>`, `--ocr-engine`,
+  `pyocr engines`) can pick the OCR engine. The Providers page lists every engine with its status and a Test button.
+- Logos for LLM providers and OCR engines across the UI (bundled locally, no external requests).
+- Existing Tesseract results (`ocr/<page>.json`) are read as before; other engines cache under `ocr/<engine>/`.
+
 ## 0.2.0
 
 - Multi-page web app with bookmarkable URLs: Home, Library, document Overview & extract, Page inspector,

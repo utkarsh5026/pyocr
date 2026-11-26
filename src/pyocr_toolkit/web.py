@@ -17,6 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from . import __version__
+from .brands import brand
 from .config import Settings
 from .documents import DocumentStore
 from .jobs import JobManager
@@ -43,6 +44,7 @@ def _datetime(ts: float) -> str:
 TEMPLATES.env.filters["filesize"] = _filesize
 TEMPLATES.env.filters["datetime"] = _datetime
 TEMPLATES.env.globals["version"] = __version__
+TEMPLATES.env.globals["brand_of"] = brand
 
 
 def render_error(request: Request, status: int, message: str) -> HTMLResponse:
@@ -66,7 +68,7 @@ def build_web(settings: Settings, store: DocumentStore, services: Services, jobs
         if doc_id not in native_cache:
             native_cache[doc_id] = frozenset(p for p in range(n) if not doc.page_info(p)["looks_scanned"])
         native = native_cache[doc_id]
-        ocr = {p for p in range(n) if doc.cached_ocr_text(p) is not None}
+        ocr = {p for p in range(n) if doc.ocr_engines_cached(p)}
         llm = {p for p in range(n) if doc.list_llm_results(p)}
         missing = n - len(native | ocr | llm)  # pages with no text from any source
         status = "complete" if missing == 0 else "scanned" if not native else "partial"
@@ -79,7 +81,8 @@ def build_web(settings: Settings, store: DocumentStore, services: Services, jobs
         configured = [p for p in services.providers.values() if p.configured]
         return page(request, "home.html", "home", recent=recent, configured=configured,
                     providers=list(services.providers.values()),
-                    tesseract=shutil.which("tesseract") is not None, total_docs=len(store.list()))
+                    tesseract=shutil.which("tesseract") is not None, total_docs=len(store.list()),
+                    ocr_engines=list(services.ocr_engines.values()))
 
     @web.get("/documents", response_class=HTMLResponse)
     def library(request: Request):
@@ -138,6 +141,7 @@ def build_web(settings: Settings, store: DocumentStore, services: Services, jobs
             except (OSError, subprocess.SubprocessError):
                 pass
         return page(request, "providers.html", "providers", providers=list(services.providers.values()),
+                    engines=[e.describe() for e in services.ocr_engines.values()],
                     tesseract=tesseract, tesseract_langs=langs, tesseract_version=version, settings=settings)
 
     @web.get("/help", response_class=HTMLResponse)

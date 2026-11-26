@@ -76,7 +76,7 @@ def test_html_pages_render(client, doc_id):
     assert r.status_code == 404 and "unknown document" in r.text and "<html" in r.text
     # static assets referenced by the templates exist
     for asset in ["common.js", "workspace.js", "document.js", "reader.js", "compare.js", "search.js",
-                  "jobs.js", "providers.js", "library.js", "styles.css"]:
+                  "jobs.js", "providers.js", "library.js", "styles.css", "logos/claude.svg"]:
         assert client.get(f"/static/{asset}").status_code == 200, asset
 
 

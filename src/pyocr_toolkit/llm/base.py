@@ -6,6 +6,8 @@ import abc
 import time
 from dataclasses import dataclass, field
 
+from ..config import env_status
+
 
 class ProviderError(Exception):
     """A provider call failed (bad credentials, refusal, network, ...)."""
@@ -51,21 +53,12 @@ class Provider(abc.ABC):
     #: where to get credentials
     docs_url: str = ""
 
+    #: key into ``brands.BRANDS`` for the logo shown in the UI
+    brand: str = ""
+
     def env_status(self) -> list[dict]:
         """Which settings are set (never the values themselves)."""
-        settings = getattr(self, "settings", None)
-        fields = type(settings).model_fields if settings is not None else {}
-        out = []
-        for name, required, desc in self.env_vars:
-            attr = name.lower()
-            value = getattr(settings, attr, None)
-            default = fields[attr].default if attr in fields else None
-            # "default" = not set by the user but a built-in default applies
-            state = "missing" if not value else "default" if value == default else "set"
-            out.append({"name": name, "required": required, "description": desc,
-                        "set": state == "set", "state": state,
-                        "default": default if isinstance(default, (str, int, float)) else None})
-        return out
+        return env_status(getattr(self, "settings", None), self.env_vars)
 
     @property
     @abc.abstractmethod
@@ -105,4 +98,5 @@ class Provider(abc.ABC):
             "model_hint": self.model_hint,
             "env": self.env_status(),
             "docs_url": self.docs_url,
+            "brand": self.brand,
         }

@@ -8,13 +8,25 @@ let picker;
 
 const kind = () => $("#extract-form input[name=kind]:checked").value;
 
+const ocrSelect = $("#ocr-engine");
+
 function updateForm() {
   $("#llm-options").hidden = kind() !== "llm";
+  $("#ocr-options").hidden = kind() !== "ocr";
   const pages = $("#extract-form input[name=pages]").value.trim();
   const what = pages ? `pages ${pages}` : `all ${PAGE_COUNT} page${PAGE_COUNT === 1 ? "" : "s"}`;
+  const engine = ocrEngineInfo(ocrSelect.value);
+  if (engine) {
+    $("#ocr-engine-logo").innerHTML = logoHtml(engine.brand);
+    $("#ocr-engine-note").innerHTML = engine.available
+      ? `<span class="muted">${esc(engine.description)}</span>`
+      : `<span class="warn">${esc(engine.problem)}</span> <a href="/providers">Setup</a>`;
+  }
   $("#extract-hint").textContent = kind() === "llm" && picker
     ? `Sends ${what} as images to ${picker.describe()}`
-    : `Runs locally on ${what}; about 1–5 s per page`;
+    : engine?.kind === "cloud"
+      ? `Sends ${what} as images to ${engine.label}`
+      : `Runs locally on ${what} with ${engine?.label || "OCR"}`;
 }
 
 async function loadPages() {
@@ -24,7 +36,7 @@ async function loadPages() {
       <img loading="lazy" src="/api/documents/${DOC_ID}/pages/${n}/image?dpi=50" alt="Page ${n + 1}">
       <div class="tile-foot"><b>${n + 1}</b>
         ${p.looks_scanned ? '<span class="badge scan">scan</span>' : `<span class="badge">${p.native_chars} ch</span>`}
-        ${p.has_ocr_cache ? '<span class="badge ok">OCR</span>' : ""}
+        ${p.ocr_engines?.length ? `<span class="badge ok" title="${esc(p.ocr_engines.map(ocrLabel).join(", "))}">OCR${p.ocr_engines.length > 1 ? "×" + p.ocr_engines.length : ""}</span>` : ""}
         ${p.llm_results ? `<span class="badge ok">LLM${p.llm_results > 1 ? "×" + p.llm_results : ""}</span>` : ""}
       </div>
     </a>`).join("");
@@ -50,6 +62,13 @@ $("#extract-form").addEventListener("submit", guard(async (e) => {
   e.preventDefault();
   const form = e.target;
   const body = { kind: kind(), pages: form.pages.value.trim() || null, force: form.force.checked };
+  if (body.kind === "ocr") {
+    const engine = ocrEngineInfo(ocrSelect.value);
+    if (!engine?.available) throw new Error(engine?.problem || "pick an OCR engine");
+    body.engine = engine.id;
+    localStorage.setItem("pyocr.ocrEngine", engine.id);
+    if (engine.kind === "cloud" && !confirm(`Send ${body.pages ? `pages ${body.pages}` : `all ${PAGE_COUNT} pages`} to ${engine.label}?`)) return;
+  }
   if (body.kind === "llm") {
     body.llm = picker.spec();
     const n = body.pages ? `pages ${body.pages}` : `all ${PAGE_COUNT} pages`;
@@ -75,11 +94,15 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
     $("#llm-options").addEventListener("change", updateForm);
     updateForm();
     const cfg = await getConfig();
-    if (!cfg.tesseract_available) {
+    ocrSelect.innerHTML = ocrEngineOptions(cfg);
+    ocrSelect.value = preferredOcrEngine(cfg);
+    ocrSelect.addEventListener("change", updateForm);
+    if (!cfg.ocr_engines.some((e) => e.available)) {
       const ocr = $("#extract-form input[value=ocr]");
       ocr.disabled = true;
-      ocr.parentElement.title = "Tesseract is not installed on the server";
+      ocr.parentElement.title = "No OCR engine is installed or configured: see Providers";
     }
+    updateForm();
     await loadPages();
     const jobs = await refreshJobs();
     jobs.filter((j) => ["running", "queued"].includes(j.status)).forEach((j) => follow(j.id));

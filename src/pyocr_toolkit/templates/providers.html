@@ -1,46 +1,73 @@
 {% extends "base.html" %}
+{% from "_brand.html" import logo %}
 {% block title %}Providers{% endblock %}
 {% block content %}
 <div class="page-head"><div>
-<h1>Providers &amp; setup</h1>
+<h1>Providers, OCR engines &amp; setup</h1>
 <p>Credentials come from environment variables (or a <code>.env</code> file next to where you run
   <code>pyocr serve</code>). They never leave the server; restart it after changing them.</p>
 </div></div>
 
-<section class="card">
-  <div class="section-head"><h2>Tesseract OCR</h2>
-    <span class="badge {{ 'ok' if tesseract else 'scan' }}">{{ 'installed' if tesseract else 'not installed' }}</span></div>
-  {% if tesseract %}
-  <p class="small">{{ tesseract_version }} at <code>{{ tesseract }}</code>. Using language
-    <code>{{ settings.tesseract_language }}</code> at {{ settings.ocr_dpi }} DPI.
-    Installed languages: {% for l in tesseract_langs %}<code>{{ l }}</code> {% endfor %}</p>
+{% macro env_table(rows, stacked=false) %}
+  <table class="table compact env{{ ' stacked' if stacked }}">
+    {% for e in rows %}
+    <tr>
+      <td><code>{{ e.name }}</code>{% if e.required %} <span class="badge">required</span>{% endif %}
+        {% if stacked %}<div class="small muted">{{ e.description }}</div>{% endif %}</td>
+      <td class="nowrap">{% if e.state == 'set' %}<span class="good">✓ set</span>{% elif e.state == 'default' %}<span class="muted" title="not set; using the built-in default">default: {{ e.default }}</span>{% else %}<span class="{{ 'bad' if e.required else 'muted' }}">{{ 'missing' if e.required else '–' }}</span>{% endif %}</td>
+      {% if not stacked %}<td class="small">{{ e.description }}</td>{% endif %}
+    </tr>
+    {% endfor %}
+  </table>
+{% endmacro %}
+
+<div class="section-head"><h2>OCR engines</h2>
+  <span class="small muted">{{ engines|selectattr('available')|list|length }} of {{ engines|length }} ready ·
+    local engines run on this machine; cloud engines send the page image to that service</span></div>
+<div class="engine-grid">
+{% for e in engines %}
+<section class="card engine-card" data-engine-id="{{ e.id }}">
+  <div class="section-head">
+    <h3 class="with-logo">{{ logo(e.brand, 'lg') }}<span>{{ e.label }}</span></h3>
+    <span class="with-logo">
+      <span class="badge kind-badge" title="{{ 'Runs on this machine' if e.kind == 'local' else 'Sends page images to the service' }}">{{ e.kind }}</span>
+      <span class="badge {{ 'ok' if e.available else 'scan' }}">{{ 'ready' if e.available else ('not installed' if not e.installed else 'not configured') }}</span>
+    </span>
+  </div>
+  <p class="small muted desc">{{ e.description }}</p>
+  {% if e.id == 'tesseract' and tesseract %}
+  <p class="small">{{ tesseract_version }} at <code>{{ tesseract }}</code>, language <code>{{ settings.tesseract_language }}</code>
+    at {{ settings.ocr_dpi }} DPI. Installed languages: {% for l in tesseract_langs %}<code>{{ l }}</code> {% endfor %}</p>
   <p class="small">Set <code>TESSERACT_LANGUAGE=eng+deu</code> (for example) to OCR multi-language documents.</p>
-  {% else %}
-  <p>Install it to enable the OCR tab:</p>
+  {% elif e.id == 'tesseract' %}
   <pre class="code">sudo apt-get install tesseract-ocr tesseract-ocr-eng   # Debian / Ubuntu
 brew install tesseract                                  # macOS
 choco install tesseract                                 # Windows (or the UB Mannheim installer)</pre>
-  <p class="small">Or run the Docker image, which already includes it.</p>
+  {% elif not e.installed %}
+  <pre class="code">{{ e.install }}</pre>
   {% endif %}
+  {% if e.env and e.id != 'tesseract' %}{{ env_table(e.env, stacked=true) }}{% endif %}
+  {% if e.available and e.summary %}<p class="small muted">In effect: {{ e.summary }}</p>{% endif %}
+  {% if not e.has_boxes %}<p class="small muted">Text only: search hits can't be highlighted on the page image.</p>{% endif %}
+  <div class="row">
+    <button class="btn small" data-test-engine {{ 'disabled' if not e.available }}>Test</button>
+    {% if e.docs_url %}<a class="small" href="{{ e.docs_url }}" target="_blank" rel="noopener">Docs ↗</a>{% endif %}
+    {% if e.kind == 'local' and e.id != 'tesseract' %}<span class="small muted">downloads its model on first use</span>{% endif %}
+  </div>
+  <div class="small" data-test-result></div>
 </section>
+{% endfor %}
+</div>
 
 <h2 style="margin-top:32px">LLM providers</h2>
 <div class="provider-grid">
 {% for p in providers %}
 <section class="card provider" data-provider-id="{{ p.id }}">
   <div class="section-head">
-    <h3>{{ p.label }}</h3>
+    <h3 class="with-logo">{{ logo(p.brand, 'lg') }}<span>{{ p.label }}</span></h3>
     <span class="badge {{ 'ok' if p.configured else 'scan' }}">{{ 'ready' if p.configured else 'not configured' }}</span>
   </div>
-  <table class="table compact env">
-    {% for e in p.env_status() %}
-    <tr>
-      <td><code>{{ e.name }}</code>{% if e.required %} <span class="badge">required</span>{% endif %}</td>
-      <td class="nowrap">{% if e.state == 'set' %}<span class="good">✓ set</span>{% elif e.state == 'default' %}<span class="muted" title="not set; using the built-in default">default: {{ e.default }}</span>{% else %}<span class="{{ 'bad' if e.required else 'muted' }}">{{ 'missing' if e.required else '–' }}</span>{% endif %}</td>
-      <td class="small">{{ e.description }}</td>
-    </tr>
-    {% endfor %}
-  </table>
+  {{ env_table(p.env_status()) }}
   <div class="row">
     <input data-test-model value="{{ p.default_model or '' }}" placeholder="{{ p.model_hint }}" class="grow">
     <button class="btn small" data-test {{ 'disabled' if not p.configured }}>Test connection</button>
@@ -57,7 +84,8 @@ choco install tesseract                                 # Windows (or the UB Man
     <tr><td><code>DATA_DIR</code></td><td>{{ settings.data_dir }}</td><td class="small">where uploads and results are stored</td></tr>
     <tr><td><code>PREVIEW_DPI</code></td><td>{{ settings.preview_dpi }}</td><td class="small">page images in the browser</td></tr>
     <tr><td><code>LLM_DPI</code> / <code>LLM_MAX_EDGE_PX</code></td><td>{{ settings.llm_dpi }} / {{ settings.llm_max_edge_px }}</td><td class="small">image sent to the LLM</td></tr>
-    <tr><td><code>OCR_DPI</code></td><td>{{ settings.ocr_dpi }}</td><td class="small">image given to Tesseract</td></tr>
+    <tr><td><code>OCR_DPI</code></td><td>{{ settings.ocr_dpi }}</td><td class="small">page image given to OCR engines</td></tr>
+    <tr><td><code>OCR_MAX_EDGE_PX</code></td><td>{{ settings.ocr_max_edge_px }}</td><td class="small">longest edge for non-Tesseract engines</td></tr>
     <tr><td><code>LLM_CONCURRENCY</code></td><td>{{ settings.llm_concurrency }}</td><td class="small">parallel LLM calls</td></tr>
     <tr><td><code>MAX_UPLOAD_MB</code></td><td>{{ settings.max_upload_mb }}</td><td class="small">upload limit</td></tr>
   </table>

@@ -12,6 +12,7 @@ from .base import Provider, ProviderError, TranscriptionRequest, TranscriptionRe
 class GeminiProvider(Provider):
     id = "gemini"
     label = "Google Gemini"
+    brand = "gemini"
     docs_url = "https://aistudio.google.com/apikey"
     env_vars = [
         ("GEMINI_API_KEY", True, "API key from Google AI Studio (GOOGLE_API_KEY also works)"),

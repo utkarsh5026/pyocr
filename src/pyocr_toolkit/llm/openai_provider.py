@@ -83,6 +83,7 @@ class _OpenAIChatBase(Provider):
 class OpenAIProvider(_OpenAIChatBase):
     id = "openai"
     label = "OpenAI"
+    brand = "openai"
     docs_url = "https://platform.openai.com/api-keys"
     env_vars = [
         ("OPENAI_API_KEY", True, "API key from platform.openai.com"),
@@ -109,6 +110,7 @@ class OpenAIProvider(_OpenAIChatBase):
 class AzureOpenAIProvider(_OpenAIChatBase):
     id = "azure_openai"
     label = "Azure OpenAI"
+    brand = "azure"
     model_hint = "Azure deployment name"
     docs_url = "https://learn.microsoft.com/azure/ai-services/openai/"
     env_vars = [
@@ -146,6 +148,7 @@ class AzureOpenAIProvider(_OpenAIChatBase):
 class OpenAICompatibleProvider(_OpenAIChatBase):
     id = "openai_compatible"
     label = "OpenAI-compatible (Ollama, vLLM, ...)"
+    brand = "openai_compatible"
     docs_url = "https://github.com/ollama/ollama/blob/main/docs/openai.md"
     env_vars = [
         ("OPENAI_COMPATIBLE_BASE_URL", True, "e.g. http://localhost:11434/v1 for Ollama"),

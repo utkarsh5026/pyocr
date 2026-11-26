@@ -18,7 +18,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-from .documents import DocumentStore
+from .documents import DEFAULT_OCR_ENGINE, DocumentStore
 from .service import LLMSpec, Services
 
 JobKind = Literal["ocr", "llm"]
@@ -32,6 +32,8 @@ class Job:
     pages: list[int]
     label: str
     llm: dict[str, Any] | None = None
+    #: OCR engine id for ``ocr`` jobs
+    engine: str | None = None
     force: bool = False
     status: str = "queued"  # queued | running | done | failed | cancelled
     done: int = 0
@@ -74,7 +76,7 @@ class JobManager:
         return self.jobs.get(job_id)
 
     def start(self, doc_id: str, kind: JobKind, pages: list[int], llm: LLMSpec | None = None,
-              force: bool = False) -> Job:
+              force: bool = False, engine: str = DEFAULT_OCR_ENGINE) -> Job:
         doc = self.store.get(doc_id)  # validates the id
         if kind == "llm":
             if llm is None:
@@ -84,9 +86,16 @@ class JobManager:
                 raise ValueError(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}")
             label = f"LLM · {provider.label} · {model} · {llm.prompt_mode}"
         else:
-            label = f"Tesseract OCR ({self.services.settings.tesseract_language})"
+            try:
+                ocr = self.services.ocr_engine(engine)
+            except Exception as exc:  # DocumentError -> ValueError for the API layer
+                raise ValueError(str(exc)) from exc
+            if problem := ocr.problem():
+                raise ValueError(problem)
+            summary = ocr.settings_summary()
+            label = f"{ocr.label}{f' ({summary})' if summary else ''}"
         job = Job(id=uuid.uuid4().hex[:12], doc_id=doc.meta.id, kind=kind, pages=pages, label=label,
-                  llm=asdict(llm) if llm else None, force=force)
+                  llm=asdict(llm) if llm else None, engine=engine if kind == "ocr" else None, force=force)
         self.jobs[job.id] = job
         self._tasks[job.id] = asyncio.get_running_loop().create_task(self._run(job))
         return job
@@ -113,10 +122,11 @@ class JobManager:
                 job.current_pages.append(page)
                 try:
                     if job.kind == "ocr":
-                        if not job.force and doc.cached_ocr_text(page) is not None:
+                        engine = job.engine or DEFAULT_OCR_ENGINE
+                        if not job.force and doc.cached_ocr_text(page, engine) is not None:
                             job.cached += 1
                         else:
-                            await asyncio.to_thread(self.services.run_ocr_page, doc, page, job.force)
+                            await asyncio.to_thread(self.services.run_ocr_page, doc, page, job.force, engine)
                     else:
                         res = await self.services.run_llm_page(doc, page, spec, force=job.force)
                         if res.get("cached"):
@@ -133,7 +143,12 @@ class JobManager:
                     job.current_pages.remove(page)
                     job.done += 1
 
-        concurrency = self.ocr_concurrency if job.kind == "ocr" else self.services.settings.llm_concurrency
+        if job.kind == "ocr":
+            # local engines are CPU-bound and serialised anyway; cloud ones can overlap
+            ocr = self.services.ocr_engines.get(job.engine or DEFAULT_OCR_ENGINE)
+            concurrency = max(self.ocr_concurrency, ocr.concurrency if ocr else 1)
+        else:
+            concurrency = self.services.settings.llm_concurrency
         try:
             await asyncio.gather(*(worker() for _ in range(max(1, min(concurrency, job.total)))))
             job.status = "failed" if job.failed == job.total else "done"

@@ -1,12 +1,12 @@
 [project]
 name = "pyocr-toolkit"
 version = "0.2.0"
-description = "Inspect and compare PDF/image text extraction - native text, Tesseract OCR and LLMs (Claude, GPT, Gemini, Azure, local) - in your browser."
+description = "Inspect and compare PDF/image text extraction - native text, OCR engines (Tesseract, EasyOCR, PaddleOCR, docTR, RapidOCR, Google Vision, Azure, Textract, Mistral) and LLMs (Claude, GPT, Gemini, Azure, local) - in your browser."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{ name = "utkarsh5026" }]
-keywords = ["ocr", "pdf", "tesseract", "llm", "document-ai", "text-extraction", "rag", "pymupdf", "claude", "openai"]
+keywords = ["ocr", "pdf", "tesseract", "easyocr", "paddleocr", "doctr", "textract", "llm", "document-ai", "text-extraction", "rag", "pymupdf", "claude", "openai"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Web Environment",
@@ -34,10 +34,18 @@ dependencies = [
     "anthropic>=1.0",
     "openai>=1.40",
     "google-genai>=1.0",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "httpx>=0.27", "ruff>=0.5"]
+# Optional OCR engines (Tesseract needs only the system binary). Google Vision,
+# Azure Document Intelligence and Mistral OCR need no extra packages.
+rapidocr = ["rapidocr>=2", "onnxruntime>=1.17"]
+easyocr = ["easyocr>=1.7"]
+paddleocr = ["paddleocr>=3", "paddlepaddle>=3"]
+doctr = ["python-doctr[torch]>=0.10"]
+textract = ["boto3>=1.34"]
 
 [project.urls]
 Homepage = "https://github.com/utkarsh5026/pyocr"

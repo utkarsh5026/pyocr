@@ -123,6 +123,7 @@ class _ClaudeBase(Provider):
 class AnthropicProvider(_ClaudeBase):
     id = "anthropic"
     label = "Claude (Anthropic API)"
+    brand = "claude"
     docs_url = "https://console.anthropic.com/settings/keys"
     env_vars = [
         ("ANTHROPIC_API_KEY", True, "API key from the Claude Console"),
@@ -148,6 +149,7 @@ class AnthropicFoundryProvider(_ClaudeBase):
 
     id = "azure_claude"
     label = "Claude on Azure (Microsoft Foundry)"
+    brand = "claude"
     model_hint = "Foundry deployment name of the Claude model"
     docs_url = "https://learn.microsoft.com/azure/ai-foundry/"
     env_vars = [

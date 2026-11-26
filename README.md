@@ -32,7 +32,7 @@ checking that step. Upload a document and you get three versions of every page:
 | | Source | What it is | Good at | Weak at |
 |---|---|---|---|---|
 | 📄 | **Native text** | Text already embedded in the file (PyMuPDF) | Born-digital PDFs. Exact and instant. | Scans have none. Broken font maps produce gibberish. |
-| 🔍 | **Tesseract OCR** | Classic OCR on the rendered page image | Free, local, fast, gives word positions | Tables, columns, poor scans, handwriting |
+| 🔍 | **OCR** | Tesseract, or any of 8 other OCR engines (below), on the rendered page image | Free/local or cheap cloud, gives word positions | Varies by engine: Tesseract struggles with tables, columns, poor scans, handwriting |
 | ✨ | **LLM transcription** | A vision LLM told to copy the page *verbatim* | Hard pages, layout, context | Costs money. May quietly "fix" or skip text. |
 
 Then you can:
@@ -44,6 +44,10 @@ Then you can:
 
 **LLM providers:** Claude (Anthropic API), OpenAI, Azure OpenAI, Claude on Azure (Microsoft Foundry), Google
 Gemini, and any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter) for local or private models.
+
+**OCR engines:** Tesseract (default), plus RapidOCR, EasyOCR, PaddleOCR and docTR running locally, and Google
+Cloud Vision, Azure AI Document Intelligence, AWS Textract and Mistral OCR in the cloud. Each engine is its own
+source, so you can score engines against each other or against an LLM.
 
 **Inputs:** PDF, XPS, EPUB, CBZ, MOBI, FB2, SVG, PNG, JPEG, TIFF (multi-page), BMP, GIF, WebP and anything else
 [PyMuPDF](https://pymupdf.readthedocs.io/) opens.
@@ -120,7 +124,7 @@ Everything you upload and extract is stored in `./data` (change it with `DATA_DI
 |---|---|
 | **Home** `/` | Drop files to upload; see setup status and recent documents. |
 | **Library** `/documents` | Document cards showing native / OCR / LLM coverage and how many pages still have no text. Filter by status or name; delete. |
-| **Overview** `/documents/{id}` | Start background extraction (Tesseract or any LLM) for all pages or a range such as `1-5,9`; follow progress; see every *source* (engine + model + prompt) with token usage; export; page thumbnails. |
+| **Overview** `/documents/{id}` | Start background extraction (any OCR engine or LLM) for all pages or a range such as `1-5,9`; follow progress; see every *source* (engine + model + prompt) with token usage; export; page thumbnails. |
 | **Page inspector** `/documents/{id}/pages/{n}` | Page image next to native, OCR and LLM text; run OCR or an LLM on just this page; per-page diff; a *Side by side* tab with all three texts in synced columns; search hits drawn on the image. Keyboard: `←/→`, `/`, `1-5`, `t`, `o`. |
 | **Full text** `/documents/{id}/text` | Read the whole document from one source, optionally beside the page images; find, copy, download. |
 | **Compare** `/documents/{id}/compare` | Score source B against source A on every page: document-level CER/WER, a clickable CER-per-page chart, and an aligned side-by-side diff of the selected page (opens on the worst page). Works for OCR vs LLM, native vs LLM, or **model vs model**. |
@@ -148,14 +152,37 @@ Any model or deployment name can be typed in the UI; the defaults are just start
 images. For a fully local setup, run Ollama with a vision model and set
 `OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1`.
 
+## Configure OCR engines
+
+Tesseract is the default engine. Every other engine is optional, and the Providers page (and `pyocr engines`) shows
+which are ready, with a **Test** button for each. Local engines run on your machine; the first run downloads the
+model weights. Cloud engines send the rendered page image to that service, and nowhere else.
+
+| Engine | Kind | Install / required settings | Optional |
+|---|---|---|---|
+| Tesseract | local | system package (`apt install tesseract-ocr`, `brew install tesseract`) | `TESSERACT_LANGUAGE` |
+| RapidOCR | local | `pip install "pyocr-toolkit[rapidocr]"` (ONNX Runtime, no PyTorch) | – |
+| EasyOCR | local | `pip install "pyocr-toolkit[easyocr]"` (PyTorch) | `EASYOCR_LANGUAGES`, `OCR_GPU` |
+| PaddleOCR | local | `pip install "pyocr-toolkit[paddleocr]"` (PaddlePaddle) | `PADDLEOCR_LANGUAGE` |
+| docTR | local | `pip install "pyocr-toolkit[doctr]"` (PyTorch) | `OCR_GPU` |
+| Google Cloud Vision | cloud | `GOOGLE_VISION_API_KEY` | `GOOGLE_VISION_LANGUAGE_HINTS` |
+| Azure AI Document Intelligence | cloud | `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`, `AZURE_DOCUMENT_INTELLIGENCE_KEY` | – |
+| AWS Textract | cloud | `pip install "pyocr-toolkit[textract]"`, `AWS_REGION` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (or `~/.aws`) |
+| Mistral OCR | cloud | `MISTRAL_API_KEY` | `MISTRAL_OCR_MODEL` (default `mistral-ocr-latest`) |
+
+Mistral OCR returns Markdown without word positions, so its search hits can't be drawn on the page image. In the
+API, OCR sources are `ocr` (Tesseract) and `ocr:<engine>`, e.g. `ocr:easyocr`.
+
 ## Command line
 
 ```bash
 pyocr extract report.pdf --engine llm -p anthropic --pages 1-5 --format jsonl -o report.jsonl
 pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdown to stdout
+pyocr extract scan.pdf --engine ocr:easyocr                  # any OCR engine (see `pyocr engines`)
 pyocr extract born-digital.pdf --engine native              # embedded text only, no network
 pyocr compare scan.pdf -p openai -m gpt-5                   # per-page OCR / native CER vs an LLM
 pyocr providers                                             # which providers are ready
+pyocr engines                                               # which OCR engines are ready
 python -m pyocr_toolkit --help                              # same CLI without the script on PATH
 ```
 
@@ -165,8 +192,8 @@ Documents processed on the command line also appear in the web app's library.
 
 1. **Native text.** A PDF page is a list of drawing instructions ("glyph 37 at (72, 700)"). Born-digital files map
    each glyph back to a character, so the text can be rebuilt exactly. A scan is only a picture, so it has no text.
-2. **OCR.** The page is rendered to pixels (300 DPI) and Tesseract recognises characters from their shapes,
-   reporting a box for each word. That is why search can highlight OCR hits on the page.
+2. **OCR.** The page is rendered to pixels (300 DPI) and an OCR engine (Tesseract by default) recognises characters
+   from their shapes, reporting a box for each word (or line, split into words). That is why search can highlight OCR hits on the page.
 3. **LLM.** The page image goes to a vision model with a strict "transcribe, don't correct" prompt
    ([`prompts.py`](src/pyocr_toolkit/llm/prompts.py)). It reads in context, so it is strong on hard pages, but it can
    "fix" typos, which the diff view exposes.

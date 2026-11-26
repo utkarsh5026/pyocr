@@ -126,7 +126,7 @@ kbd { border: 1px solid var(--border-strong); border-bottom-width: 2px; padding:
 /* ==========================================================================
    Controls
    ========================================================================== */
-select, input[type=search], input:not([type]), input[list], input[type=text], textarea {
+select, input[type=search], input:not([type]), input[list], input[type=text], input[type=password], textarea {
   font: inherit; font-size: 13.5px; color: var(--text); background: var(--surface);
   border: 1px solid var(--border-strong); border-radius: 8px; padding: 6px 10px; min-width: 0; height: 34px;
   transition: border-color .15s, box-shadow .15s;
@@ -340,6 +340,10 @@ details.meta dd { margin: 0; word-break: break-word; }
 .badge.scan { color: var(--warn); background: var(--warn-soft); }
 .badge.ok { color: var(--good); background: var(--good-soft); }
 .badge.run { color: var(--accent); background: var(--accent-soft); }
+/* model ratings (llm/catalog.py) */
+.badge.excellent { color: var(--surface); background: var(--good); }
+.badge.fair { color: var(--info); background: var(--info-soft); }
+.badge.bad { color: var(--bad); background: var(--bad-soft); }
 .badge.hit { color: var(--text); background: var(--hl); }
 .badge.info { color: var(--info); background: var(--info-soft); }
 .badge.bad { color: var(--bad); background: var(--bad-soft); }
@@ -486,7 +490,23 @@ pre.text:empty::before { content: attr(data-empty); color: var(--subtle); font-f
 .search-doc .sr-page:hover { color: var(--text); background: var(--surface-2); }
 
 /* ---- providers ---- */
-.provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); gap: 0 18px; }
+.provider-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(460px, 100%), 1fr)); gap: 0 18px; }
+/* Providers: in-browser settings form */
+.cred-edit { margin: 4px 0 12px; }
+.cred-edit > summary { cursor: pointer; font-size: 13px; color: var(--accent); }
+.cred-edit form { display: grid; gap: 10px; margin-top: 10px; padding: 12px; border-radius: var(--radius-sm);
+  background: var(--bg-sunken); border: 1px solid var(--border); }
+.cred-field { display: grid; gap: 4px; }
+.cred-field > label { font-size: 12.5px; }
+.cred-field input[type=text], .cred-field input[type=password] { width: 100%; }
+.cred-reset { display: flex; align-items: center; gap: 6px; color: var(--muted); }
+.model-verdict, .picker-verdict { margin-top: 6px; line-height: 1.6; }
+.picker-verdict:empty, .model-verdict:empty { display: none; }
+/* Models page */
+.model-filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 12px; }
+.model-filters input[type=search] { min-width: min(320px, 100%); }
+.models-table td { vertical-align: top; }
+.table-wrap { overflow-x: auto; }
 .provider { display: flex; flex-direction: column; }
 .provider h3 { margin: 0 0 8px; font-size: 14.5px; }
 .provider .env { margin-bottom: auto; }

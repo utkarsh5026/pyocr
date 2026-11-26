@@ -7,6 +7,7 @@ import base64
 import openai
 
 from ..config import Settings
+from . import catalog
 from .base import Provider, ProviderError, TranscriptionRequest, TranscriptionResult
 
 
@@ -27,6 +28,12 @@ class _OpenAIChatBase(Provider):
         if self._client is None:
             self._client = self._make_client()
         return self._client
+
+    async def list_models(self) -> list[str] | None:
+        try:
+            return sorted([m.id async for m in self.client.models.list()])
+        except openai.APIError as exc:
+            raise ProviderError(f"{self.label}: could not list models: {exc}") from exc
 
     async def _transcribe(self, req: TranscriptionRequest, model: str) -> TranscriptionResult:
         data_url = f"data:{req.mime_type};base64,{base64.b64encode(req.image).decode('ascii')}"
@@ -84,12 +91,13 @@ class OpenAIProvider(_OpenAIChatBase):
     id = "openai"
     label = "OpenAI"
     docs_url = "https://platform.openai.com/api-keys"
+    can_list_models = True
     env_vars = [
         ("OPENAI_API_KEY", True, "API key from platform.openai.com"),
         ("OPENAI_MODEL", False, "default model, e.g. gpt-5"),
         ("OPENAI_BASE_URL", False, "only for proxies / gateways"),
     ]
-    suggested_models = ["gpt-5", "gpt-5-mini", "gpt-4.1", "gpt-4o"]
+    suggested_models = catalog.recommended("openai")
 
     @property
     def default_model(self) -> str | None:
@@ -147,6 +155,7 @@ class OpenAICompatibleProvider(_OpenAIChatBase):
     id = "openai_compatible"
     label = "OpenAI-compatible (Ollama, vLLM, ...)"
     docs_url = "https://github.com/ollama/ollama/blob/main/docs/openai.md"
+    can_list_models = True
     env_vars = [
         ("OPENAI_COMPATIBLE_BASE_URL", True, "e.g. http://localhost:11434/v1 for Ollama"),
         ("OPENAI_COMPATIBLE_MODEL", False, "a vision model, e.g. qwen2.5vl:7b or llama3.2-vision"),

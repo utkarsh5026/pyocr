@@ -6,6 +6,7 @@ from google import genai
 from google.genai import errors, types
 
 from ..config import Settings
+from . import catalog
 from .base import Provider, ProviderError, TranscriptionRequest, TranscriptionResult
 
 
@@ -13,11 +14,12 @@ class GeminiProvider(Provider):
     id = "gemini"
     label = "Google Gemini"
     docs_url = "https://aistudio.google.com/apikey"
+    can_list_models = True
     env_vars = [
         ("GEMINI_API_KEY", True, "API key from Google AI Studio (GOOGLE_API_KEY also works)"),
         ("GEMINI_MODEL", False, "default model, e.g. gemini-2.5-flash"),
     ]
-    suggested_models = ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+    suggested_models = catalog.recommended("gemini")
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -39,6 +41,19 @@ class GeminiProvider(Provider):
         if self._client is None:
             self._client = genai.Client(api_key=self.api_key)
         return self._client
+
+    async def list_models(self) -> list[str] | None:
+        try:
+            pager = await self.client.aio.models.list(config={"page_size": 100})
+            names = []
+            async for m in pager:
+                actions = m.supported_actions or []
+                if actions and "generateContent" not in actions:
+                    continue  # embeddings, TTS-only, ...
+                names.append((m.name or "").removeprefix("models/"))
+            return sorted(n for n in names if n)
+        except (errors.ClientError, errors.ServerError) as exc:
+            raise ProviderError(f"{self.label}: could not list models: {exc.code} {exc.message}") from exc
 
     async def _transcribe(self, req: TranscriptionRequest, model: str) -> TranscriptionResult:
         try:

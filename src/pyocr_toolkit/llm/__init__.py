@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..config import Settings
+from . import catalog
 from .anthropic_provider import AnthropicFoundryProvider, AnthropicProvider
 from .base import (
     Provider,
@@ -30,6 +31,7 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
 
 
 __all__ = [
+    "catalog",
     "PROMPT_MODES",
     "USER_PROMPT",
     "Provider",

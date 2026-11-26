@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Models{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+<h1>Models</h1>
+<p>Search vision models and see how well each one suits <b>verbatim page transcription</b>. This list only
+  suggests models: you can still type any model or deployment name in the model box.</p>
+</div></div>
+
+<section class="card">
+  <div class="model-filters">
+    <input type="search" id="m-q" value="{{ q }}" placeholder="Search models: name, vendor, “handwriting”, “cheap”…"
+           aria-label="Search models" class="grow" autofocus>
+    <select id="m-provider" aria-label="Provider">
+      <option value="">All providers</option>
+      {% for p in providers %}<option value="{{ p.id }}" {{ 'selected' if p.id == provider }}>{{ p.label }}</option>{% endfor %}
+    </select>
+    <select id="m-rating" aria-label="Rating">
+      <option value="">Any rating</option>
+      {% for k, v in ratings.items() if k != 'unrated' %}<option value="{{ k }}">{{ v[0] }}</option>{% endfor %}
+    </select>
+    <label class="small nowrap"><input type="checkbox" id="m-deprecated"> show deprecated</label>
+  </div>
+  <div class="table-wrap">
+    <table class="table compact models-table">
+      <thead><tr><th>Model</th><th>For OCR</th><th>Price (in / out per 1M)</th><th>Why</th><th></th></tr></thead>
+      <tbody id="m-results"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+  <p class="small muted" id="m-count"></p>
+</section>
+
+<section class="card">
+  <div class="section-head">
+    <h2>Models your key can use</h2>
+    <div class="row">
+      <select id="live-provider" aria-label="Provider to list">
+        {% for p in providers if p.can_list_models %}<option value="{{ p.id }}" {{ 'selected' if p.id == provider }}>{{ p.label }}{{ '' if p.configured else ' (not configured)' }}</option>{% endfor %}
+      </select>
+      <button class="btn small" id="live-load">List models</button>
+    </div>
+  </div>
+  <p class="small muted">Asks the provider's API which models your credentials can use, then rates each one.
+    Azure deployments can't be listed this way: type the deployment name on the
+    <a href="/providers">Providers</a> page instead.</p>
+  <input type="search" id="live-q" placeholder="Filter this list…" aria-label="Filter listed models" hidden>
+  <div id="live-results"></div>
+</section>
+
+<section class="card">
+  <h2>How the ratings work</h2>
+  <ul class="small">
+    <li><span class="badge excellent">Excellent for OCR</span> near the top of public OCR benchmarks, or the vendor's top vision
+      tier. Use for handwriting, tables, poor scans.</li>
+    <li><span class="badge ok">Good for OCR</span> reliable on most printed documents; good value for bulk jobs.</li>
+    <li><span class="badge fair">Fair: clean print only</span> cheap or old models; expect skipped or "fixed" text on hard pages.</li>
+    <li><span class="badge bad">Not suitable</span> can't read images (embeddings, audio, image generators, text-only).</li>
+    <li><span class="badge">Not rated</span> a name that isn't in the catalog (custom, fine-tuned, local). It may work fine:
+      run <i>Test connection</i>, then Compare it against another source.</li>
+  </ul>
+  <p class="small">“benchmark” means the rating rests on a published OCR result; “vendor” means it's estimated from the
+    vendor's docs and model tier. Benchmarks disagree and go stale, so measure on your own pages with the Compare tab.
+    Catalog compiled {{ updated }} from:
+    {% for label, url in sources %}<a href="{{ url }}" target="_blank" rel="noopener">{{ label }}</a>{{ ', ' if not loop.last }}{% endfor %}.</p>
+</section>
+{% endblock %}
+{% block scripts %}<script src="/static/models.js?v={{ version }}"></script>{% endblock %}

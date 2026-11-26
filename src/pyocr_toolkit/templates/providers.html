@@ -95,6 +95,7 @@ choco install tesseract                                 # Windows (or the UB Man
     <tr><td><code>LLM_DPI</code> / <code>LLM_MAX_EDGE_PX</code></td><td>{{ settings.llm_dpi }} / {{ settings.llm_max_edge_px }}</td><td class="small">image sent to the LLM</td></tr>
     <tr><td><code>OCR_DPI</code></td><td>{{ settings.ocr_dpi }}</td><td class="small">image given to Tesseract</td></tr>
     <tr><td><code>LLM_CONCURRENCY</code></td><td>{{ settings.llm_concurrency }}</td><td class="small">parallel LLM calls</td></tr>
+    <tr><td><code>LLM_BATCH_MAX_OUTPUT_TOKENS</code></td><td>{{ settings.llm_batch_max_output_tokens }}</td><td class="small">output limit with several pages per request</td></tr>
     <tr><td><code>MAX_UPLOAD_MB</code></td><td>{{ settings.max_upload_mb }}</td><td class="small">upload limit</td></tr>
   </table>
   <p class="small">A ready-to-edit template of every setting is in <code>.env.example</code>; run

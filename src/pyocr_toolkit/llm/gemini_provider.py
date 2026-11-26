@@ -10,6 +10,16 @@ from . import catalog
 from .base import Provider, ProviderError, TranscriptionRequest, TranscriptionResult
 
 
+def _image_parts(req: TranscriptionRequest) -> list:
+    """Image parts, each preceded by its label when the request holds several pages."""
+    parts: list = []
+    for page in req.page_images():
+        if page.label:
+            parts.append(page.label)
+        parts.append(types.Part.from_bytes(data=page.image, mime_type=page.mime_type))
+    return parts
+
+
 class GeminiProvider(Provider):
     id = "gemini"
     label = "Google Gemini"
@@ -59,10 +69,7 @@ class GeminiProvider(Provider):
         try:
             response = await self.client.aio.models.generate_content(
                 model=model,
-                contents=[
-                    types.Part.from_bytes(data=req.image, mime_type=req.mime_type),
-                    req.user_prompt,
-                ],
+                contents=[*_image_parts(req), req.user_prompt],
                 config=types.GenerateContentConfig(
                     system_instruction=req.system_prompt,
                     # Gemini 2.5 counts thinking tokens against this limit,

@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # How many LLM calls may run at once when transcribing many pages.
     llm_concurrency: int = 4
     llm_timeout_s: float = 300.0
+    # Output-token limit for a request that carries several pages ("pages per
+    # request" > 1). Single-page requests keep 16000. Lower it if a model's own
+    # output limit is smaller (the API then rejects the request).
+    llm_batch_max_output_tokens: int = 32000
     # Rupees per US dollar, used to show LLM costs in ₹ next to the USD list
     # prices from the model catalog. Not fetched live (no outbound calls besides
     # the chosen provider); ~92.5 on 2026-11-26. Set it to today's rate.

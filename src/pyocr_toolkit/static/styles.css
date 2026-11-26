@@ -787,4 +787,4 @@ h3.h-icon .icon { width: 16px; height: 16px; }
 .engine-card .desc { margin: 4px 0 10px; }
 .kind-badge { text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
 .engine-card .env td.nowrap { white-space: normal; overflow-wrap: anywhere; }
-.ocr-engine-pick { flex: 0 1 300px; }
+.ocr-engine-pick { flex: 1 1 180px; max-width: 300px; }

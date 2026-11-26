@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
 from .documents import DocumentStore
+from .llm import catalog
 from .service import LLMSpec, Services
 
 JobKind = Literal["ocr", "llm"]
@@ -50,6 +51,8 @@ class Job:
     finished_at: float | None = None
     current_pages: list[int] = field(default_factory=list)
     waiting_pages: list[int] = field(default_factory=list)
+    #: catalog list price for LLM jobs: {"in", "out" (USD per 1M tokens), "model", "usd_inr_rate"}; None if unknown
+    price: dict[str, Any] | None = None
 
     @property
     def total(self) -> int:
@@ -74,6 +77,23 @@ class Job:
         eta = per_page * (self.total - self.done) if self.status == "running" else None
         return per_page, eta
 
+    def cost(self) -> dict[str, Any] | None:
+        """Spend so far at list price, plus a projection for the whole job while it runs.
+
+        The projection assumes remaining pages cost what the paid pages so far did on
+        average; pages that turn out to be cached make the real total lower.
+        """
+        if not self.price:
+            return None
+        usd = (self.input_tokens * self.price["in"] + self.output_tokens * self.price["out"]) / 1_000_000
+        rate = self.price["usd_inr_rate"]
+        paid = self.done - self.cached - self.failed
+        projected = usd / paid * (paid + self.total - self.done) if self.status == "running" and paid > 0 else None
+        return {"usd": usd, "inr": usd * rate, "projected_usd": projected,
+                "projected_inr": projected * rate if projected is not None else None,
+                "usd_inr_rate": rate, "price_in": self.price["in"], "price_out": self.price["out"],
+                "price_model": self.price["model"]}
+
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
         data["total"] = self.total
@@ -81,6 +101,7 @@ class Job:
         data["first_page"] = self.pages[0] if self.pages else None
         data["errors"] = self.errors[-20:]
         data["seconds_per_page"], data["eta_seconds"] = self.timing()
+        data["cost"] = self.cost()
         return data
 
 
@@ -102,6 +123,7 @@ class JobManager:
     def start(self, doc_id: str, kind: JobKind, pages: list[int], llm: LLMSpec | None = None,
               force: bool = False) -> Job:
         doc = self.store.get(doc_id)  # validates the id
+        price: dict[str, Any] | None = None
         if kind == "llm":
             if llm is None:
                 raise ValueError("LLM job needs a provider")
@@ -109,10 +131,14 @@ class JobManager:
             if not provider.configured:
                 raise ValueError(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}")
             label = f"LLM · {provider.label} · {model} · {llm.prompt_mode}"
+            found = catalog.price(model, provider.id)
+            if found:
+                price = {"in": found[0], "out": found[1], "model": found[2],
+                         "usd_inr_rate": self.services.settings.usd_inr_rate}
         else:
             label = f"Tesseract OCR ({self.services.settings.tesseract_language})"
         job = Job(id=uuid.uuid4().hex[:12], doc_id=doc.meta.id, kind=kind, pages=pages, label=label,
-                  llm=asdict(llm) if llm else None, force=force)
+                  llm=asdict(llm) if llm else None, force=force, price=price)
         self.jobs[job.id] = job
         self._tasks[job.id] = asyncio.get_running_loop().create_task(self._run(job))
         return job

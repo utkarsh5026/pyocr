@@ -146,7 +146,7 @@ function showLlmResult(key) {
   const tokens = r.input_tokens != null ? ` · ${fmtInt(r.input_tokens)} in / ${fmtInt(r.output_tokens)} out tokens` : "";
   const warns = (r.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
   $("#llm-meta").innerHTML = `${esc(r.provider_label || r.provider)} · <b>${esc(r.model)}</b> · ` +
-    `${(r.latency_ms / 1000).toFixed(1)}s${tokens} · ${r.text.length} chars${warns}`;
+    `${(r.latency_ms / 1000).toFixed(1)}s${tokens}${r.cost ? ` · ${costHtml(r.cost)}` : ""} · ${r.text.length} chars${warns}`;
   setText($("#llm-text"), r.text);
   renderSide();
 }

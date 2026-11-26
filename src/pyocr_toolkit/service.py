@@ -58,6 +58,32 @@ class Services:
         provider, model, system_prompt = self.resolve_spec(spec)
         return doc.llm_cache_key(provider.id, model, system_prompt)
 
+    def cost(self, provider_id: str, model: str | None, input_tokens: int | None,
+             output_tokens: int | None) -> dict[str, Any] | None:
+        """Estimated cost of one call at catalog list prices, in USD and INR.
+
+        None when the model has no catalog price. List prices only: no taxes (e.g.
+        GST), batch or prompt-caching discounts, and a self-hosted model is free.
+        Computed on read, never stored, so a price update applies to old results.
+        """
+        found = catalog.price(model or "", provider_id)
+        if found is None or input_tokens is None:
+            return None
+        p_in, p_out, match = found
+        usd = ((input_tokens or 0) * p_in + (output_tokens or 0) * p_out) / 1_000_000
+        rate = self.settings.usd_inr_rate
+        return {"usd": usd, "inr": usd * rate, "usd_inr_rate": rate, "price_in": p_in, "price_out": p_out,
+                "price_model": match}
+
+    def with_cost(self, result: dict[str, Any]) -> dict[str, Any]:
+        """A stored LLM result plus its ``cost`` (see :meth:`cost`)."""
+        model = result.get("model") or result.get("requested_model")
+        cost = self.cost(result.get("provider", ""), model, result.get("input_tokens"), result.get("output_tokens"))
+        if cost is None and result.get("requested_model") and result.get("requested_model") != model:
+            cost = self.cost(result.get("provider", ""), result["requested_model"],
+                             result.get("input_tokens"), result.get("output_tokens"))
+        return {**result, "cost": cost}
+
     async def run_llm_page(self, doc: OpenDocument, page: int, spec: LLMSpec, force: bool = False,
                            on_start: Callable[[], None] | None = None) -> dict[str, Any]:
         """Transcribe one page (or return its cached result).

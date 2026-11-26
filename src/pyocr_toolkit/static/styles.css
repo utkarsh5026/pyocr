@@ -366,6 +366,7 @@ details.meta dd { margin: 0; word-break: break-word; }
 .jobbar > span { height: 100%; transition: width .3s; }
 .jobbar-ok { background: var(--accent); }
 .jobbar-fail { background: var(--bad); }
+.cost { cursor: help; border-bottom: 1px dotted var(--subtle); }
 .job > .small { color: var(--muted); margin-top: 6px; }
 
 /* ---- metrics / compare ---- */

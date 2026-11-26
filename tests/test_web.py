@@ -233,3 +233,33 @@ def test_llm_job_waits_for_a_slot(tmp_path, sample_pdf):
         assert job.status == "done" and job.done == 2 and not job.waiting_pages and not job.current_pages
 
     asyncio.run(scenario())
+
+
+def test_llm_cost_in_usd_and_inr(tmp_path):
+    services = Services(Settings(data_dir=tmp_path, usd_inr_rate=90.0, _env_file=None), {})
+    # claude-opus-5-5 lists at $4 in / $20 out per 1M tokens; dated snapshots match loosely
+    cost = services.cost("anthropic", "claude-opus-5-5-20261001", 1_000_000, 100_000)
+    assert cost["usd"] == 6.0 and cost["inr"] == 540.0 and cost["price_model"] == "claude-opus-5-5"
+    assert services.cost("fake", "fake-1", 10, 20) is None  # not in the catalog: no made-up price
+    stored = {"provider": "anthropic", "model": "weird-alias", "requested_model": "claude-opus-5-5",
+              "input_tokens": 500_000, "output_tokens": 0}
+    assert services.with_cost(stored)["cost"]["usd"] == 2.0  # falls back to the requested model
+
+
+def test_job_cost_projection():
+    job = Job(id="j", doc_id="d", kind="llm", pages=list(range(10)), label="x", status="running",
+              price={"in": 4, "out": 20, "model": "claude-opus-5-5", "usd_inr_rate": 90.0})
+    job.done, job.cached, job.failed = 5, 1, 0  # 4 paid pages
+    job.input_tokens, job.output_tokens = 200_000, 20_000  # $0.80 + $0.40
+    cost = job.cost()
+    assert round(cost["usd"], 6) == 1.2 and round(cost["inr"], 6) == 108.0
+    assert round(cost["projected_usd"], 6) == 2.7  # $0.30/page * (4 done + 5 left)
+    job.status = "done"
+    assert job.cost()["projected_usd"] is None
+    assert Job(id="o", doc_id="d", kind="ocr", pages=[0], label="x").to_json()["cost"] is None
+
+
+def test_llm_results_carry_cost(client, doc_id):
+    r = client.post(f"/api/documents/{doc_id}/pages/0/llm", json={"provider": "fake"}).json()
+    assert "cost" in r and r["cost"] is None  # the fake model has no catalog price
+    assert client.get(f"/api/documents/{doc_id}/pages/0/llm").json()[0]["cost"] is None

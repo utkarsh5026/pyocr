@@ -152,6 +152,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         """Search the built-in catalog of vision models, rated for page transcription."""
         return {
             "updated": catalog.CATALOG_UPDATED,
+            "usd_inr_rate": settings.usd_inr_rate,  # prices are USD; the page also shows them in ₹
             "ratings": {k: v[0] for k, v in catalog.RATINGS.items()},
             "sources": [{"label": a, "url": b} for a, b in catalog.SOURCES],
             "models": [m.to_json() for m in catalog.search(q, provider, rating, include_deprecated)],

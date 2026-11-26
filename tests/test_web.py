@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -12,7 +13,9 @@ from fastapi.testclient import TestClient
 from pyocr_toolkit import cli
 from pyocr_toolkit.api import create_app
 from pyocr_toolkit.config import Settings
-from pyocr_toolkit.service import parse_pages
+from pyocr_toolkit.documents import DocumentStore
+from pyocr_toolkit.jobs import Job, JobManager
+from pyocr_toolkit.service import LLMSpec, Services, parse_pages
 
 from .conftest import HAS_TESSERACT
 from .test_api import FakeProvider
@@ -196,3 +199,37 @@ def test_cli_extract_native(tmp_path, monkeypatch, sample_pdf, capsys):
 def test_env_template_in_sync():
     root = Path(__file__).resolve().parents[1]
     assert (root / ".env.example").read_text() == (root / "src/pyocr_toolkit/env.example").read_text()
+
+
+def test_job_timing_and_eta():
+    job = Job(id="j", doc_id="d", kind="llm", pages=list(range(10)), label="x", status="running", started_at=100.0)
+    assert job.timing(now=110.0) == (None, None)  # nothing has really run yet
+    job.done, job.cached = 4, 2  # cache hits are instant and don't count toward the rate
+    assert job.timing(now=110.0) == (5.0, 30.0)  # 10s / 2 pages; 6 pages left
+    job.status, job.finished_at, job.done = "done", 120.0, 10
+    assert job.timing(now=999.0) == (2.5, None)  # no ETA once finished; uses finished_at
+    data = job.to_json()
+    assert data["seconds_per_page"] == 2.5 and data["eta_seconds"] is None and data["waiting_pages"] == []
+
+
+def test_llm_job_waits_for_a_slot(tmp_path, sample_pdf):
+    """Pages queued behind LLM_CONCURRENCY are 'waiting', not 'working on'."""
+
+    async def scenario():
+        settings = Settings(data_dir=tmp_path, llm_concurrency=1, _env_file=None)
+        services = Services(settings, {"fake": FakeProvider()})
+        store = DocumentStore(settings.documents_dir)
+        doc_id = store.add("sample.pdf", sample_pdf).id
+        manager = JobManager(store, services)
+        async with services.llm_semaphore:  # something else holds the only slot
+            job = manager.start(doc_id, "llm", [0, 1], llm=LLMSpec(provider="fake"))
+            for _ in range(100):
+                if job.waiting_pages:
+                    break
+                await asyncio.sleep(0.01)
+            assert job.waiting_pages == [0] and job.current_pages == []
+            assert job.to_json()["waiting_pages"] == [0]
+        await manager._tasks[job.id]
+        assert job.status == "done" and job.done == 2 and not job.waiting_pages and not job.current_pages
+
+    asyncio.run(scenario())

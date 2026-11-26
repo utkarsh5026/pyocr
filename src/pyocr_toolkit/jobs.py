@@ -8,6 +8,11 @@ and re-running it only processes the missing pages.
 
 Jobs live in memory: restarting the server forgets the job list (not the
 results).
+
+Progress is reported in pages. ``current_pages`` are pages the engine is working
+on right now; LLM pages that are still waiting for an ``LLM_CONCURRENCY`` slot
+(another job or a workspace run holds it) are in ``waiting_pages`` instead, so
+the UI doesn't claim the model is reading a page it hasn't been sent yet.
 """
 
 from __future__ import annotations
@@ -44,10 +49,30 @@ class Job:
     started_at: float | None = None
     finished_at: float | None = None
     current_pages: list[int] = field(default_factory=list)
+    waiting_pages: list[int] = field(default_factory=list)
 
     @property
     def total(self) -> int:
         return len(self.pages)
+
+    def timing(self, now: float | None = None) -> tuple[float | None, float | None]:
+        """``(seconds_per_page, eta_seconds)`` from the pages processed so far.
+
+        Cache hits are near-instant, so they're left out of the rate: the rate is
+        elapsed time over pages that really ran (failures included, since they
+        cost time too). With N workers this is wall time per page, i.e. it already
+        accounts for concurrency. Both are ``None`` until a page has really run;
+        the ETA is only given while the job is running.
+        """
+        if self.started_at is None:
+            return None, None
+        processed = self.done - self.cached
+        if processed <= 0:
+            return None, None
+        end = self.finished_at or (now if now is not None else time.time())
+        per_page = (end - self.started_at) / processed
+        eta = per_page * (self.total - self.done) if self.status == "running" else None
+        return per_page, eta
 
     def to_json(self) -> dict[str, Any]:
         data = asdict(self)
@@ -55,6 +80,7 @@ class Job:
         data["pages"] = len(self.pages)
         data["first_page"] = self.pages[0] if self.pages else None
         data["errors"] = self.errors[-20:]
+        data["seconds_per_page"], data["eta_seconds"] = self.timing()
         return data
 
 
@@ -110,7 +136,13 @@ class JobManager:
         async def worker() -> None:
             while not queue.empty():
                 page = queue.get_nowait()
-                job.current_pages.append(page)
+                # LLM pages wait for a semaphore slot before the model sees them.
+                (job.waiting_pages if job.kind == "llm" else job.current_pages).append(page)
+
+                def started(page: int = page) -> None:
+                    job.waiting_pages.remove(page)
+                    job.current_pages.append(page)
+
                 try:
                     if job.kind == "ocr":
                         if not job.force and doc.cached_ocr_text(page) is not None:
@@ -118,7 +150,7 @@ class JobManager:
                         else:
                             await asyncio.to_thread(self.services.run_ocr_page, doc, page, job.force)
                     else:
-                        res = await self.services.run_llm_page(doc, page, spec, force=job.force)
+                        res = await self.services.run_llm_page(doc, page, spec, force=job.force, on_start=started)
                         if res.get("cached"):
                             job.cached += 1
                         else:
@@ -130,7 +162,9 @@ class JobManager:
                     job.failed += 1
                     job.errors.append(f"page {page + 1}: {exc}")
                 finally:
-                    job.current_pages.remove(page)
+                    for active in (job.current_pages, job.waiting_pages):
+                        if page in active:
+                            active.remove(page)
                     job.done += 1
 
         concurrency = self.ocr_concurrency if job.kind == "ocr" else self.services.settings.llm_concurrency
@@ -142,3 +176,4 @@ class JobManager:
         finally:
             job.finished_at = time.time()
             job.current_pages.clear()
+            job.waiting_pages.clear()

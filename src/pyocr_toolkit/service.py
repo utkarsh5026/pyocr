@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -57,7 +58,14 @@ class Services:
         provider, model, system_prompt = self.resolve_spec(spec)
         return doc.llm_cache_key(provider.id, model, system_prompt)
 
-    async def run_llm_page(self, doc: OpenDocument, page: int, spec: LLMSpec, force: bool = False) -> dict[str, Any]:
+    async def run_llm_page(self, doc: OpenDocument, page: int, spec: LLMSpec, force: bool = False,
+                           on_start: Callable[[], None] | None = None) -> dict[str, Any]:
+        """Transcribe one page (or return its cached result).
+
+        ``on_start`` is called once this page holds an ``llm_semaphore`` slot, just
+        before the provider call. Jobs use it to tell "waiting for a slot" apart
+        from "the model is reading this page"; it isn't called for cache hits.
+        """
         provider, model, system_prompt = self.resolve_spec(spec)
         key = doc.llm_cache_key(provider.id, model, system_prompt)
         if not force:
@@ -75,6 +83,8 @@ class Services:
             mime = "image/jpeg"
 
         async with self.llm_semaphore:
+            if on_start:
+                on_start()
             result = await provider.transcribe(TranscriptionRequest(
                 image=image, mime_type=mime, system_prompt=system_prompt,
                 user_prompt=USER_PROMPT, model=model,

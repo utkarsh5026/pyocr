@@ -1,6 +1,6 @@
 [project]
 name = "pyocr-toolkit"
-version = "0.2.0"
+version = "0.3.0"
 description = "Inspect and compare PDF/image text extraction - native text, Tesseract OCR and LLMs (Claude, GPT, Gemini, Azure, local) - in your browser."
 readme = "README.md"
 requires-python = ">=3.10"

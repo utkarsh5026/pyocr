@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.3.0 - 2026-11-27
+
+- Now on PyPI: `pip install pyocr-toolkit`. Releases are built, tested and published from GitHub Actions.
+
 - Better progress for extraction jobs: an estimated time left and seconds per page (cache hits don't skew it),
   failed pages shown in red on the progress bar with a "done with errors" badge, and LLM pages still waiting
   for an `LLM_CONCURRENCY` slot listed as "waiting" instead of "working on". `/api/jobs` adds
@@ -36,9 +40,17 @@
 - API: `GET /api/models`, `GET /api/models/lookup`, `GET /api/providers/{id}/models`,
   `GET|POST /api/providers/{id}/credentials`.
 
-- Developer task runner: `make` (or `python makefile.py`) lists grouped, rich-rendered commands for setup,
-  linting/tests, running the app (incl. auto-reload `make dev`), building, Docker and housekeeping. `rich` is
-  now a dev dependency.
+- Dark mode: a theme toggle in the top bar cycles system / light / dark. The choice is remembered, applied
+  before the page paints (no flash), and "system" follows OS changes live. The whole UI was redesigned around one
+  set of colour tokens with softer badges, ghost buttons and slimmer progress bars. The "Overview & extract" tab is
+  now "Overview".
+- Compare is now a diff studio: pick sources A and B (with swap), see CER, WER, pages under 2% and the worst page
+  at a glance, click any bar of the colour-blind-safe per-page CER chart, and read that page's text in two
+  aligned, scroll-synced columns. It opens on the worst page; the full table is still there.
+- Library cards show native / OCR / LLM coverage bars and a status per document (all pages have text / needs
+  text / scanned), with status filter chips and a total of pages still without text.
+- Page inspector: new **Side by side** tab (key 5) showing the native, OCR and LLM text in synced columns.
+- Project website on GitHub Pages, with animated tours of each view; the README shows the same tours.
 - Subtle UI motion: pages and card grids ease in, cards lift on hover, buttons respond to presses, tab panels
   and results fade in, and toasts fade out. While Tesseract or an LLM is working on a page, a scan line sweeps
   the page image, the button shows a spinner (with a flowing gradient for the model), the text box shimmers,
@@ -49,6 +61,10 @@
   theme, and on narrow screens the top nav collapses to icons only.
   A few emojis add colour in decorative spots only (the home page steps and status cards, the upload area,
   empty states and the error page); everything you click keeps the line icons.
+
+- Developer task runner: `make` (or `python makefile.py`) lists grouped, rich-rendered commands for setup,
+  linting/tests, running the app (incl. auto-reload `make dev`), building, Docker and housekeeping. `rich` is
+  now a dev dependency.
 
 ## 0.2.0
 

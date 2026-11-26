@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Developer task runner: `make` (or `python makefile.py`) lists grouped, rich-rendered commands for setup,
+  linting/tests, running the app (incl. auto-reload `make dev`), building, Docker and housekeeping. `rich` is
+  now a dev dependency.
+
 ## 0.2.0
 
 - Multi-page web app with bookmarkable URLs: Home, Library, document Overview & extract, Page inspector,

@@ -25,6 +25,7 @@ classifiers = [
 ]
 dependencies = [
     "pymupdf>=1.24",
+    "pillow>=10.1",
     "fastapi>=0.110",
     "uvicorn[standard]>=0.29",
     "jinja2>=3.1",

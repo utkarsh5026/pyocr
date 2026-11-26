@@ -30,6 +30,7 @@ from typing import Any, Literal
 
 from .documents import DocumentStore
 from .llm import catalog
+from .preprocess import Preprocess
 from .service import LLMSpec, Services
 
 JobKind = Literal["ocr", "llm"]
@@ -136,6 +137,9 @@ class JobManager:
             if not provider.configured:
                 raise ValueError(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}")
             label = f"LLM · {provider.label} · {model} · {llm.prompt_mode}"
+            pre = Preprocess.parse(llm.preprocess)
+            if not pre.is_identity:
+                label += f" · image: {pre.describe()}"
             if llm.pages_per_request > 1:
                 label += f" · {llm.pages_per_request} pages/request"
             found = catalog.price(model, provider.id)

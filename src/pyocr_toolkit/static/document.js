@@ -172,8 +172,10 @@ function updateForm() {
   reqNote.title = n > 1 ? "Pages already transcribed with this setup are skipped first, so there may be fewer." : "";
 
   const what = sel.error ? "the selected pages" : sel.all ? `all ${plural(PAGE_COUNT, "page")}` : plural(count, "page");
+  const pre = $("#extract-form input[name=preprocess]").value.trim();
   $("#extract-hint").textContent = kind() === "llm" && picker
-    ? `Sends ${what} as images to ${picker.describe()}${n > 1 ? `, ${n} pages per request` : ""}`
+    ? `Sends ${what} as images${pre ? " (preprocessed)" : ""} to ${picker.describe()}` +
+      (n > 1 ? `, ${n} pages per request` : "")
     : `Runs locally on ${what}; about 1–5 s per page`;
 }
 
@@ -219,11 +221,15 @@ $("#extract-form").addEventListener("submit", guard(async (e) => {
   const body = { kind: kind(), pages: form.pages.value.trim() || null, force: form.force.checked };
   if (body.kind === "llm") {
     body.llm = { ...picker.spec(), pages_per_request: perRequest() };
+    body.llm.preprocess = form.preprocess.value.trim() || null;
+    preprocessStore.set(DOC_ID, body.llm.preprocess);
     localStorage.setItem("pyocr.perRequest", String(body.llm.pages_per_request));
     const n = sel.all ? `all ${plural(PAGE_COUNT, "page")}` : `${plural(sel.pages.length, "page")} (${body.pages})`;
     const batch = body.llm.pages_per_request > 1 ? `, ${body.llm.pages_per_request} pages per request` : "";
-    if (!confirm(`Send ${n} to ${picker.describe()}${batch}?\n\nPages already transcribed with this model, prompt ` +
-      "and pages per request are " + (body.force ? "RE-SENT (re-run is on)." : "skipped."))) return;
+    const img = body.llm.preprocess ? `\nImage preprocessing: ${body.llm.preprocess}\n` : "";
+    if (!confirm(`Send ${n} to ${picker.describe()}${batch}?\n${img}\nPages already transcribed with this model, ` +
+      "prompt, image settings and pages per request are " +
+      (body.force ? "RE-SENT (re-run is on)." : "skipped."))) return;
   }
   const job = await postJSON(`/api/documents/${DOC_ID}/jobs`, body);
   await refreshJobs();
@@ -241,12 +247,14 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
 (async function main() {
   try {
     picker = await initLlmPicker($("#llm-options [data-llm-picker]"));
-    const cfg0 = await getConfig();
-    perRequestIn.max = cfg0.max_pages_per_request || 20;
+    const cfg = await getConfig();
+    perRequestIn.max = cfg.max_pages_per_request || 20;
     setPerRequest(localStorage.getItem("pyocr.perRequest") || 1);
     $("#llm-options").addEventListener("change", updateForm);
+    $("#pre-presets").innerHTML = cfg.preprocess_presets.filter((p) => p.spec)
+      .map((p) => `<option value="${esc(p.spec)}">${esc(p.label)}: ${esc(p.hint)}</option>`).join("");
+    $("#extract-form input[name=preprocess]").value = preprocessStore.get(DOC_ID);
     updateForm();
-    const cfg = await getConfig();
     if (!cfg.tesseract_available) {
       const ocr = $("#extract-form input[value=ocr]");
       ocr.disabled = true;

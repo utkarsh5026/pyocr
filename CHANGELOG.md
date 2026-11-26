@@ -15,6 +15,19 @@
   presets for all pages, the first 5, scans only, and pages with no text from the chosen engine yet. The map marks
   scans and pages that already have text. "Pages per request" has presets (1, 2, 3, 4, 5, 10), a box for any other
   value, and shows how many requests the job will make.
+- **Adjust image** (page inspector, shortcut `e`): preprocess the page image before it is sent to an LLM, then
+  check whether that helped. It has a strip of filters, each a thumbnail of the current page (Clean scan, High contrast,
+  Black & white with Otsu thresholding, Fix faded, Denoise, Bring out detail, Invert), and fine-tuning for
+  brightness, contrast, sharpness, denoise, threshold, resolution, rotation and crop. The viewer shows exactly the
+  image the model receives, with its pixel and file size; *Hold to compare* shows the original.
+  *A/B: original vs adjusted* transcribes both versions with the same model and diffs them, next to their token
+  counts and timings. The settings are remembered per document and also apply to batch extraction from the Overview page.
+- Preprocessing settings are part of the LLM cache key, so each setting is its own source to read, export and
+  compare. Runs without preprocessing keep their existing keys, so cached results are unaffected.
+- API: `preprocess` on `POST /api/documents/{id}/pages/{n}/llm` and in job bodies, `?preprocess=` on the page image
+  endpoint, `GET /api/documents/{id}/pages/{n}/llm-image` (the exact image a model receives), `GET /api/preprocess`
+  (validate / normalise a spec), and `preprocess_presets` in `/api/config`. CLI: `pyocr extract|compare --preprocess`.
+- New dependency: Pillow (image processing).
 
 ## 0.3.0 - 2026-11-27
 

@@ -149,6 +149,33 @@ def test_batched_run_splits_caches_and_is_its_own_source(tmp_path, sample_pdf):
     assert services.page_text(doc, 0, sources[0]["id"]) == "text of page 1"
 
 
+def test_batched_run_uses_preprocessed_images(tmp_path, sample_pdf):
+    """Batching and Adjust image combine: same images as a one-page run, own key, both in the label."""
+    from pyocr_toolkit.preprocess import Preprocess
+
+    fake = BatchFake()
+    services, doc = _setup(tmp_path, sample_pdf, fake)
+    spec = LLMSpec(provider="fake", preprocess="gray;contrast=1.5", pages_per_request=2)
+    out = asyncio.run(services.run_llm_batch(doc, [0, 1], spec))
+
+    pre = Preprocess.parse(spec.preprocess)
+    sent = fake.calls[0].pages
+    for n, page in enumerate(sent):
+        assert (page.image, page.mime_type) == services.llm_image(doc, n, pre)
+    assert sent[0].image != services.llm_image(doc, 0)[0]  # really preprocessed
+
+    plain_batched = services.llm_key(doc, LLMSpec(provider="fake", pages_per_request=2))
+    plain_single = services.llm_key(doc, LLMSpec(provider="fake", preprocess=spec.preprocess))
+    assert out[0]["key"] == services.llm_key(doc, spec) and out[0]["key"] not in (plain_batched, plain_single)
+    assert out[0]["preprocess"] == str(pre) and out[0]["preprocess_label"]
+    # the job planner and the batch call agree on the key, so a re-run is all cache hits
+    cached, chunks = services.plan_llm_chunks(doc, [0, 1], spec)
+    assert cached == [0, 1] and chunks == []
+
+    label = next(s for s in services.list_sources(doc) if s["kind"] == "llm")["label"]
+    assert "· image: " in label and label.endswith("· 2 pages/request")
+
+
 def test_page_missing_from_reply_is_resent_alone(tmp_path, sample_pdf):
     fake = BatchFake(drop=("Page 2",))
     services, doc = _setup(tmp_path, sample_pdf, fake)

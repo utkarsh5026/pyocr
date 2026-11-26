@@ -184,10 +184,11 @@ async def _extract(args: argparse.Namespace) -> int:
             texts[n] = (await asyncio.to_thread(services.run_ocr_page, doc, n)).text
             print(f"  OCR page {n + 1}/{doc.meta.page_count}", file=sys.stderr)
     else:
-        spec = LLMSpec(args.provider, args.model, args.mode, pages_per_request=args.pages_per_request)
+        spec = LLMSpec(args.provider, args.model, args.mode, preprocess=args.preprocess or "",
+                       pages_per_request=args.pages_per_request)
         try:
             provider, model, _ = services.resolve_spec(spec)
-        except ValueError as exc:
+        except ValueError as exc:  # bad --pages-per-request or --preprocess
             print(str(exc), file=sys.stderr)
             return 2
         if not provider.configured:
@@ -225,7 +226,7 @@ async def _compare(args: argparse.Namespace) -> int:
 
     settings, services = _services()
     doc = _load_document(args.file)
-    spec = LLMSpec(args.provider, args.model, "verbatim")
+    spec = LLMSpec(args.provider, args.model, "verbatim", preprocess=args.preprocess or "")
     provider, _, _ = services.resolve_spec(spec)
     if not provider.configured:
         print(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}", file=sys.stderr)
@@ -249,6 +250,12 @@ async def _compare(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------- parser
+PREPROCESS_HELP = (
+    "image preprocessing before the LLM sees the page: a preset (clean, contrast, bw, faded, denoise, detail, "
+    "invert) or steps like 'gray;auto;contrast=1.5;threshold=otsu' (tune them visually with Adjust image in "
+    "`pyocr serve`, then copy the spec)"
+)
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pyocr", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -279,6 +286,7 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--pages-per-request", type=int, default=1, metavar="N",
                    help="send N pages to the LLM in one request (default 1); a separate source from N=1")
     e.add_argument("--pages", default=None, help="1-based ranges, e.g. 1-3,7 (default: all)")
+    e.add_argument("--preprocess", default=None, metavar="SPEC", help=PREPROCESS_HELP)
     e.add_argument("--format", choices=["txt", "md", "json", "jsonl"], default="txt")
     e.add_argument("-o", "--output", type=Path, default=None, help="file to write (default: stdout)")
     e.set_defaults(func=lambda a: asyncio.run(_extract(a)))
@@ -294,6 +302,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("-p", "--provider", default="anthropic")
     c.add_argument("-m", "--model", default=None)
     c.add_argument("--pages", default=None)
+    c.add_argument("--preprocess", default=None, metavar="SPEC", help=PREPROCESS_HELP)
     c.set_defaults(func=lambda a: asyncio.run(_compare(a)))
     return parser
 

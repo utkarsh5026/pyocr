@@ -10,6 +10,11 @@ source":
                      is derived from those three, so it is identical across pages
 * ``llm``          - shorthand for "the most recent LLM result on each page"
 
+An LLM configuration may include image preprocessing (grayscale, contrast,
+binarize, ...; see :mod:`pyocr_toolkit.preprocess`). It is part of the cache
+key, so "same model on the original page" and "same model on the cleaned-up
+page" are two sources you can compare against each other.
+
 LLM pages can also be sent several to a request (``LLMSpec.pages_per_request``),
 the way many production pipelines batch them. The reply is split back into pages
 by marker lines, and every page is still cached on its own, so a batched run is
@@ -45,6 +50,7 @@ from .llm import (
     resolve_prompt,
     split_batch,
 )
+from .preprocess import MAX_PNG_BYTES, Preprocess, process_bytes
 
 #: stop reasons that mean "the output limit cut the reply short" (Claude, OpenAI, Gemini)
 _TRUNCATED = {"max_tokens", "length", "MAX_TOKENS"}
@@ -56,6 +62,8 @@ class LLMSpec:
     model: str | None = None
     prompt_mode: str = "verbatim"
     custom_prompt: str | None = None
+    #: image preprocessing spec, e.g. ``"gray;contrast=1.5"`` or a preset id; empty = the page as rendered
+    preprocess: str = ""
     #: pages sent together in one request; 1 = one page per request (the default)
     pages_per_request: int = 1
 
@@ -71,7 +79,7 @@ class Services:
 
     # ----------------------------------------------------------------- LLM
     def resolve_spec(self, spec: LLMSpec) -> tuple[Provider, str, str]:
-        """Return (provider, model, system_prompt) or raise ValueError."""
+        """Return (provider, model, system_prompt) or raise ValueError (also for a bad preprocess spec)."""
         provider = self.providers.get(spec.provider)
         if provider is None:
             raise ValueError(f"unknown provider '{spec.provider}'")
@@ -82,11 +90,30 @@ class Services:
             # part of the prompt, so part of the cache key: a batched run is its own source
             system_prompt += batch_rules(spec.pages_per_request)
         model = (spec.model or provider.default_model or "").strip()
+        Preprocess.parse(spec.preprocess)
         return provider, model, system_prompt
 
     def llm_key(self, doc: OpenDocument, spec: LLMSpec) -> str:
         provider, model, system_prompt = self.resolve_spec(spec)
-        return doc.llm_cache_key(provider.id, model, system_prompt)
+        return doc.llm_cache_key(provider.id, model, system_prompt, str(Preprocess.parse(spec.preprocess)))
+
+    def llm_image(self, doc: OpenDocument, page: int, pre: Preprocess | None = None) -> tuple[bytes, str]:
+        """The exact image (bytes, mime type) an LLM receives for this page.
+
+        Used both to run the model and to preview "what the model sees", so the
+        two can never drift apart. Blocking: call it from a thread in async code.
+        """
+        s, pre = self.settings, pre or Preprocess()
+        dpi = pre.dpi or s.llm_dpi
+        if pre.changes_pixels:
+            raw = doc.render(page, dpi, "ppm", s.llm_max_edge_px)
+            return process_bytes(raw, pre)
+        # PNG keeps text edges crisp; fall back to JPEG for huge colour pages
+        # (photos / colour scans) to stay inside provider upload limits.
+        image = doc.render(page, dpi, "png", s.llm_max_edge_px)
+        if len(image) > MAX_PNG_BYTES:
+            return doc.render(page, dpi, "jpeg", s.llm_max_edge_px), "image/jpeg"
+        return image, "image/png"
 
     def cost(self, provider_id: str, model: str | None, input_tokens: int | None,
              output_tokens: int | None) -> dict[str, Any] | None:
@@ -131,13 +158,14 @@ class Services:
                 raise outcome
             return outcome
         provider, model, system_prompt = self.resolve_spec(spec)
-        key = doc.llm_cache_key(provider.id, model, system_prompt)
+        pre = Preprocess.parse(spec.preprocess)
+        key = doc.llm_cache_key(provider.id, model, system_prompt, str(pre))
         if not force:
             cached = doc.load_llm_result(page, key)
             if cached:
                 return {**cached, "key": key, "cached": True}
 
-        image, mime = await self._render_for_llm(doc, page)
+        image, mime = await asyncio.to_thread(self.llm_image, doc, page, pre)
 
         async with self.llm_semaphore:
             if on_start:
@@ -161,19 +189,13 @@ class Services:
             "warnings": result.warnings,
             "image_bytes": len(image),
             "image_mime": mime,
+            # canonical spec + readable label; absent/empty = the page as rendered
+            "preprocess": str(pre) or None,
+            "preprocess_label": pre.describe() if not pre.is_identity else None,
             "created_at": time.time(),
         }
         doc.save_llm_result(page, key, record)
         return {**record, "key": key, "cached": False}
-
-    async def _render_for_llm(self, doc: OpenDocument, page: int) -> tuple[bytes, str]:
-        s = self.settings
-        # PNG keeps text edges crisp; fall back to JPEG for huge colour pages
-        # (photos / colour scans) to stay inside provider upload limits.
-        image = await asyncio.to_thread(doc.render, page, s.llm_dpi, "png", s.llm_max_edge_px)
-        if len(image) <= 3_500_000:
-            return image, "image/png"
-        return await asyncio.to_thread(doc.render, page, s.llm_dpi, "jpeg", s.llm_max_edge_px), "image/jpeg"
 
     # ------------------------------------------------------- batched LLM
     def plan_llm_chunks(self, doc: OpenDocument, pages: list[int], spec: LLMSpec,
@@ -230,7 +252,8 @@ class Services:
         totals still add up to what was paid; ``batch`` holds the request's totals.
         """
         provider, model, system_prompt = self.resolve_spec(spec)
-        key = doc.llm_cache_key(provider.id, model, system_prompt)
+        pre = Preprocess.parse(spec.preprocess)
+        key = doc.llm_cache_key(provider.id, model, system_prompt, str(pre))
         out: dict[int, dict[str, Any] | Exception] = {}
         todo: list[int] = []
         for p in pages:
@@ -241,7 +264,8 @@ class Services:
                 todo.append(p)
         if not todo:
             return out
-        images = {p: await self._render_for_llm(doc, p) for p in todo}
+        # the same images a one-page run would send (preprocessing included)
+        images = {p: await asyncio.to_thread(self.llm_image, doc, p, pre) for p in todo}
         result = await self._send_pages(provider, model, system_prompt, todo, images, on_start)
 
         texts, problems = split_batch(result.text, [p + 1 for p in todo])
@@ -280,6 +304,8 @@ class Services:
                 "warnings": warnings,
                 "image_bytes": len(images[page][0]),
                 "image_mime": images[page][1],
+                "preprocess": str(pre) or None,
+                "preprocess_label": pre.describe() if not pre.is_identity else None,
                 "created_at": time.time(),
                 "pages_per_request": spec.pages_per_request,
                 "batch": {**batch, "retried_alone": extra is not None},
@@ -400,10 +426,12 @@ class Services:
                 entry = llm.setdefault(r["key"], {
                     "id": f"llm:{r['key']}", "kind": "llm", "key": r["key"],
                     "provider": r["provider"], "model": r["model"], "prompt_mode": r.get("prompt_mode"),
+                    "preprocess": r.get("preprocess"),
+                    "pages_per_request": r.get("pages_per_request", 1),
                     "label": f"{r.get('provider_label') or r['provider']} · {r['model']} · {r.get('prompt_mode')}"
+                             + (f" · image: {r['preprocess_label']}" if r.get("preprocess_label") else "")
                              + (f" · {r['pages_per_request']} pages/request" if r.get("pages_per_request", 1) > 1
                                 else ""),
-                    "pages_per_request": r.get("pages_per_request", 1),
                     "pages": [], "input_tokens": 0, "output_tokens": 0, "latency_ms": 0.0,
                     "updated_at": 0.0,
                 })

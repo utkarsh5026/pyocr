@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/logo.svg" width="72" height="72" alt="pyocr-toolkit logo">
+<img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/logo.svg" width="72" height="72" alt="pyocr-toolkit logo">
 
 # pyocr-toolkit
 
@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/utkarsh5026/pyocr/actions/workflows/ci.yml/badge.svg)](https://github.com/utkarsh5026/pyocr/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-3776ab?logo=python&logoColor=white)
-[![License](https://img.shields.io/badge/license-Apache%202.0-4f46e5)](LICENSE)
+[![License](https://img.shields.io/badge/license-Apache%202.0-4f46e5)](https://github.com/utkarsh5026/pyocr/blob/main/LICENSE)
 ![Runs locally](https://img.shields.io/badge/runs-locally-15803d)
 
 [**Website**](https://utkarsh5026.github.io/pyocr/) ·
@@ -20,7 +20,7 @@
 
 <br>
 
-<img src="docs/tours/compare-light.webp" alt="Compare view, animated: Tesseract OCR scored against an LLM transcription of a scanned document, with the error rate per page and a word-level diff" width="100%">
+<img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/tours/compare-light.webp" alt="Compare view, animated: Tesseract OCR scored against an LLM transcription of a scanned document, with the error rate per page and a word-level diff" width="100%">
 
 <sub>▶ The <a href="https://utkarsh5026.github.io/pyocr/">website</a> opens with a 24-second video of what it does.</sub>
 
@@ -52,22 +52,22 @@ Gemini, and any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter) f
 
 ## Tours
 
-Short recordings of the app on demo data (made by [`.claude/skills/demo/tour_shots.py`](.claude/skills/demo/tour_shots.py);
+Short recordings of the app on demo data (made by [`.claude/skills/demo/tour_shots.py`](https://github.com/utkarsh5026/pyocr/blob/main/.claude/skills/demo/tour_shots.py);
 each is also in dark mode, as `docs/tours/*-dark.webp`).
 
 <table>
   <tr>
     <td width="50%"><b>Page inspector</b>: a scanned page has no embedded text, so it's flagged <code>scan</code>; then its OCR
-      and LLM text, all three side by side, and a diff.<br><br><img src="docs/tours/inspector-light.webp" alt="Page inspector tour"></td>
+      and LLM text, all three side by side, and a diff.<br><br><img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/tours/inspector-light.webp" alt="Page inspector tour"></td>
     <td width="50%"><b>Compare</b>: Tesseract scored against an LLM across the document, a bar per page, and each page's
-      diff.<br><br><img src="docs/tours/compare-light.webp" alt="Compare tour"></td>
+      diff.<br><br><img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/tours/compare-light.webp" alt="Compare tour"></td>
   </tr>
   <tr>
-    <td><b>Search</b>: every document and every source at once; a hit opens on its page, highlighted on the image.<br><br><img src="docs/tours/search-light.webp" alt="Search tour"></td>
-    <td><b>Upload and extract</b>: drop a scan, run Tesseract on every page as a background job, read the result.<br><br><img src="docs/tours/upload-light.webp" alt="Upload and extract tour"></td>
+    <td><b>Search</b>: every document and every source at once; a hit opens on its page, highlighted on the image.<br><br><img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/tours/search-light.webp" alt="Search tour"></td>
+    <td><b>Upload and extract</b>: drop a scan, run Tesseract on every page as a background job, read the result.<br><br><img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/tours/upload-light.webp" alt="Upload and extract tour"></td>
   </tr>
   <tr>
-    <td colspan="2"><b>Library</b>: how much of each document has native, OCR and LLM text.<br><br><img src="docs/tours/library-light.webp" alt="Library tour" width="50%"></td>
+    <td colspan="2"><b>Library</b>: how much of each document has native, OCR and LLM text.<br><br><img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/tours/library-light.webp" alt="Library tour" width="50%"></td>
   </tr>
 </table>
 
@@ -192,7 +192,7 @@ you ask otherwise.
 2. **OCR.** The page is rendered to pixels (300 DPI) and Tesseract recognises characters from their shapes,
    reporting a box for each word. That is why search can highlight OCR hits on the page.
 3. **LLM.** The page image goes to a vision model with a strict "transcribe, don't correct" prompt
-   ([`prompts.py`](src/pyocr_toolkit/llm/prompts.py)). It reads in context, so it is strong on hard pages, but it can
+   ([`prompts.py`](https://github.com/utkarsh5026/pyocr/blob/main/src/pyocr_toolkit/llm/prompts.py)). It reads in context, so it is strong on hard pages, but it can
    "fix" typos, which the diff view exposes.
 4. **Comparison.** *Edit distance* is the minimum number of character insertions, deletions and substitutions
    between two texts. **CER** = edits / reference characters; **WER** is the same count over words. For example,
@@ -225,10 +225,10 @@ pyocr serve
 Or use the task runner: `make` lists every developer command grouped by category (`make install`, `make check`,
 `make dev` for auto-reload, `make docker-up`, ...). Without `make` (e.g. on Windows), run `python makefile.py <task>`.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the code layout and how to add a provider.
+See [CONTRIBUTING.md](https://github.com/utkarsh5026/pyocr/blob/main/CONTRIBUTING.md) for the code layout and how to add a provider.
 
-The project website lives in [`docs/`](docs/) (plain HTML and CSS, no build step) and is deployed to GitHub Pages by
-[`.github/workflows/pages.yml`](.github/workflows/pages.yml) on every push to `main` that touches it. Its media are
+The project website lives in [`docs/`](https://github.com/utkarsh5026/pyocr/tree/main/docs) (plain HTML and CSS, no build step) and is deployed to GitHub Pages by
+[`.github/workflows/pages.yml`](https://github.com/utkarsh5026/pyocr/blob/main/.github/workflows/pages.yml) on every push to `main` that touches it. Its media are
 made from code, on demo data that needs no API key:
 
 ```bash
@@ -238,4 +238,4 @@ cd hero-video && npm install && npm run render  # docs/media/hero-demo.mp4: the 
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Apache-2.0. See [LICENSE](https://github.com/utkarsh5026/pyocr/blob/main/LICENSE).

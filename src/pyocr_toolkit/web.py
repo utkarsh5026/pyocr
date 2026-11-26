@@ -21,6 +21,7 @@ from .config import Settings
 from .documents import DocumentStore
 from .jobs import JobManager
 from .service import Services
+from .workspaces import WorkspaceStore
 
 TEMPLATES = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 
@@ -50,7 +51,8 @@ def render_error(request: Request, status: int, message: str) -> HTMLResponse:
                                       status_code=status)
 
 
-def build_web(settings: Settings, store: DocumentStore, services: Services, jobs: JobManager) -> APIRouter:
+def build_web(settings: Settings, store: DocumentStore, services: Services, jobs: JobManager,
+              workspaces: WorkspaceStore) -> APIRouter:
     web = APIRouter(include_in_schema=False)
 
     def page(request: Request, template: str, nav: str, **ctx) -> HTMLResponse:
@@ -60,7 +62,7 @@ def build_web(settings: Settings, store: DocumentStore, services: Services, jobs
     # so remember them per document instead of re-reading every page.
     native_cache: dict[str, frozenset[int]] = {}
 
-    def summary(doc_id: str) -> dict:
+    def summary(doc_id: str, memberships: dict | None = None) -> dict:
         doc = store.get(doc_id)
         n = doc.meta.page_count
         if doc_id not in native_cache:
@@ -70,20 +72,47 @@ def build_web(settings: Settings, store: DocumentStore, services: Services, jobs
         llm = {p for p in range(n) if doc.list_llm_results(p)}
         missing = n - len(native | ocr | llm)  # pages with no text from any source
         status = "complete" if missing == 0 else "scanned" if not native else "partial"
+        if memberships is None:
+            memberships = workspaces.memberships()
+        in_ws = [{"id": w.id, "name": w.name} for w in memberships.get(doc_id, [])]
         return {**doc.meta.__dict__, "native_pages": len(native), "ocr_pages": len(ocr),
-                "llm_pages": len(llm), "missing_pages": missing, "status": status}
+                "llm_pages": len(llm), "missing_pages": missing, "status": status, "workspaces": in_ws}
+
+    def ws_summary(ws, memberships: dict) -> dict:
+        docs = [summary(d, memberships) for d in ws.doc_ids]
+        return {"id": ws.id, "name": ws.name, "created_at": ws.created_at, "updated_at": ws.updated_at,
+                "docs": docs, "page_count": sum(d["page_count"] for d in docs),
+                "missing_pages": sum(d["missing_pages"] for d in docs),
+                "size_bytes": sum(d["size_bytes"] for d in docs)}
 
     @web.get("/", response_class=HTMLResponse)
     def home(request: Request):
         recent = [summary(m.id) for m in store.list()[:6]]
+        memberships = workspaces.memberships()
+        recent_ws = [ws_summary(w, memberships) for w in workspaces.list()[:4]]
         configured = [p for p in services.providers.values() if p.configured]
         return page(request, "home.html", "home", recent=recent, configured=configured,
                     providers=list(services.providers.values()),
-                    tesseract=shutil.which("tesseract") is not None, total_docs=len(store.list()))
+                    tesseract=shutil.which("tesseract") is not None, total_docs=len(store.list()),
+                    recent_ws=recent_ws)
 
     @web.get("/documents", response_class=HTMLResponse)
     def library(request: Request):
-        return page(request, "library.html", "library", docs=[summary(m.id) for m in store.list()])
+        memberships = workspaces.memberships()
+        return page(request, "library.html", "library", docs=[summary(m.id, memberships) for m in store.list()],
+                    spaces=workspaces.list())
+
+    @web.get("/workspaces", response_class=HTMLResponse)
+    def workspaces_view(request: Request):
+        memberships = workspaces.memberships()
+        return page(request, "workspaces.html", "workspaces",
+                    spaces=[ws_summary(w, memberships) for w in workspaces.list()])
+
+    @web.get("/workspaces/{ws_id}", response_class=HTMLResponse)
+    def workspace_detail(request: Request, ws_id: str):
+        memberships = workspaces.memberships()
+        return page(request, "workspace_detail.html", "workspaces",
+                    ws=ws_summary(workspaces.get(ws_id), memberships))
 
     @web.get("/documents/{doc_id}", response_class=HTMLResponse)
     def overview(request: Request, doc_id: str):

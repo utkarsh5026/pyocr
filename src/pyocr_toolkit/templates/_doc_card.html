@@ -1,0 +1,30 @@
+{# One document card (Library and workspace pages). Expects `d` (web.summary) and optional `ws`. #}
+{% from "_icons.html" import icon %}
+<article class="card lib-card" data-name="{{ d.filename|lower }}" data-status="{{ d.status }}" data-ws="{{ d.workspaces|map(attribute='id')|join(' ') }}">
+  <a class="lib-thumb" href="/documents/{{ d.id }}" tabindex="-1" aria-hidden="true">
+    <img loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=40" alt="">
+    <span class="badge {{ status_cls[d.status] }}">{% if d.status == 'complete' %}All pages have text{% else %}{{ 'Scanned · ' if d.status == 'scanned' }}{{ d.missing_pages }} page{{ 's' if d.missing_pages != 1 }} need{{ 's' if d.missing_pages == 1 }} text{% endif %}</span>
+  </a>
+  <div class="lib-body">
+    <a class="file-name" href="/documents/{{ d.id }}" title="{{ d.filename }}">{{ d.filename }}</a>
+    {% if d.workspaces and not ws %}<div class="ws-tags">{% for w in d.workspaces %}<a class="badge info" href="/workspaces/{{ w.id }}" title="Workspace">{{ icon('folder') }}{{ w.name }}</a>{% endfor %}</div>{% endif %}
+    <div class="small muted">{{ d.page_count }} page{{ 's' if d.page_count != 1 }} · {{ d.filetype|upper }} · {{ d.size_bytes|filesize }} · {{ d.created_at|datetime }}</div>
+    <div class="coverage" title="Pages with text from each source">
+      {% for key, label in [('native', 'Native'), ('ocr', 'OCR'), ('llm', 'LLM')] %}
+      {% set n = d[key ~ '_pages'] %}
+      <div class="cov {{ key }}">
+        <span class="cov-k">{{ label }}</span><span class="cov-v">{{ n }}/{{ d.page_count }}</span>
+        <span class="cov-bar"><i style="width: {{ (100 * n / d.page_count)|round(1) if d.page_count else 0 }}%"></i></span>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="lib-actions">
+      <a class="btn small ghost" href="/documents/{{ d.id }}/pages/1">Inspect</a>
+      <a class="btn small ghost" href="/documents/{{ d.id }}/text">Text</a>
+      <a class="btn small ghost" href="/documents/{{ d.id }}/compare">Compare</a>
+      <div class="spacer"></div>
+      {% if ws %}<button class="btn small ghost icon-only" data-ws-remove="{{ d.id }}" data-name="{{ d.filename }}" title="Remove from this workspace (keeps the document)" aria-label="Remove {{ d.filename }} from this workspace">{{ icon('x') }}</button>{% endif %}
+      <button class="btn small ghost danger icon-only" data-delete="{{ d.id }}" data-name="{{ d.filename }}" title="Delete" aria-label="Delete {{ d.filename }}">{{ icon('trash') }}</button>
+    </div>
+  </div>
+</article>

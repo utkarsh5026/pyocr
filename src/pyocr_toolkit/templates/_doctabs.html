@@ -1,7 +1,7 @@
 {% from "_icons.html" import icon %}
 <div class="doc-header">
   <div class="doc-title">
-    <a href="/documents" class="crumb">Library</a><span class="sep">/</span>
+    {% if doc.workspaces %}<a href="/workspaces/{{ doc.workspaces[0].id }}" class="crumb" title="Workspace">{{ doc.workspaces[0].name }}</a>{% else %}<a href="/documents" class="crumb">Library</a>{% endif %}<span class="sep">/</span>
     <b title="{{ doc.filename }}">{{ doc.filename }}</b>
     <span class="muted">{{ doc.page_count }} page{{ 's' if doc.page_count != 1 }} · {{ doc.filetype|upper }} · {{ doc.size_bytes|filesize }}</span>
   </div>

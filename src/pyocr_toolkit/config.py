@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     def documents_dir(self) -> Path:
         return self.data_dir / "documents"
 
+    @property
+    def workspaces_dir(self) -> Path:
+        return self.data_dir / "workspaces"
+
 
 @lru_cache
 def get_settings() -> Settings:

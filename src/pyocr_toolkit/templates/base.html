@@ -24,6 +24,7 @@
   <nav class="mainnav">
     <a href="/" class="{{ 'active' if nav == 'home' }}">Home</a>
     <a href="/documents" class="{{ 'active' if nav == 'library' }}">Library</a>
+    <a href="/workspaces" class="{{ 'active' if nav == 'workspaces' }}">Workspaces</a>
     <a href="/search" class="{{ 'active' if nav == 'search' }}">Search</a>
     <a href="/jobs" class="{{ 'active' if nav == 'jobs' }}">Jobs</a>
     <a href="/providers" class="{{ 'active' if nav == 'providers' }}">Providers</a>
@@ -42,7 +43,7 @@
   <label class="btn primary" title="PDF, XPS, EPUB, PNG, JPEG, TIFF, ... (anything PyMuPDF opens)">
     {{ icon('upload') }}<span class="upload-label">Upload</span>
     <input class="upload-input" type="file" hidden multiple
-           accept=".pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
+           accept=".zip,.pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
   </label>
 </header>
 
@@ -58,7 +59,36 @@
 </footer>
 {% endblock %}
 
-<div id="drop-overlay" hidden><div>Drop PDFs or images to upload</div></div>
+<div id="drop-overlay" hidden><div>Drop PDFs, images or a .zip to upload</div></div>
+{# Shown by common.js when several files or a zip are uploaded: pick a workspace name first. #}
+<dialog id="upload-dialog" class="dialog" aria-labelledby="upload-dialog-title">
+  <form method="dialog" id="upload-form">
+    <h2 id="upload-dialog-title">{{ icon('folder') }}Put these files in a workspace</h2>
+    <p class="small muted" id="upload-summary"></p>
+    <div class="seg" role="radiogroup" aria-label="Workspace">
+      <label><input type="radio" name="ws-mode" value="new" checked> New workspace</label>
+      <label><input type="radio" name="ws-mode" value="existing"> Existing</label>
+      <label><input type="radio" name="ws-mode" value="none"> No workspace</label>
+    </div>
+    <div data-ws-mode="new">
+      <label class="field"><span>Name</span>
+        <input id="upload-ws-name" maxlength="80" autocomplete="off" placeholder="e.g. festive-albattani"></label>
+      <div class="ws-suggest-row">
+        <div class="chips ws-suggest" id="upload-ws-suggest" aria-label="Suggested names"></div>
+        <button type="button" class="btn small ghost icon-only" id="upload-ws-shuffle" title="More suggestions" aria-label="More name suggestions">{{ icon('shuffle') }}</button>
+      </div>
+    </div>
+    <div data-ws-mode="existing" hidden>
+      <label class="field"><span>Workspace</span><select id="upload-ws-existing"></select></label>
+    </div>
+    <p data-ws-mode="none" class="small muted" hidden>The files go into the Library on their own. You can still group them later.</p>
+    <ul class="upload-files small" id="upload-files"></ul>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" value="cancel" id="upload-cancel">Cancel</button>
+      <button class="btn primary" value="ok" id="upload-ok">{{ icon('upload') }}Upload</button>
+    </div>
+  </form>
+</dialog>
 <div id="toast" hidden role="status"></div>
 <script src="/static/common.js?v={{ version }}"></script>
 {% block scripts %}{% endblock %}

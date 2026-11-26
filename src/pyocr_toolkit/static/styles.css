@@ -332,6 +332,23 @@ details.meta dd { margin: 0; word-break: break-word; }
 .llm-picker .custom-prompt, .llm-picker .picker-status { grid-column: 1 / -1; }
 .llm-picker .picker-status:empty { display: none; }
 .llm-picker .custom-prompt summary { cursor: pointer; font-size: 12.5px; color: var(--muted); margin-bottom: 6px; }
+.llm-picker .schema-box { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; }
+.llm-picker .schema-box[hidden] { display: none; }
+.llm-picker .schema-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 6px 12px; }
+.llm-picker .schema-row label { flex: 0 1 280px; }
+.llm-picker .schema-row .small { flex: 1 1 200px; padding-bottom: 8px; }
+.llm-picker [data-schema-status] { margin-top: 4px; }
+
+/* ---- structured extraction results ---- */
+.extract-view { margin-top: 4px; }
+.extract-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-bottom: 8px; font-size: 13px; }
+.extract-table td { vertical-align: top; }
+.extract-table td.k { width: 32%; color: var(--muted); font-size: 12.5px; }
+.extract-table td.v { white-space: pre-wrap; overflow-wrap: anywhere; }
+.extract-table tr.has-err > td, .extract-table td.has-err { background: var(--bad-soft); }
+.extract-table .sub { font-size: 12.5px; margin: -4px 0; }
+.extract-table .sub th { font-size: 10.5px; }
+.extract-table .sub td { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---- badges: soft fills, no outlines ---- */
 .badges { display: flex; flex-wrap: wrap; gap: 4px; }

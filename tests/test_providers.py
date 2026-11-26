@@ -164,3 +164,104 @@ def test_azure_openai_uses_deployment_url():
     assert "/openai/deployments/my-gpt4o/chat/completions" in seen["url"]
     assert "api-version=2024-10-21" in seen["url"]
     assert result.warnings  # finish_reason=length -> truncated warning
+
+
+# ------------------------------------------------------------------ structured extraction
+SCHEMA = {"type": "object", "properties": {"total": {"type": ["string", "null"]}}, "required": ["total"],
+          "additionalProperties": False}
+EXTRACT_REQ = TranscriptionRequest(image=b"\x89PNGfake", mime_type="image/png", system_prompt="SYS",
+                                   user_prompt="Extract the data from this page.", output_schema=SCHEMA)
+
+
+def _claude_capture(model: str):
+    seen = {}
+
+    def handler(request):
+        seen["body"] = json.loads(request.content)
+        return httpx2.Response(200, content=_claude_stream('{"total": "$5"}', model),
+                               headers={"content-type": "text/event-stream"})
+
+    return seen, _claude_provider(model, handler)
+
+
+def test_claude_structured_output_uses_output_config_format():
+    seen, provider = _claude_capture("claude-opus-5-5")
+    result = asyncio.run(provider.transcribe(EXTRACT_REQ))
+    body = seen["body"]
+    assert body["output_config"] == {"format": {"type": "json_schema", "schema": SCHEMA}, "effort": "medium"}
+    assert body["system"] == "SYS"  # the schema is enforced, not repeated in the prompt
+    assert result.text == '{"total": "$5"}' and result.warnings == []
+
+
+def test_claude_without_structured_outputs_gets_schema_in_prompt():
+    seen, provider = _claude_capture("claude-opus-4-6")
+    result = asyncio.run(provider.transcribe(EXTRACT_REQ))
+    body = seen["body"]
+    assert "format" not in body.get("output_config", {})
+    assert body["system"].startswith("SYS") and '"total"' in body["system"]
+    assert result.warnings and "prompt" in result.warnings[0]
+
+
+def test_claude_structured_output_model_support():
+    from pyocr_toolkit.llm.anthropic_provider import _supports_structured_outputs as ok
+
+    assert all(ok(m) for m in ["claude-fable-5-2", "claude-opus-5-5", "claude-opus-4-8", "claude-sonnet-5-5",
+                               "claude-sonnet-5", "claude-haiku-5-5", "claude-haiku-4-5", "claude-opus-4-1"])
+    assert not any(ok(m) for m in ["claude-opus-4-6", "claude-opus-4-7", "claude-sonnet-4-6", "my-deployment"])
+
+
+def test_openai_structured_output_uses_strict_response_format():
+    import httpx
+    seen = {}
+
+    def handler(request: httpx.Request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_chat_completion('{"total": null}', "gpt-5"))
+
+    provider = OpenAIProvider(Settings(_env_file=None, openai_api_key="test", openai_model="gpt-5"))
+    provider._client = openai.AsyncOpenAI(api_key="test", http_client=_openai_http(handler))
+    asyncio.run(provider.transcribe(EXTRACT_REQ))
+    assert seen["body"]["response_format"] == {"type": "json_schema", "json_schema": {
+        "name": "page_data", "schema": SCHEMA, "strict": True}}
+    assert seen["body"]["messages"][0]["content"] == "SYS"
+
+    asyncio.run(provider.transcribe(REQ))  # plain transcription: no response_format
+    assert "response_format" not in seen["body"]
+
+
+def test_openai_compatible_also_spells_schema_out():
+    import httpx
+
+    from pyocr_toolkit.llm.openai_provider import OpenAICompatibleProvider
+    seen = {}
+
+    def handler(request: httpx.Request):
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(200, json=_chat_completion("{}", "qwen"))
+
+    provider = OpenAICompatibleProvider(Settings(_env_file=None, openai_compatible_base_url="http://localhost:1/v1",
+                                                 openai_compatible_model="qwen"))
+    provider._client = openai.AsyncOpenAI(api_key="x", base_url="http://localhost:1/v1", http_client=_openai_http(handler))
+    asyncio.run(provider.transcribe(EXTRACT_REQ))
+    assert seen["body"]["response_format"]["json_schema"]["schema"] == SCHEMA
+    assert '"total"' in seen["body"]["messages"][0]["content"]  # servers that ignore response_format
+
+
+def test_gemini_structured_output_config():
+    from types import SimpleNamespace
+
+    from pyocr_toolkit.llm.gemini_provider import GeminiProvider
+    seen = {}
+
+    async def generate_content(model, contents, config):
+        seen["config"] = config
+        return SimpleNamespace(candidates=[], text='{"total": "$5"}', usage_metadata=None)
+
+    provider = GeminiProvider(Settings(_env_file=None, gemini_api_key="k", gemini_model="gemini-x"))
+    provider._client = SimpleNamespace(aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content)))
+    result = asyncio.run(provider.transcribe(EXTRACT_REQ))
+    assert seen["config"].response_mime_type == "application/json"
+    assert seen["config"].response_json_schema == SCHEMA
+    assert result.text == '{"total": "$5"}'
+    asyncio.run(provider.transcribe(REQ))
+    assert seen["config"].response_json_schema is None

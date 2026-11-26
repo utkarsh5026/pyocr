@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, compare, search
+from . import __version__, compare, extract, search
 from .config import Settings, get_settings
 from .documents import DocumentError, DocumentStore, OCRUnavailableError, OpenDocument
 from .jobs import JobManager
@@ -39,10 +39,20 @@ class LLMRunBody(BaseModel):
     prompt_mode: str = "verbatim"
     custom_prompt: str | None = None
     preprocess: str | None = Field(None, description="image preprocessing, e.g. 'gray;contrast=1.5' or a preset id")
+    extract_schema: str | dict | None = Field(
+        None, description="for prompt_mode 'extract': a preset id ('invoice', 'receipt', 'form') or a JSON Schema")
     force: bool = False
 
     def spec(self) -> LLMSpec:
-        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt, self.preprocess or "")
+        schema = self.extract_schema
+        if isinstance(schema, dict):
+            schema = json.dumps(schema, ensure_ascii=False)
+        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt, self.preprocess or "",
+                       schema or "")
+
+
+class SchemaCheckBody(BaseModel):
+    extract_schema: str | dict
 
 
 class TextRef(BaseModel):
@@ -155,6 +165,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "llm_max_edge_px": settings.llm_max_edge_px,
             "ocr_dpi": settings.ocr_dpi,
             "preprocess_presets": presets_json(),
+            "extract_presets": extract.presets_json(),
         }
 
     @api.get("/models", tags=["models"])
@@ -295,6 +306,16 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
     def check_preprocess(spec: str = ""):
         """Validate and normalise a preprocessing spec (400 with a readable message if it's wrong)."""
         return parse_pre(spec).to_json()
+
+    @api.post("/extract/check-schema", tags=["llm"])
+    def check_schema(body: SchemaCheckBody):
+        """Validate a structured-extraction schema; returns the normalized form the model will get."""
+        try:
+            schema, label, preset = extract.resolve(body.extract_schema)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"schema": schema, "label": label, "preset": preset,
+                "fields": extract.count_fields({}, schema)[1]}
 
     @api.get("/documents/{doc_id}/sources", tags=["text"])
     def sources(doc_id: str):
@@ -577,13 +598,16 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         stem, tag = _safe_stem(doc.meta.filename), source.split(":")[0]
         disp = lambda ext: {"Content-Disposition": f'attachment; filename="{stem}.{tag}.{ext}"'}  # noqa: E731
         label = services.source_label(doc, source)
+        # structured extraction: also export the parsed fields (``data``) per page
+        data = [services.page_data(doc, n, source) for n in doc.iter_pages()] if fmt in ("json", "jsonl") else []
+        with_data = lambda i: {"data": data[i]} if any(d is not None for d in data) else {}  # noqa: E731
         if fmt == "json":
             return JSONResponse({"document": doc.meta.__dict__, "source": source, "source_label": label,
-                                 "pages": [{"page": i + 1, "text": t, "extracted": t is not None}
+                                 "pages": [{"page": i + 1, "text": t, "extracted": t is not None, **with_data(i)}
                                            for i, t in enumerate(texts)]}, headers=disp("json"))
         if fmt == "jsonl":
             lines = (json.dumps({"document_id": doc.meta.id, "filename": doc.meta.filename, "page": i + 1,
-                                 "source": source, "text": t or ""}, ensure_ascii=False)
+                                 "source": source, "text": t or "", **with_data(i)}, ensure_ascii=False)
                      for i, t in enumerate(texts))
             return PlainTextResponse("\n".join(lines) + "\n", media_type="application/x-ndjson", headers=disp("jsonl"))
         if fmt == "md":

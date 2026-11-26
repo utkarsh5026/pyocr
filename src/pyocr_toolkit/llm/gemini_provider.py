@@ -68,6 +68,8 @@ class GeminiProvider(Provider):
                     # Gemini 2.5 counts thinking tokens against this limit,
                     # so leave generous head-room.
                     max_output_tokens=max(req.max_output_tokens, 32768),
+                    **({"response_mime_type": "application/json", "response_json_schema": req.output_schema}
+                       if req.output_schema is not None else {}),
                 ),
             )
         except errors.ClientError as exc:

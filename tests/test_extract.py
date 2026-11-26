@@ -1,0 +1,251 @@
+"""Structured extraction: schema normalizing/validation, the cache key, and the API end to end."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+
+from pyocr_toolkit import extract
+from pyocr_toolkit.api import create_app
+from pyocr_toolkit.config import Settings
+from pyocr_toolkit.documents import OpenDocument
+from pyocr_toolkit.llm import EXTRACT_USER_PROMPT, USER_PROMPT
+from pyocr_toolkit.llm.base import Provider, TranscriptionResult
+
+INVOICE_REPLY = {
+    "vendor_name": "Acme Ltd", "vendor_address": None, "vendor_tax_id": None, "invoice_number": "2024-117",
+    "invoice_date": None, "due_date": None, "bill_to": None, "currency": "$",
+    "line_items": [{"description": "Fox jumping", "quantity": "1", "unit_price": "$1,250.00", "amount": "$1,250.00"}],
+    "subtotal": None, "tax": None, "total": "$1,250.00",
+}
+
+
+# ------------------------------------------------------------------ schema handling
+def test_presets_normalize_to_strict_self_contained_schemas():
+    for preset in extract.PRESETS.values():
+        schema = preset.schema
+        text = json.dumps(schema)
+        assert "$ref" not in text and "$defs" not in text and '"title"' not in text and '"default"' not in text
+
+        def check(node):
+            if isinstance(node, dict):
+                if node.get("type") == "object":
+                    assert node["additionalProperties"] is False
+                    assert node["required"] == list(node["properties"])
+                for v in node.values():
+                    check(v)
+            elif isinstance(node, list):
+                for v in node:
+                    check(v)
+
+        check(schema)
+    # display order = the model's field order
+    assert list(extract.PRESETS["invoice"].schema["properties"])[:2] == ["vendor_name", "vendor_address"]
+
+
+def test_custom_schema_optional_fields_become_nullable():
+    schema = extract.normalize({
+        "type": "object", "title": "Thing",
+        "properties": {"name": {"type": "string"}, "age": {"type": "integer", "minimum": 0},
+                       "kind": {"enum": ["a", "b"]}, "tags": {"type": "array"}},
+        "required": ["name"],
+    })
+    props = schema["properties"]
+    assert props["name"] == {"type": "string"}  # required: not nullable
+    assert props["age"]["type"] == ["integer", "null"] and props["age"]["minimum"] == 0
+    assert props["kind"] == {"anyOf": [{"enum": ["a", "b"]}, {"type": "null"}]}
+    assert props["tags"]["items"] == {"type": "string"}
+    assert schema["required"] == ["name", "age", "kind", "tags"]
+    # constraints strict modes reject are stripped before sending, kept for local validation
+    assert "minimum" not in extract.provider_schema(schema)["properties"]["age"]
+    assert extract.validate({"name": "x", "age": -1, "kind": None, "tags": []}, schema) == [
+        {"path": "age", "message": "below the minimum 0"}]
+
+
+@pytest.mark.parametrize("bad, message", [
+    ([1, 2], "must be a JSON object"),
+    ({"type": "string"}, "root must be an object"),
+    ({"type": "object", "properties": {"n": {"$ref": "#/$defs/N"}}, "$defs": {"N": {"type": "object", "properties": {
+        "child": {"$ref": "#/$defs/N"}}}}}, "recursive"),
+    ({"type": "object", "properties": {"x": {"type": "text"}}}, "unknown type 'text'"),
+    ({"type": "object", "properties": {"x": {"$ref": "https://example.com/s.json"}}}, "can't resolve"),
+])
+def test_unusable_schemas_say_what_to_fix(bad, message):
+    with pytest.raises(extract.SchemaError, match=message):
+        extract.normalize(bad)
+
+
+def test_resolve_preset_json_text_and_errors():
+    schema, label, preset = extract.resolve("receipt")
+    assert (label, preset) == ("Receipt", "receipt") and "merchant_name" in schema["properties"]
+    _, label, preset = extract.resolve('{"title": "Ticket", "type": "object", "properties": {"seat": {"type": "string"}}}')
+    assert (label, preset) == ("Custom: Ticket", None)
+    with pytest.raises(extract.SchemaError, match="needs a schema"):
+        extract.resolve("")
+    with pytest.raises(extract.SchemaError, match="isn't valid JSON"):
+        extract.resolve("{nope")
+
+
+def test_parse_reply_tolerates_fences_and_chatter():
+    assert extract.parse_reply('{"a": 1}') == ({"a": 1}, None)
+    assert extract.parse_reply('```json\n{"a": 1}\n```') == ({"a": 1}, None)
+    assert extract.parse_reply('Here you go:\n{"a": 1}\nHope that helps') == ({"a": 1}, None)
+    assert extract.parse_reply("no json here")[1] == "the reply contains no JSON object"
+    assert "isn't valid JSON" in extract.parse_reply('{"a": }')[1]
+
+
+def test_validate_reports_paths():
+    schema = extract.PRESETS["invoice"].schema
+    assert extract.validate(INVOICE_REPLY, schema) == []
+    bad = {**INVOICE_REPLY, "total": 1250, "extra": "x", "line_items": [{"description": "d"}]}
+    del bad["tax"]
+    errors = {e["path"]: e["message"] for e in extract.validate(bad, schema)}
+    assert errors["total"] == "expected string or null, got integer"
+    assert errors["extra"] == "not in the schema"
+    assert errors["tax"] == "missing"
+    assert errors["line_items[0].amount"] == "missing"
+    assert extract.count_fields(INVOICE_REPLY, schema) == (5, 12)
+
+
+def test_cache_key_unchanged_without_schema():
+    """Plain transcriptions must keep their pre-extraction keys (no orphaned caches)."""
+    digest = hashlib.sha256(b"p\0m\0prompt").hexdigest()[:16]
+    assert OpenDocument.llm_cache_key("p", "m", "prompt") == f"p__m__{digest}"
+    assert OpenDocument.llm_cache_key("p", "m", "prompt", schema="{}") != f"p__m__{digest}"
+    assert (OpenDocument.llm_cache_key("p", "m", "prompt", schema='{"a":1}')
+            != OpenDocument.llm_cache_key("p", "m", "prompt", schema='{"a":2}'))
+
+
+# ------------------------------------------------------------------ API end to end
+class JSONProvider(Provider):
+    """Answers with ``reply`` when asked for structured output, plain text otherwise."""
+
+    id = "fakejson"
+    label = "Fake JSON"
+
+    def __init__(self):
+        self.calls = []
+        self.reply = json.dumps(INVOICE_REPLY)
+
+    @property
+    def default_model(self):
+        return "fake-1"
+
+    def missing_settings(self):
+        return []
+
+    async def _transcribe(self, req, model):
+        self.calls.append(req)
+        text = self.reply if req.output_schema else "plain transcription"
+        return TranscriptionResult(text=text, provider=self.id, model=model, latency_ms=0,
+                                   input_tokens=10, output_tokens=20)
+
+
+@pytest.fixture
+def client(tmp_path):
+    app = create_app(Settings(data_dir=tmp_path, _env_file=None))
+    fake = JSONProvider()
+    app.state.providers[fake.id] = fake
+    with TestClient(app) as c:
+        c.fake = fake
+        yield c
+
+
+@pytest.fixture
+def doc_id(client, sample_pdf):
+    r = client.post("/api/documents", files={"file": ("sample.pdf", sample_pdf, "application/pdf")})
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def _run(client, doc_id, page=0, **body):
+    return client.post(f"/api/documents/{doc_id}/pages/{page}/llm",
+                       json={"provider": "fakejson", "prompt_mode": "extract", **body})
+
+
+def test_extract_preset_end_to_end(client, doc_id):
+    r = _run(client, doc_id, extract_schema="invoice")
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res["data"] == INVOICE_REPLY and res["data_errors"] == []
+    assert (res["schema_label"], res["schema_preset"]) == ("Invoice", "invoice")
+    assert (res["fields_filled"], res["fields_total"]) == (5, 12)
+    assert json.loads(res["text"]) == INVOICE_REPLY  # pretty JSON, so text views/search/export still work
+    req = client.fake.calls[-1]
+    assert req.user_prompt == EXTRACT_USER_PROMPT
+    assert req.output_schema["properties"]["total"]["anyOf"] == [{"type": "string"}, {"type": "null"}]
+
+    assert _run(client, doc_id, extract_schema="invoice").json()["cached"] is True
+    other = _run(client, doc_id, extract_schema="receipt").json()
+    assert other["key"] != res["key"] and other["cached"] is False
+
+    plain = client.post(f"/api/documents/{doc_id}/pages/0/llm", json={"provider": "fakejson"}).json()
+    assert plain["text"] == "plain transcription" and "data" not in plain
+    assert client.fake.calls[-1].user_prompt == USER_PROMPT and client.fake.calls[-1].output_schema is None
+
+    sources = client.get(f"/api/documents/{doc_id}/sources").json()
+    labels = [s["label"] for s in sources if s["kind"] == "llm"]
+    assert any("(Invoice)" in label for label in labels) and any("(Receipt)" in label for label in labels)
+
+    exported = client.get(f"/api/documents/{doc_id}/export",
+                          params={"source": f"llm:{res['key']}", "fmt": "json"}).json()
+    assert exported["pages"][0]["data"] == INVOICE_REPLY and exported["pages"][1]["data"] is None
+    lines = client.get(f"/api/documents/{doc_id}/export", params={"source": f"llm:{res['key']}", "fmt": "jsonl"}).text
+    assert json.loads(lines.splitlines()[0])["data"]["total"] == "$1,250.00"
+    plain_export = client.get(f"/api/documents/{doc_id}/export", params={"source": f"llm:{plain['key']}", "fmt": "json"})
+    assert "data" not in plain_export.json()["pages"][0]
+
+
+def test_extract_custom_schema_and_bad_replies(client, doc_id):
+    schema = {"type": "object", "properties": {"total": {"type": "string"}}, "required": ["total"]}
+    client.fake.reply = '```json\n{"total": 5}\n```'
+    res = _run(client, doc_id, extract_schema=schema).json()
+    assert res["schema_label"] == "Custom schema" and res["schema_preset"] is None
+    assert res["data"] == {"total": 5}
+    assert res["data_errors"] == [{"path": "total", "message": "expected string, got integer"}]
+
+    client.fake.reply = "Sorry, I can't read that."
+    res = _run(client, doc_id, extract_schema=schema, force=True).json()
+    assert res["data"] is None and res["text"] == "Sorry, I can't read that."  # raw reply kept for debugging
+    assert res["data_errors"][0]["path"] == "(reply)"
+
+
+def test_extract_needs_a_usable_schema(client, doc_id):
+    r = _run(client, doc_id)
+    assert r.status_code == 400 and "needs a schema" in r.json()["detail"]
+    r = _run(client, doc_id, extract_schema='{"type": "array"}')
+    assert r.status_code == 400 and "root must be an object" in r.json()["detail"]
+    r = client.post(f"/api/documents/{doc_id}/jobs", json={
+        "kind": "llm", "llm": {"provider": "fakejson", "prompt_mode": "extract", "extract_schema": "{bad"}})
+    assert r.status_code == 400 and "valid JSON" in r.json()["detail"]
+    assert client.fake.calls == []
+
+
+def test_check_schema_endpoint_and_config(client):
+    presets = client.get("/api/config").json()["extract_presets"]
+    assert [p["id"] for p in presets] == ["invoice", "receipt", "form"]
+    ok = client.post("/api/extract/check-schema", json={"extract_schema": "receipt"}).json()
+    assert ok["preset"] == "receipt" and ok["fields"] == 10
+    bad = client.post("/api/extract/check-schema", json={"extract_schema": "[]"})
+    assert bad.status_code == 400 and "JSON object" in bad.json()["detail"]
+
+
+def test_extract_job_runs_every_page(client, doc_id):
+    import time
+
+    r = client.post(f"/api/documents/{doc_id}/jobs", json={
+        "kind": "llm", "llm": {"provider": "fakejson", "prompt_mode": "extract", "extract_schema": "invoice"}})
+    assert r.status_code == 202, r.text
+    job_id = r.json()["id"]
+    for _ in range(100):
+        job = client.get(f"/api/jobs/{job_id}").json()
+        if job["status"] not in ("queued", "running"):
+            break
+        time.sleep(0.02)
+    assert job["status"] == "done", job
+    assert job["label"].endswith("extract (Invoice)")
+    results = client.get(f"/api/documents/{doc_id}/pages/1/llm").json()
+    assert results[0]["data"] == INVOICE_REPLY

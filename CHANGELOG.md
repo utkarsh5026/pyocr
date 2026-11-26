@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Structured data extraction**: a new prompt, *Structured data (fields → JSON)*, fills a JSON Schema from each page
+  instead of transcribing it. Built-in schemas for invoices, receipts and form fields, or your own JSON Schema
+  (checked as you type). Providers enforce the schema natively where they can (Claude structured outputs, OpenAI /
+  Azure strict `response_format`, Gemini `response_json_schema`); older Claude models and OpenAI-compatible servers
+  get it in the prompt, with a warning. Values are copied as printed, and fields that aren't on the page are `null`.
+  The LLM tab shows the result as a field table (fields found, line items, schema problems on their field) with the
+  raw JSON one click away. Every reply is parsed and validated against the schema; results store `data`,
+  `data_errors`, `fields_filled` and `fields_total` next to the text.
+- The schema is part of the LLM cache key, so each schema is its own source. Plain transcriptions keep their
+  existing keys, so cached results are unaffected.
+- API: `prompt_mode: "extract"` with `extract_schema` (a preset id or a JSON Schema) on
+  `POST /api/documents/{id}/pages/{n}/llm` and in job bodies, `POST /api/extract/check-schema`, `extract_presets` in
+  `/api/config`, and a per-page `data` object in JSON / JSONL exports of an extraction. CLI:
+  `pyocr extract --mode extract --schema invoice|receipt|form|<file.json>`.
 - **Adjust image** (page inspector, shortcut `e`): preprocess the page image before it is sent to an LLM, then
   check whether that helped. It has a strip of filters, each a thumbnail of the current page (Clean scan, High contrast,
   Black & white with Otsu thresholding, Fix faded, Denoise, Bring out detail, Invert), and fine-tuning for

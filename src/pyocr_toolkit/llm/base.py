@@ -7,6 +7,7 @@ import time
 from dataclasses import dataclass, field
 
 from . import catalog
+from .prompts import schema_instructions
 
 
 class ProviderError(Exception):
@@ -25,6 +26,13 @@ class TranscriptionRequest:
     user_prompt: str
     model: str | None = None  # None -> provider default
     max_output_tokens: int = 16000
+    #: structured extraction: a normalized JSON Schema the reply must follow (see ``extract.provider_schema``).
+    #: Providers enforce it natively where they can, otherwise put it in the prompt (``system_with_schema``).
+    output_schema: dict | None = None
+
+    def system_with_schema(self) -> str:
+        """The system prompt, plus the schema spelled out for models that can't enforce it natively."""
+        return self.system_prompt + (schema_instructions(self.output_schema) if self.output_schema else "")
 
 
 @dataclass

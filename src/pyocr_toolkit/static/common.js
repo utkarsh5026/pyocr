@@ -342,7 +342,9 @@ async function initLlmPicker(root) {
   provSel.innerHTML = providers.map((p) =>
     `<option value="${esc(p.id)}">${esc(p.label)}${p.configured ? "" : " (not configured)"}</option>`).join("");
   promptSel.innerHTML = cfg.prompt_modes.map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join("") +
+    '<option value="extract">Structured data (fields → JSON)…</option>' +
     '<option value="custom">Custom prompt…</option>';
+  const schema = initSchemaPicker(root, cfg.extract_presets || []);
 
   const saved = localStorage.getItem("pyocr.provider");
   if (saved && providers.some((p) => p.id === saved)) provSel.value = saved;
@@ -364,6 +366,7 @@ async function initLlmPicker(root) {
     localStorage.setItem("pyocr.prompt", promptSel.value);
     customBox.hidden = promptSel.value !== "custom";
     if (!customBox.hidden) customBox.open = true;
+    schema.show(promptSel.value === "extract");
   }
   // Rating of the chosen model (custom names are fine; they just get a heuristic verdict).
   const verdict = document.createElement("div");
@@ -385,13 +388,136 @@ async function initLlmPicker(root) {
       if (!p.configured) throw new Error(`${p.label} is not configured: set ${p.missing.join(", ")}`);
       const body = { provider: p.id, model: modelIn.value.trim() || null, prompt_mode: promptSel.value, force };
       if (body.prompt_mode === "custom") body.custom_prompt = customTa.value;
+      if (body.prompt_mode === "extract") body.extract_schema = schema.value();
       return body;
     },
+    /** True when the prompt fills a schema (structured data) instead of transcribing. */
+    isExtract: () => promptSel.value === "extract",
     describe() {
       const p = provider();
-      return `${p.label} · ${modelIn.value.trim() || p.default_model || "?"} · ${promptSel.value}`;
+      const mode = promptSel.value === "extract" ? `extract: ${schema.label()}` : promptSel.value;
+      return `${p.label} · ${modelIn.value.trim() || p.default_model || "?"} · ${mode}`;
     },
   };
+}
+
+/**
+ * The "Fields to extract" part of the picker: a preset or a custom JSON Schema.
+ * Picking a preset shows its schema; editing it switches to "Custom" (remembered in localStorage).
+ */
+function initSchemaPicker(root, presets) {
+  const box = $("[data-schema-box]", root), sel = $("[data-schema-preset]", root), ta = $("[data-schema]", root);
+  const status = $("[data-schema-status]", root), hint = $("[data-schema-hint]", root);
+  const pretty = (s) => JSON.stringify(s, null, 2);
+  const stored = (k, v) => {
+    try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (_) { /* private mode */ }
+    return null;
+  };
+  sel.innerHTML = presets.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join("") +
+    '<option value="custom">Custom JSON Schema…</option>';
+  const saved = stored("pyocr.extractPreset");
+  sel.value = saved && [...sel.options].some((o) => o.value === saved) ? saved : (presets[0]?.id || "custom");
+
+  function sync() {
+    stored("pyocr.extractPreset", sel.value);
+    const p = presets.find((x) => x.id === sel.value);
+    hint.textContent = p ? p.description : "Your own schema: the root must be an object.";
+    ta.value = p ? pretty(p.schema) : (stored("pyocr.extractSchema") || pretty(presets[0]?.schema || { type: "object", properties: {} }));
+    status.textContent = "";
+    if (!p) check();
+  }
+  let timer;
+  function check() {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      try {
+        const r = await postJSON("/api/extract/check-schema", { extract_schema: ta.value });
+        status.className = "small good";
+        status.textContent = `✓ valid · ${r.fields} field${r.fields === 1 ? "" : "s"}`;
+      } catch (e) {
+        status.className = "small err";
+        status.textContent = e.message;
+      }
+    }, 300);
+  }
+  ta.addEventListener("input", () => {
+    if (sel.value !== "custom") { sel.value = "custom"; stored("pyocr.extractPreset", "custom"); hint.textContent = "Your own schema: the root must be an object."; }
+    stored("pyocr.extractSchema", ta.value);
+    check();
+  });
+  sel.addEventListener("change", sync);
+  sync();
+  return {
+    show(on) { box.hidden = !on; },
+    value: () => (sel.value === "custom" ? ta.value : sel.value),
+    label: () => sel.options[sel.selectedIndex]?.text || "schema",
+  };
+}
+
+// ------------------------------------------------------------------ structured data
+const _fieldLabel = (k) => String(k).replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
+const _props = (node) => node?.properties || (node?.anyOf || []).find((o) => o.properties)?.properties;
+const _items = (node) => node?.items || (node?.anyOf || []).find((o) => o.items)?.items;
+
+function _fieldValue(v) {
+  if (v === null || v === undefined || v === "") return '<span class="muted">not on page</span>';
+  if (typeof v === "object") return `<code>${esc(JSON.stringify(v))}</code>`;
+  return esc(String(v));
+}
+
+/**
+ * HTML for one stored extraction result: a summary line, then every schema field with its value,
+ * in schema order. Lists of objects become sub-tables; validation errors are shown on their field.
+ */
+function extractionHtml(r) {
+  const errors = new Map();
+  for (const e of r.data_errors || []) errors.set(e.path, [...(errors.get(e.path) || []), e.message]);
+  const shown = new Set();
+  const errHtml = (path) => {
+    const list = errors.get(path);
+    if (!list) return "";
+    shown.add(path);
+    return list.map((m) => `<div class="err small">⚠ ${esc(m)}</div>`).join("");
+  };
+  const rows = [];
+  function walk(value, node, path, name) {
+    const props = _props(node);
+    if (props && (value == null || (typeof value === "object" && !Array.isArray(value)))) {
+      if (path && errors.has(path)) rows.push(`<tr class="has-err"><td class="k">${esc(name)}</td><td class="v">${errHtml(path)}</td></tr>`);
+      for (const [k, sub] of Object.entries(props)) {
+        walk(value?.[k], sub, path ? `${path}.${k}` : k, name ? `${name} › ${_fieldLabel(k)}` : _fieldLabel(k));
+      }
+      return;
+    }
+    const itemProps = _props(_items(node));
+    let cell;
+    if (Array.isArray(value) && value.length && itemProps) {
+      const cols = Object.keys(itemProps);
+      const body = value.map((item, i) => "<tr>" + cols.map((c) => {
+        const p = `${path}[${i}].${c}`;
+        return `<td${errors.has(p) ? ' class="has-err"' : ""}>${_fieldValue(item?.[c])}${errHtml(p)}</td>`;
+      }).join("") + "</tr>").join("");
+      cell = `<table class="table compact sub"><thead><tr>${cols.map((c) => `<th>${esc(_fieldLabel(c))}</th>`).join("")}</tr></thead>` +
+        `<tbody>${body}</tbody></table>`;
+    } else if (Array.isArray(value)) {
+      cell = value.length ? value.map((v) => `<div>${_fieldValue(v)}</div>`).join("") : '<span class="muted">none on page</span>';
+    } else {
+      cell = _fieldValue(value);
+    }
+    const bad = [...errors.keys()].some((p) => p === path || p.startsWith(`${path}[`));
+    rows.push(`<tr${bad ? ' class="has-err"' : ""}><td class="k">${esc(name || "Value")}</td><td class="v">${cell}${errHtml(path)}</td></tr>`);
+  }
+  if (r.data != null) walk(r.data, r.schema || {}, "", "");
+  const leftover = [...errors.entries()].filter(([p]) => !shown.has(p) && ![...shown].some((s) => s.startsWith(p)))
+    .flatMap(([p, ms]) => ms.map((m) => `<div class="err small">⚠ ${p === "(root)" || p === "(reply)" ? "" : `<b>${esc(p)}</b>: `}${esc(m)}</div>`));
+  const nErr = (r.data_errors || []).length;
+  const verdict = r.data == null ? '<span class="badge bad">could not read the reply</span>'
+    : nErr ? `<span class="badge bad">${nErr} schema problem${nErr === 1 ? "" : "s"}</span>`
+      : '<span class="badge ok">matches the schema</span>';
+  const head = `<div class="extract-head"><b>${esc(r.schema_label || "Structured data")}</b>` +
+    (r.fields_total ? `<span class="muted">${r.fields_filled} of ${r.fields_total} fields found</span>` : "") + verdict + "</div>";
+  return head + leftover.join("") +
+    (rows.length ? `<table class="table compact extract-table"><tbody>${rows.join("")}</tbody></table>` : "");
 }
 
 // ------------------------------------------------------------------ image preprocessing

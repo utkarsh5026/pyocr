@@ -9,6 +9,7 @@
   <a href="#workspaces">Workspaces &amp; batch uploads</a>
   <a href="#engines">The three text sources</a>
   <a href="#prompts">LLM prompts</a>
+  <a href="#extract">Structured data</a>
   <a href="#metrics">Comparing: CER &amp; WER</a>
   <a href="#workflows">Typical workflows</a>
   <a href="#export">Export &amp; GenAI pipelines</a>
@@ -98,10 +99,32 @@
 <ul>
   <li><b>Verbatim</b> (default): plain text, line by line, nothing corrected, tables as <code>cell | cell</code>. Use this to judge OCR, because both outputs then have the same shape.</li>
   <li><b>Markdown</b>: keeps structure (headings, lists, GFM tables). Closest to what you would feed a RAG or LLM pipeline.</li>
-  <li><b>Custom</b>: write your own instructions, for example "extract only the line items as CSV" or "transcribe the handwritten notes only".</li>
+  <li><b>Structured data (fields → JSON)</b>: instead of transcribing, the model fills a fixed set of fields
+    (see <a href="#extract">below</a>).</li>
+  <li><b>Custom</b>: write your own instructions, for example "transcribe the handwritten notes only".</li>
 </ul>
 <p>Every provider + model + prompt combination is stored separately, so you can run several and compare them.
   Results are cached: repeating a request costs nothing unless you click <i>re-run</i>.</p>
+
+<h2 id="extract">Structured data: fields instead of text</h2>
+<p>Pick <b>Structured data (fields → JSON)</b> as the prompt, then choose what to extract: <b>Invoice</b>,
+  <b>Receipt</b>, <b>Form fields</b> (every label and its value), or <b>Custom JSON Schema</b>. Open
+  <i>JSON Schema</i> to see exactly what the model is asked for; editing it turns it into your own schema, and it is
+  checked as you type.</p>
+<ul>
+  <li>The schema is enforced by the provider where it can be (Claude structured outputs, OpenAI and Azure
+    <code>response_format</code>, Gemini <code>response_json_schema</code>). Older Claude models and
+    OpenAI-compatible servers also get it in the prompt; the result then says so, so check its fields.</li>
+  <li>Values are copied as printed (<code>$1,250.00</code>, <code>03/04/25</code>), never converted or guessed.
+    A field that isn't on the page is <i>not on page</i> (<code>null</code>).</li>
+  <li>The <b>LLM</b> tab shows the fields as a table: how many were found, line items as a sub-table, and any reply
+    that doesn't match the schema marked on its field. <i>JSON</i> shows the raw result.</li>
+  <li>Each schema is its own source (it's part of the cache key), so you can run Invoice and a custom schema on the
+    same pages and keep both. JSON and JSONL exports add a <code>data</code> object per page.</li>
+</ul>
+<p>Optional fields in your own schema become nullable, every object is closed (<code>additionalProperties: false</code>)
+  and <code>$ref</code>s are inlined, because that is what providers' strict modes accept. Recursive schemas aren't
+  supported.</p>
 
 <h2 id="preprocess">Adjusting the image before the LLM sees it</h2>
 <p>A vision model never sees your PDF, only the pixels it is sent. So the pixels are part of the experiment: a grey
@@ -180,7 +203,7 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
 <ul>
   <li><b>TXT</b>: pages separated by <code>===== Page N =====</code>.</li>
   <li><b>Markdown</b>: a <code>## Page N</code> heading per page.</li>
-  <li><b>JSON</b>: <code>{document, source, pages: [{page, text, extracted}]}</code>.</li>
+  <li><b>JSON</b>: <code>{document, source, pages: [{page, text, extracted}]}</code>, plus <code>data</code> per page for structured data.</li>
   <li><b>JSONL</b>: one JSON object per page (<code>document_id, filename, page, source, text</code>), ready for chunking, embedding or loading into a vector store.</li>
 </ul>
 <p>Pages that have not been extracted for that source are left empty. An export never starts a paid LLM call.</p>

@@ -9,6 +9,7 @@ const IS_PDF = root.dataset.isPdf === "true";
 const state = {
   config: null,
   picker: null,
+  showJson: false,    // structured extraction: raw JSON instead of the field table
   pages: [],
   page: +root.dataset.page,
   zoom: 1,
@@ -137,7 +138,7 @@ function renderOcr() {
 function renderLlm(selectKey) {
   const sel = $("#llm-result-select");
   sel.innerHTML = state.llmResults.map((r) =>
-    `<option value="${esc(r.key)}">${esc(r.provider)} · ${esc(r.model)} · ${esc(r.prompt_mode)}${r.preprocess ? " · adjusted image" : ""} · ${new Date(r.created_at * 1000).toLocaleString()}</option>`).join("");
+    `<option value="${esc(r.key)}">${esc(r.provider)} · ${esc(r.model)} · ${esc(r.prompt_mode)}${r.schema_label ? ` (${esc(r.schema_label)})` : ""}${r.preprocess ? " · adjusted image" : ""} · ${new Date(r.created_at * 1000).toLocaleString()}</option>`).join("");
   sel.disabled = $("#delete-llm").disabled = state.llmResults.length === 0;
   if (selectKey) sel.value = selectKey;
   showLlmResult(sel.value);
@@ -145,6 +146,7 @@ function renderLlm(selectKey) {
 
 function showLlmResult(key) {
   const r = state.llmResults.find((x) => x.key === key);
+  renderExtraction(r);
   if (!r) {
     $("#llm-meta").innerHTML = "";
     setText($("#llm-text"), "", "No transcription yet. Pick a provider and model above and click “Transcribe this page” (or press t).");
@@ -158,6 +160,24 @@ function showLlmResult(key) {
     `${(r.latency_ms / 1000).toFixed(1)}s${tokens}${r.cost ? ` · ${costHtml(r.cost)}` : ""} · ${r.text.length} chars${image}${warns}`;
   setText($("#llm-text"), r.text);
   renderSide();
+}
+
+/** Structured extraction results get a field table; the raw JSON stays one click away. */
+function renderExtraction(r) {
+  const isExtract = !!(r && r.schema), view = $("#llm-data"), toggle = $("#llm-json-toggle");
+  view.hidden = !isExtract || state.showJson;
+  toggle.hidden = !isExtract;
+  view.innerHTML = isExtract ? extractionHtml(r) : "";
+  // a reply that isn't JSON has no table to show, so keep the raw text visible under the message
+  $("#llm-text").hidden = isExtract && !state.showJson && r.data != null;
+  $(".lbl", toggle).textContent = state.showJson ? "Fields" : "JSON";
+}
+
+/** "Transcribe" or "Extract fields", following the prompt picked in the LLM picker. */
+function syncLlmVerb() {
+  const extract = state.picker?.isExtract();
+  $("#run-llm").lastChild.textContent = extract ? "Extract fields" : "Transcribe this page";
+  return extract ? "Extracting…" : "Transcribing…";
 }
 
 /** Side-by-side tab: the three sources in columns (LLM = the result picked in the LLM tab). */
@@ -207,12 +227,13 @@ async function runLlm(force = false) {
   const body = { ...state.picker.spec(force), preprocess: state.pre || null };
   const out = $("#llm-text"), emptyMsg = out.dataset.empty;
   out.dataset.empty = "Reading the page…";
-  const done = setBusy(btn, "Transcribing…", [[$("#page-frame"), "is-reading"], [out, "is-thinking"]]);
+  const verb = syncLlmVerb();
+  const done = setBusy(btn, verb, [[$("#page-frame"), "is-reading"], [out, "is-thinking"]]);
   // One request, no progress events: an elapsed counter at least shows it's alive.
   const t0 = Date.now();
   const tick = setInterval(() => {
     const s = fmtDuration((Date.now() - t0) / 1000);
-    btn.textContent = `Transcribing… ${s}`;
+    btn.textContent = `${verb} ${s}`;
     out.dataset.empty = `Reading the page… ${s}`;
   }, 1000);
   try {
@@ -648,6 +669,10 @@ function wire() {
   $("#run-ocr").addEventListener("click", guard(() => runOcr(true)));
   $("#run-llm").addEventListener("click", guard(() => runLlm(false)));
   $("#rerun-llm").addEventListener("click", guard(() => runLlm(true)));
+  $("#llm-json-toggle").addEventListener("click", () => {
+    state.showJson = !state.showJson;
+    renderExtraction(state.llmResults.find((x) => x.key === $("#llm-result-select").value));
+  });
   $("#delete-llm").addEventListener("click", guard(deleteLlm));
   $("#llm-result-select").addEventListener("change", (e) => showLlmResult(e.target.value));
   $("#run-compare").addEventListener("click", guard(runCompare));
@@ -723,6 +748,8 @@ function wire() {
     $('[data-adj="dpi"]').innerHTML = `<option value="">Default (${state.config.llm_dpi} dpi)</option>` +
       dpis.map((d) => `<option value="${d}">${d} dpi</option>`).join("");
     state.picker = await initLlmPicker($("[data-llm-picker]"));
+    $("[data-llm-picker] [data-prompt]").addEventListener("change", syncLlmVerb);
+    syncLlmVerb();
     state.pages = await api(docUrl("/pages"));
     renderPageList();
     if (location.hash === "#llm") switchTab("llm");

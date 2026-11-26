@@ -170,6 +170,7 @@ pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdow
 pyocr extract born-digital.pdf --engine native              # embedded text only, no network
 pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR / native CER vs an LLM
 pyocr extract scan.pdf -p anthropic --preprocess 'gray;auto;contrast=1.5'  # adjust the image first (or a preset: clean, bw, ...)
+pyocr extract invoice.pdf -p anthropic --mode extract --schema invoice --format json  # fields, not text (or a JSON Schema file)
 pyocr import a.pdf b.pdf scans.zip folder/ -w invoices      # add many files as one workspace (zips unpacked)
 pyocr providers                                             # which providers are ready
 python -m pyocr_toolkit --help                              # same CLI without the script on PATH

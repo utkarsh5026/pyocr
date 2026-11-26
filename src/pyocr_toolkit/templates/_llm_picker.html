@@ -8,5 +8,16 @@
     <summary>Custom prompt</summary>
     <textarea data-custom rows="7"></textarea>
   </details>
+  <div data-schema-box hidden class="schema-box">
+    <div class="schema-row">
+      <label>Fields to extract <select data-schema-preset></select></label>
+      <span class="small muted" data-schema-hint></span>
+    </div>
+    <details data-schema-edit class="custom-prompt">
+      <summary>JSON Schema <span class="muted">(edit to make your own)</span></summary>
+      <textarea data-schema rows="10" spellcheck="false" aria-label="JSON Schema"></textarea>
+      <div class="small" data-schema-status></div>
+    </details>
+  </div>
   <div class="picker-status small" data-status></div>
 </div>

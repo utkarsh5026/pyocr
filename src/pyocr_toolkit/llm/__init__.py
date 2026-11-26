@@ -14,7 +14,7 @@ from .base import (
 )
 from .gemini_provider import GeminiProvider
 from .openai_provider import AzureOpenAIProvider, OpenAICompatibleProvider, OpenAIProvider
-from .prompts import PROMPT_MODES, USER_PROMPT, resolve_prompt
+from .prompts import EXTRACT_MODE, EXTRACT_USER_PROMPT, PROMPT_MODES, USER_PROMPT, resolve_prompt
 
 PROVIDER_CLASSES: list[type[Provider]] = [
     AnthropicProvider,
@@ -32,6 +32,8 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
 
 __all__ = [
     "catalog",
+    "EXTRACT_MODE",
+    "EXTRACT_USER_PROMPT",
     "PROMPT_MODES",
     "USER_PROMPT",
     "Provider",

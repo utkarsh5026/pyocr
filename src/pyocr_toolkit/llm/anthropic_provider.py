@@ -38,6 +38,27 @@ def _supports_effort(model: str) -> bool:
     return version >= (4, 6)
 
 
+def _supports_structured_outputs(model: str) -> bool:
+    """``output_config.format`` (JSON outputs) exists on Fable/Mythos, Opus 5+/4.8/4.5/4.1, Sonnet 5+, Haiku 5.5/4.5.
+
+    Other models (and deployment names we can't parse) get the schema in the prompt instead.
+    """
+    m = _VERSION_RE.search(model)
+    if not m:
+        return False
+    family, version = m.group(1), (int(m.group(2)), int(m.group(3) or 0))
+    if family in ("fable", "mythos"):
+        return True
+    if family == "opus":
+        return version >= (5, 0) or version in {(4, 8), (4, 5), (4, 1)}
+    if family == "sonnet":
+        return version >= (5, 0)
+    return version >= (5, 5) or version == (4, 5)
+
+
+PROMPT_ONLY_SCHEMA = "this model can't enforce a schema; it was given in the prompt, so check the fields"
+
+
 class _ClaudeBase(Provider):
     suggested_models = catalog.recommended("anthropic") + ["claude-haiku-5-5"]
     supports_server_fallback = True
@@ -56,10 +77,19 @@ class _ClaudeBase(Provider):
         return self._client
 
     async def _transcribe(self, req: TranscriptionRequest, model: str) -> TranscriptionResult:
+        warnings: list[str] = []
+        system = req.system_prompt
+        output_config: dict = {}
+        if req.output_schema is not None:
+            if _supports_structured_outputs(model):
+                output_config["format"] = {"type": "json_schema", "schema": req.output_schema}
+            else:
+                system = req.system_with_schema()
+                warnings.append(PROMPT_ONLY_SCHEMA)
         params: dict = {
             "model": model,
             "max_tokens": req.max_output_tokens,
-            "system": req.system_prompt,
+            "system": system,
             "messages": [{
                 "role": "user",
                 "content": [
@@ -76,7 +106,9 @@ class _ClaudeBase(Provider):
             }],
         }
         if _supports_effort(model) and self.settings.anthropic_effort:
-            params["output_config"] = {"effort": self.settings.anthropic_effort}
+            output_config["effort"] = self.settings.anthropic_effort
+        if output_config:
+            params["output_config"] = output_config
         if self.supports_server_fallback and model in _FALLBACK_MODELS:
             params["betas"] = [_FALLBACK_BETA]
             params["fallbacks"] = "default"
@@ -97,7 +129,6 @@ class _ClaudeBase(Provider):
         except anthropic.APIConnectionError as exc:
             raise ProviderError(f"{self.label}: connection error: {exc}") from exc
 
-        warnings: list[str] = []
         if message.stop_reason == "refusal":
             details = getattr(message, "stop_details", None)
             category = getattr(details, "category", None) if details else None

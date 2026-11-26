@@ -14,11 +14,16 @@ An LLM configuration may include image preprocessing (grayscale, contrast,
 binarize, ...; see :mod:`pyocr_toolkit.preprocess`). It is part of the cache
 key, so "same model on the original page" and "same model on the cleaned-up
 page" are two sources you can compare against each other.
+
+The ``extract`` prompt mode fills a JSON Schema instead of transcribing (see
+:mod:`pyocr_toolkit.extract`). The schema is part of the cache key too, and the
+parsed ``data`` plus its validation errors are stored next to the raw reply.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -26,10 +31,21 @@ from typing import Any
 
 import pymupdf
 
+from . import extract
 from .config import Settings
 from .credentials import CredentialStore
 from .documents import DocumentError, OpenDocument
-from .llm import PROMPT_MODES, USER_PROMPT, Provider, ProviderError, TranscriptionRequest, catalog, resolve_prompt
+from .llm import (
+    EXTRACT_MODE,
+    EXTRACT_USER_PROMPT,
+    PROMPT_MODES,
+    USER_PROMPT,
+    Provider,
+    ProviderError,
+    TranscriptionRequest,
+    catalog,
+    resolve_prompt,
+)
 from .preprocess import MAX_PNG_BYTES, Preprocess, process_bytes
 
 
@@ -41,6 +57,19 @@ class LLMSpec:
     custom_prompt: str | None = None
     #: image preprocessing spec, e.g. ``"gray;contrast=1.5"`` or a preset id; empty = the page as rendered
     preprocess: str = ""
+    #: for ``prompt_mode="extract"``: a preset id (``invoice``, ...) or JSON Schema text
+    extract_schema: str = ""
+
+
+@dataclass
+class ExtractSchema:
+    schema: dict[str, Any]
+    label: str
+    preset: str | None
+
+    @property
+    def canonical(self) -> str:
+        return extract.canonical(self.schema)
 
 
 class Services:
@@ -61,11 +90,22 @@ class Services:
         system_prompt = resolve_prompt(spec.prompt_mode, spec.custom_prompt)
         model = (spec.model or provider.default_model or "").strip()
         Preprocess.parse(spec.preprocess)
+        self.resolve_schema(spec)
         return provider, model, system_prompt
+
+    @staticmethod
+    def resolve_schema(spec: LLMSpec) -> ExtractSchema | None:
+        """The extraction schema of an ``extract`` spec (None otherwise); ValueError if it's unusable."""
+        if spec.prompt_mode != EXTRACT_MODE:
+            return None
+        schema, label, preset = extract.resolve(spec.extract_schema)
+        return ExtractSchema(schema, label, preset)
 
     def llm_key(self, doc: OpenDocument, spec: LLMSpec) -> str:
         provider, model, system_prompt = self.resolve_spec(spec)
-        return doc.llm_cache_key(provider.id, model, system_prompt, str(Preprocess.parse(spec.preprocess)))
+        schema = self.resolve_schema(spec)
+        return doc.llm_cache_key(provider.id, model, system_prompt, str(Preprocess.parse(spec.preprocess)),
+                                 schema.canonical if schema else "")
 
     def llm_image(self, doc: OpenDocument, page: int, pre: Preprocess | None = None) -> tuple[bytes, str]:
         """The exact image (bytes, mime type) an LLM receives for this page.
@@ -121,7 +161,8 @@ class Services:
         """
         provider, model, system_prompt = self.resolve_spec(spec)
         pre = Preprocess.parse(spec.preprocess)
-        key = doc.llm_cache_key(provider.id, model, system_prompt, str(pre))
+        schema = self.resolve_schema(spec)
+        key = doc.llm_cache_key(provider.id, model, system_prompt, str(pre), schema.canonical if schema else "")
         if not force:
             cached = doc.load_llm_result(page, key)
             if cached:
@@ -134,8 +175,19 @@ class Services:
                 on_start()
             result = await provider.transcribe(TranscriptionRequest(
                 image=image, mime_type=mime, system_prompt=system_prompt,
-                user_prompt=USER_PROMPT, model=model,
+                user_prompt=EXTRACT_USER_PROMPT if schema else USER_PROMPT, model=model,
+                output_schema=extract.provider_schema(schema.schema) if schema else None,
             ))
+        text = result.text
+        structured: dict[str, Any] = {}
+        if schema:
+            data, parse_error = extract.parse_reply(text)
+            errors = [{"path": "(reply)", "message": parse_error}] if parse_error else extract.validate(data, schema.schema)
+            if parse_error is None:
+                text = json.dumps(data, ensure_ascii=False, indent=2)  # readable in the text views, search & export
+            filled, total = extract.count_fields(data, schema.schema)
+            structured = {"schema": schema.schema, "schema_label": schema.label, "schema_preset": schema.preset,
+                          "data": data, "data_errors": errors, "fields_filled": filled, "fields_total": total}
         record = {
             "provider": provider.id,
             "provider_label": provider.label,
@@ -143,7 +195,7 @@ class Services:
             "requested_model": model,
             "prompt_mode": spec.prompt_mode,
             "prompt": system_prompt if spec.prompt_mode == "custom" else None,
-            "text": result.text,
+            "text": text,
             "latency_ms": result.latency_ms,
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
@@ -155,6 +207,7 @@ class Services:
             "preprocess": str(pre) or None,
             "preprocess_label": pre.describe() if not pre.is_identity else None,
             "created_at": time.time(),
+            **structured,
         }
         doc.save_llm_result(page, key, record)
         return {**record, "key": key, "cached": False}
@@ -231,8 +284,9 @@ class Services:
                 entry = llm.setdefault(r["key"], {
                     "id": f"llm:{r['key']}", "kind": "llm", "key": r["key"],
                     "provider": r["provider"], "model": r["model"], "prompt_mode": r.get("prompt_mode"),
-                    "preprocess": r.get("preprocess"),
+                    "preprocess": r.get("preprocess"), "schema_label": r.get("schema_label"),
                     "label": f"{r.get('provider_label') or r['provider']} · {r['model']} · {r.get('prompt_mode')}"
+                             + (f" ({r['schema_label']})" if r.get("schema_label") else "")
                              + (f" · image: {r['preprocess_label']}" if r.get("preprocess_label") else ""),
                     "pages": [], "input_tokens": 0, "output_tokens": 0, "latency_ms": 0.0,
                     "updated_at": 0.0,
@@ -247,6 +301,21 @@ class Services:
             s["page_count"] = len(s["pages"])
         return sources
 
+    @staticmethod
+    def _llm_result(doc: OpenDocument, page: int, source: str) -> dict[str, Any] | None:
+        key = source[4:] if source.startswith("llm:") else None
+        results = doc.list_llm_results(page)
+        if key:
+            results = [r for r in results if r["key"] == key]
+        return results[0] if results else None
+
+    def page_data(self, doc: OpenDocument, page: int, source: str) -> Any:
+        """Parsed structured-extraction data of one page, or ``None`` (not an extraction, or not run)."""
+        if source != "llm" and not source.startswith("llm:"):
+            return None
+        result = self._llm_result(doc, page, source)
+        return result.get("data") if result else None
+
     def page_text(self, doc: OpenDocument, page: int, source: str, run_ocr: bool = False) -> str | None:
         """Text of one page from one source, or ``None`` if not extracted yet."""
         if source == "native":
@@ -255,11 +324,8 @@ class Services:
             layer = self.run_ocr_page(doc, page) if run_ocr else doc.cached_ocr_text(page)
             return layer.text if layer else None
         if source == "llm" or source.startswith("llm:"):
-            key = source[4:] if source.startswith("llm:") else None
-            results = doc.list_llm_results(page)
-            if key:
-                results = [r for r in results if r["key"] == key]
-            return results[0]["text"] if results else None
+            result = self._llm_result(doc, page, source)
+            return result["text"] if result else None
         raise DocumentError(f"unknown source '{source}'")
 
     def source_label(self, doc: OpenDocument, source: str) -> str:
@@ -292,4 +358,4 @@ def parse_pages(spec: str | None, page_count: int) -> list[int]:
     return out
 
 
-__all__ = ["LLMSpec", "ProviderError", "Services", "parse_pages"]
+__all__ = ["ExtractSchema", "LLMSpec", "ProviderError", "Services", "parse_pages"]

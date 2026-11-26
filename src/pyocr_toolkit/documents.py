@@ -226,14 +226,16 @@ class OpenDocument:
         return self.folder / "llm" / str(number)
 
     @staticmethod
-    def llm_cache_key(provider: str, model: str, prompt: str, preprocess: str = "") -> str:
+    def llm_cache_key(provider: str, model: str, prompt: str, preprocess: str = "", schema: str = "") -> str:
         """Stable id of one LLM configuration, identical on every page of a document.
 
-        ``preprocess`` is the canonical image-preprocessing spec. It is only mixed
-        into the digest when non-empty, so runs on the plain page image keep the
-        keys they had before preprocessing existed (no orphaned caches).
+        ``preprocess`` is the canonical image-preprocessing spec and ``schema`` the
+        canonical JSON of a structured-extraction schema. Each is only mixed into the
+        digest when non-empty, so plain transcriptions keep the keys they had before
+        those features existed (no orphaned caches).
         """
-        material = f"{provider}\0{model}\0{prompt}" + (f"\0{preprocess}" if preprocess else "")
+        material = (f"{provider}\0{model}\0{prompt}" + (f"\0{preprocess}" if preprocess else "")
+                    + (f"\0schema={schema}" if schema else ""))
         digest = hashlib.sha256(material.encode()).hexdigest()[:16]
         safe_model = re.sub(r"[^A-Za-z0-9._-]+", "_", model)[:60]
         return f"{provider}__{safe_model}__{digest}"

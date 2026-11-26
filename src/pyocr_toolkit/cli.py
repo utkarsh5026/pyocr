@@ -177,6 +177,7 @@ async def _extract(args: argparse.Namespace) -> int:
     doc = _load_document(args.file)
     pages = parse_pages(args.pages, doc.meta.page_count)
     texts: dict[int, str] = {}
+    data: dict[int, object] = {}  # structured extraction (--mode extract): parsed fields per page
     if args.engine == "native":
         texts = {n: doc.native_text(n).text for n in pages}
     elif args.engine == "ocr":
@@ -184,8 +185,18 @@ async def _extract(args: argparse.Namespace) -> int:
             texts[n] = (await asyncio.to_thread(services.run_ocr_page, doc, n)).text
             print(f"  OCR page {n + 1}/{doc.meta.page_count}", file=sys.stderr)
     else:
-        spec = LLMSpec(args.provider, args.model, args.mode, preprocess=args.preprocess or "")
-        provider, model, _ = services.resolve_spec(spec)
+        schema = args.schema or ""
+        if args.mode == "extract" and schema and not schema.lstrip().startswith("{") and Path(schema).is_file():
+            schema = Path(schema).read_text(encoding="utf-8")
+        elif args.mode != "extract" and schema:
+            print("--schema only applies with --mode extract", file=sys.stderr)
+            return 2
+        spec = LLMSpec(args.provider, args.model, args.mode, preprocess=args.preprocess or "", extract_schema=schema)
+        try:
+            provider, model, _ = services.resolve_spec(spec)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
         if not provider.configured:
             print(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}", file=sys.stderr)
             return 2
@@ -194,7 +205,11 @@ async def _extract(args: argparse.Namespace) -> int:
             res = await services.run_llm_page(doc, n, spec)
             note = "cached" if res["cached"] else f"{res['latency_ms'] / 1000:.1f}s"
             print(f"  LLM page {n + 1}: {note}" + "".join(f"  ⚠ {w}" for w in res["warnings"]), file=sys.stderr)
+            for e in res.get("data_errors") or []:
+                print(f"    ⚠ {e['path']}: {e['message']}", file=sys.stderr)
             texts[n] = res["text"]
+            if "data" in res:
+                data[n] = res["data"]
 
         results = await asyncio.gather(*(one(n) for n in pages), return_exceptions=True)
         for n, r in zip(pages, results):
@@ -203,12 +218,15 @@ async def _extract(args: argparse.Namespace) -> int:
 
     ordered = [(n, texts.get(n, "")) for n in pages]
     source = args.engine if args.engine != "llm" else f"llm:{args.provider}"
+    extra = (lambda n: {"data": data.get(n)}) if data else (lambda n: {})
     if args.format == "jsonl":
         out = "".join(json.dumps({"document_id": doc.meta.id, "filename": doc.meta.filename, "page": n + 1,
-                                  "source": source, "text": t}, ensure_ascii=False) + "\n" for n, t in ordered)
+                                  "source": source, "text": t, **extra(n)}, ensure_ascii=False) + "\n"
+                      for n, t in ordered)
     elif args.format == "json":
         out = json.dumps({"document": doc.meta.__dict__, "source": source,
-                          "pages": [{"page": n + 1, "text": t} for n, t in ordered]}, ensure_ascii=False, indent=1)
+                          "pages": [{"page": n + 1, "text": t, **extra(n)} for n, t in ordered]},
+                         ensure_ascii=False, indent=1)
     elif args.format == "md":
         out = f"# {doc.meta.filename}\n" + "".join(f"\n## Page {n + 1}\n\n{t.strip()}\n" for n, t in ordered)
     else:
@@ -280,7 +298,10 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--engine", choices=["native", "ocr", "llm"], default="llm")
     e.add_argument("-p", "--provider", default="anthropic", help="for --engine llm")
     e.add_argument("-m", "--model", default=None)
-    e.add_argument("--mode", default="verbatim", choices=["verbatim", "markdown"], help="LLM prompt")
+    e.add_argument("--mode", default="verbatim", choices=["verbatim", "markdown", "extract"],
+                   help="LLM prompt; 'extract' fills --schema with structured data (JSON) instead of transcribing")
+    e.add_argument("--schema", default=None, metavar="SCHEMA",
+                   help="for --mode extract: a preset (invoice, receipt, form), a JSON Schema file, or JSON text")
     e.add_argument("--pages", default=None, help="1-based ranges, e.g. 1-3,7 (default: all)")
     e.add_argument("--preprocess", default=None, metavar="SPEC", help=PREPROCESS_HELP)
     e.add_argument("--format", choices=["txt", "md", "json", "jsonl"], default="txt")

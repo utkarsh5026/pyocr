@@ -119,6 +119,7 @@
         <button id="rerun-llm" class="btn small ghost" title="Ignore the cache and call the model again">{{ icon('refresh') }}Re-run</button>
         <button id="ab-llm" class="btn small" hidden title="Transcribe the original and the adjusted image with this model, then diff them">{{ icon('diff') }}A/B: original vs adjusted</button>
         <div class="spacer"></div>
+        <button id="llm-json-toggle" class="btn small ghost" hidden title="Show the raw JSON instead of the field table">{{ icon('code') }}<span class="lbl">JSON</span></button>
         <button class="btn small ghost" data-copy="#llm-text" title="Copy text">{{ icon('copy') }}Copy</button>
       </div>
       <div class="tab-meta">
@@ -126,6 +127,7 @@
         <button id="delete-llm" class="btn small ghost danger icon-only" title="Delete this stored result">{{ icon('trash') }}</button>
       </div>
       <div id="llm-meta" class="tab-meta small"></div>
+      <div id="llm-data" class="extract-view" hidden></div>
       <pre id="llm-text" class="text"></pre>
     </div>
 

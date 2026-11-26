@@ -722,6 +722,13 @@ h3.h-icon .icon { width: 16px; height: 16px; }
 #drop-overlay > div { display: flex; flex-direction: column; align-items: center; gap: 10px; }
 #drop-overlay .icon { width: 32px; height: 32px; }
 
+/* Eight nav links (with Workspaces and Models): narrow the search box before the Upload button runs off-screen. */
+@media (max-width: 1400px) {
+  .quicksearch input { width: 150px; }
+  .mainnav a { padding: 6px 8px; }
+}
+@media (max-width: 1240px) { .quicksearch { display: none; } }  /* the Search page is still in the nav */
+@media (max-width: 1060px) { .mainnav a span { display: none; } }  /* icons only (titles still name them) */
 @media (max-width: 1100px) {
   #workspace, #workspace.side { grid-template-columns: 190px 1fr; grid-template-rows: 1fr 1fr; }
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -752,3 +759,59 @@ h3.h-icon .icon { width: 16px; height: 16px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* ==========================================================================
+   Workspaces + upload dialog
+   ========================================================================== */
+.lib-filters { display: flex; gap: 8px; flex-wrap: wrap; }
+.ws-tags { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 4px; }
+.ws-tags .badge .icon, .ws-tags .badge svg { width: 11px; height: 11px; margin-right: 4px; }
+.ws-tags .badge:hover { filter: brightness(1.05); text-decoration: none; }
+.ws-card { margin: 0; padding: 0; overflow: hidden; display: flex; flex-direction: column; color: var(--text);
+  transition: border-color .15s, box-shadow .15s, transform .15s; }
+.ws-card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-md); color: var(--text); transform: translateY(-2px); }
+.ws-thumbs { height: 140px; background: var(--bg-sunken); display: flex; justify-content: center; align-items: flex-end; gap: 0; padding-top: 16px; overflow: hidden; }
+.ws-thumbs img { width: 92px; height: 124px; object-fit: cover; object-position: top; border-radius: 6px 6px 0 0;
+  box-shadow: var(--shadow-md); filter: var(--paper-filter); background: #fff; margin: 0 -14px; }
+.ws-thumbs img:nth-child(1) { transform: rotate(-5deg) translateY(6px); z-index: 1; }
+.ws-thumbs img:nth-child(2) { z-index: 3; }
+.ws-thumbs img:nth-child(3) { transform: rotate(5deg) translateY(6px); z-index: 2; }
+.ws-thumbs img:only-child { transform: none; }
+.ws-thumbs-empty { display: grid; place-items: center; width: 100%; height: 100%; color: var(--subtle); }
+.ws-thumbs-empty .icon { width: 32px; height: 32px; }
+.doc-card .ws-thumbs-empty { width: 52px; height: 68px; border-radius: 6px; background: var(--bg-sunken); flex: none; }
+.doc-card .ws-thumbs-empty .icon { width: 22px; height: 22px; }
+.ws-card .lib-body { display: flex; flex-direction: column; gap: 6px; }
+.ws-title { min-width: 0; }
+.ws-title .crumb { color: var(--muted); }
+.ws-name-row { display: flex; align-items: center; gap: 6px; }
+.ws-name-row h1 { overflow-wrap: anywhere; }
+.ws-rename-form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 4px 0 8px; }
+.ws-rename-form input { width: min(360px, 100%); }
+.ws-rename-form .ws-suggest { flex-basis: 100%; }
+.ws-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.ws-suggest { gap: 6px; }
+.ws-suggest button { font: inherit; font-size: 12.5px; font-weight: 500; font-family: var(--mono); padding: 3px 10px; border-radius: 99px;
+  border: 1px dashed var(--border-strong); background: transparent; color: var(--muted); cursor: pointer; transition: all .15s; }
+.ws-suggest button:hover, .ws-suggest button[aria-pressed=true] { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); border-style: solid; }
+.ws-suggest-row { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.ws-suggest-row .ws-suggest { flex: 1; }
+
+.dialog { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); color: var(--text);
+  box-shadow: var(--shadow-lg); padding: 22px; width: min(520px, calc(100vw - 32px)); }
+.dialog::backdrop { background: rgba(10, 12, 18, .45); backdrop-filter: blur(2px); }
+.dialog[open] { animation: dialog-in .18s ease-out; }
+@keyframes dialog-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+.dialog h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 17px; }
+.dialog h2 .icon { color: var(--accent); }
+.dialog form { display: flex; flex-direction: column; gap: 12px; }
+.dialog .field { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.dialog .field input, .dialog .field select { width: 100%; color: var(--text); font-weight: 400; }
+.upload-files { list-style: none; margin: 0; padding: 8px 10px; max-height: 150px; overflow: auto; background: var(--bg-sunken);
+  border-radius: var(--radius-sm); color: var(--muted); }
+.upload-files li { display: flex; justify-content: space-between; gap: 12px; padding: 2px 0; }
+.upload-files li span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.upload-files li.ok span:last-child { color: var(--good); }
+.upload-files li.err span:last-child { color: var(--bad); }
+.dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
+@media (prefers-reduced-motion: reduce) { .dialog[open], .ws-card { animation: none; transition: none; } }

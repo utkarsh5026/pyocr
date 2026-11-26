@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Workspaces: upload several files or a `.zip` at once and keep them together under one editable name.
+  The upload dialog suggests names (from the file names, or `adjective-scientist` style like `festive-albattani`).
+  New Workspaces page and workspace page (rename, add files, remove documents), workspace badges and filter in
+  the Library, `POST /api/uploads` (zips unpacked, bad files skipped with a reason), `/api/workspaces` endpoints,
+  and `pyocr import FILES... [-w NAME]`. Stored in `data/workspaces/`; document folders are unchanged.
 - New default models: `OPENAI_MODEL` is now `gpt-6.2-sol` (was `gpt-5`, which OpenAI has deprecated) and
   `GEMINI_MODEL` is now `gemini-3.8-flash` (was `gemini-2.5-flash`, which Google routes to
   `gemini-3.5-flash-lite` from Dec 1, 2026). Set either variable to keep the old model. Results from the old

@@ -6,6 +6,7 @@
   <b>Contents</b>
   <a href="#start">Quick start</a>
   <a href="#tour">Tour of the pages</a>
+  <a href="#workspaces">Workspaces &amp; batch uploads</a>
   <a href="#engines">The three text sources</a>
   <a href="#prompts">LLM prompts</a>
   <a href="#metrics">Comparing: CER &amp; WER</a>
@@ -28,7 +29,7 @@
 
 <h2 id="start">Quick start</h2>
 <ol>
-  <li><b>Upload</b> a file with the <i>Upload</i> button (top right) or by dropping it anywhere on a page. You can upload several at once.</li>
+  <li><b>Upload</b> a file with the <i>Upload</i> button (top right) or by dropping it anywhere on a page. You can upload several at once, or a <b>.zip</b>; those go into a <a href="#workspaces">workspace</a>.</li>
   <li>The file opens on its <b>Overview</b> page. Each page gets a badge; <span class="badge scan">scan</span> means it has no embedded text, so it needs OCR or an LLM.</li>
   <li>Start an <b>extraction</b>: choose Tesseract or an LLM, a page range (or leave it empty for every page), and click <i>Start extraction</i>. A progress bar follows the job.</li>
   <li>Open the <b>Page inspector</b> to see one page next to all of its texts, or <b>Full text</b> to read the whole document from one source.</li>
@@ -38,7 +39,8 @@
 <h2 id="tour">Tour of the pages</h2>
 <dl class="defs">
   <dt><a href="/">Home</a></dt><dd>Upload area, setup status and recent documents.</dd>
-  <dt><a href="/documents">Library</a></dt><dd>Every uploaded document as a card showing how many pages have native, OCR and LLM text, and how many still have no text at all. Filter by status (<i>Needs text</i>, <i>Scanned</i>, <i>All pages have text</i>) or by name.</dd>
+  <dt><a href="/documents">Library</a></dt><dd>Every uploaded document as a card showing how many pages have native, OCR and LLM text, and how many still have no text at all. Filter by status (<i>Needs text</i>, <i>Scanned</i>, <i>All pages have text</i>), by workspace or by name.</dd>
+  <dt><a href="/workspaces">Workspaces</a></dt><dd>Named groups of documents, usually one batch upload each. Open one to rename it, add files, or take documents out of it.</dd>
   <dt>Document → Overview</dt><dd>Start background extractions, list every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
   <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text, Tesseract, LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
   <dt>Document → Full text</dt><dd>The whole document from one source, page by page, optionally next to the page images. Find-in-text, copy and download.</dd>
@@ -48,6 +50,27 @@
   <dt><a href="/providers">Providers</a></dt><dd>Which LLMs are configured, which settings are missing, a form to set keys and endpoints in the browser, and a <i>Test connection</i> button.</dd>
   <dt><a href="/models">Models</a></dt><dd>Search vision models and see whether each is good for transcription, its price and why; list the models your key can use.</dd>
 </dl>
+
+<h2 id="workspaces">Workspaces and batch uploads</h2>
+<p>A <b>workspace</b> keeps documents that belong together (a folder of invoices, a zip of scans) under one name.</p>
+<ul>
+  <li><b>Several files or a .zip.</b> Select or drop more than one file, or any <code>.zip</code>, and a dialog asks where
+    they go: a <i>new workspace</i>, an <i>existing</i> one, or <i>no workspace</i> (just the Library). A single PDF or
+    image skips the dialog and opens right away, as before.</li>
+  <li><b>Name suggestions.</b> When the files share a name, that comes first: <code>invoices-2024.zip</code> suggests
+    <code>invoices-2024</code>, and <code>report-q1.pdf</code> + <code>report-q2.pdf</code> suggest <code>report</code>.
+    The other ideas are short <code>adjective-scientist</code> names such as <code>festive-albattani</code>; the shuffle
+    button gives new ones. Type anything you like instead; names must be unique (ignoring case) and at most 80 characters.</li>
+  <li><b>Zips</b> are unpacked on upload. Every PDF or image inside becomes its own document. Unsupported files,
+    zips inside the zip, encrypted entries and files that won't open are skipped, and the dialog lists each one with the reason.
+    <code>__MACOSX</code> folders and hidden files are ignored. Limits: 500 files per zip, each file up to
+    <code>MAX_UPLOAD_MB</code>, and the zip's unpacked total up to 5 × <code>MAX_UPLOAD_MB</code>.</li>
+  <li><b>Renaming.</b> On the workspace page, click the pencil or double-click the name. Name ideas based on the files are offered there too.</li>
+  <li><b>Adding later.</b> On a workspace page, <i>Add files</i> or dropping files puts them straight into that workspace.</li>
+  <li><b>Removing vs deleting.</b> <b>×</b> on a card takes the document out of the workspace but keeps it in the Library;
+    the bin deletes it everywhere. Deleting a workspace asks whether to delete its documents as well.</li>
+  <li>A document can belong to more than one workspace. Its badges in the Library show which ones.</li>
+</ul>
 
 <h2 id="engines">The three text sources, from first principles</h2>
 <h3>1. Native text: the text the file already contains</h3>
@@ -168,13 +191,18 @@ pyocr providers                                       # list providers and their
 pyocr extract FILE --engine llm -p anthropic --pages 1-5 --format jsonl -o out.jsonl
 pyocr extract FILE --engine ocr                       # Tesseract, all pages, text to stdout
 pyocr extract FILE --engine native --format md        # embedded text layer only
-pyocr compare FILE -p openai -m gpt-6.2-sol                 # per-page OCR/native error rate vs an LLM</pre>
+pyocr compare FILE -p openai -m gpt-6.2-sol                 # per-page OCR/native error rate vs an LLM
+pyocr import a.pdf b.pdf scans.zip folder/ -w "Q3"    # add many files as one workspace (zips unpacked)
+pyocr import FILE... --no-workspace                   # add to the Library without grouping</pre>
 <p>Documents processed from the command line also appear in the Library, so you can inspect them in the browser afterwards.</p>
 
 <h2 id="api">HTTP API</h2>
 <p>Everything this UI does goes through a JSON API. Interactive documentation is at <a href="/docs">/docs</a>.
   The most useful endpoints:</p>
 <pre class="code">POST /api/documents                              upload (multipart "file")
+POST /api/uploads                                several files (multipart "files"), zips unpacked; optional workspace_id
+GET  /api/workspaces                             list; POST {"name"} creates, PATCH /api/workspaces/{id} renames
+POST /api/workspaces/suggest-names               {"filenames":["invoices.zip"]} → name ideas
 POST /api/documents/{id}/jobs                    {"kind":"llm","pages":"1-5","llm":{"provider":"anthropic"}}
 GET  /api/jobs/{job_id}                          progress
 GET  /api/documents/{id}/sources                 what has been extracted
@@ -184,7 +212,7 @@ POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)
 
 <h2 id="data">Data and privacy</h2>
 <ul>
-  <li>Everything is stored under <code>DATA_DIR</code> (default <code>./data</code>): the original file, OCR results and LLM results as plain JSON.</li>
+  <li>Everything is stored under <code>DATA_DIR</code> (default <code>./data</code>): the original file, OCR results and LLM results as plain JSON. Workspaces are small JSON files in <code>workspaces/</code> that list document ids.</li>
   <li>A page image goes to an LLM provider <b>only</b> when you start a transcription for that page, and only to the provider you chose. Native text and Tesseract never leave your machine.</li>
   <li>API keys are read on the server and are never sent to the browser.</li>
   <li>There is no login. Keep it on <code>127.0.0.1</code> (the default) or put it behind your own authentication before sharing it on a network.</li>

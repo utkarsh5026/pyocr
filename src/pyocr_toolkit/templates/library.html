@@ -11,7 +11,13 @@
     <p>{{ docs|length }} document{{ 's' if docs|length != 1 }} · {{ total_pages }} page{{ 's' if total_pages != 1 }}
       {% if docs %} · {% if total_missing %}<b class="warn">{{ total_missing }} page{{ 's' if total_missing != 1 }} still without text</b>{% else %}every page has text{% endif %}{% endif %}</p>
   </div>
-  {% if docs %}<input type="search" id="lib-filter" placeholder="Filter by file name…" aria-label="Filter by file name">{% endif %}
+  {% if docs %}<div class="lib-filters">
+    {% if spaces %}<select id="lib-ws" aria-label="Filter by workspace">
+      <option value="">All workspaces</option>
+      {% for w in spaces %}<option value="{{ w.id }}">{{ w.name }}</option>{% endfor %}
+    </select>{% endif %}
+    <input type="search" id="lib-filter" placeholder="Filter by file name…" aria-label="Filter by file name">
+  </div>{% endif %}
 </div>
 {% if docs %}
 <div class="chips lib-chips" role="radiogroup" aria-label="Filter by status">
@@ -23,32 +29,7 @@
 
 <div class="lib-grid" id="lib-grid">
   {% for d in docs %}
-  <article class="card lib-card" data-name="{{ d.filename|lower }}" data-status="{{ d.status }}">
-    <a class="lib-thumb" href="/documents/{{ d.id }}" tabindex="-1" aria-hidden="true">
-      <img loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=40" alt="">
-      <span class="badge {{ status_cls[d.status] }}">{% if d.status == 'complete' %}{{ icon('check') }}All pages have text{% else %}{{ 'Scanned · ' if d.status == 'scanned' }}{{ d.missing_pages }} page{{ 's' if d.missing_pages != 1 }} need{{ 's' if d.missing_pages == 1 }} text{% endif %}</span>
-    </a>
-    <div class="lib-body">
-      <a class="file-name" href="/documents/{{ d.id }}" title="{{ d.filename }}">{{ d.filename }}</a>
-      <div class="small muted">{{ d.page_count }} page{{ 's' if d.page_count != 1 }} · {{ d.filetype|upper }} · {{ d.size_bytes|filesize }} · {{ d.created_at|datetime }}</div>
-      <div class="coverage" title="Pages with text from each source">
-        {% for key, label in [('native', 'Native'), ('ocr', 'OCR'), ('llm', 'LLM')] %}
-        {% set n = d[key ~ '_pages'] %}
-        <div class="cov {{ key }}">
-          <span class="cov-k">{{ icon({'native': 'type', 'ocr': 'cpu', 'llm': 'sparkles'}[key]) }}{{ label }}</span><span class="cov-v">{{ n }}/{{ d.page_count }}</span>
-          <span class="cov-bar"><i style="width: {{ (100 * n / d.page_count)|round(1) if d.page_count else 0 }}%"></i></span>
-        </div>
-        {% endfor %}
-      </div>
-      <div class="lib-actions">
-        <a class="btn small ghost" href="/documents/{{ d.id }}/pages/1">{{ icon('eye') }}Inspect</a>
-        <a class="btn small ghost" href="/documents/{{ d.id }}/text">{{ icon('text') }}Text</a>
-        <a class="btn small ghost" href="/documents/{{ d.id }}/compare">{{ icon('diff') }}Compare</a>
-        <div class="spacer"></div>
-        <button class="btn small ghost danger icon-only" data-delete="{{ d.id }}" data-name="{{ d.filename }}" title="Delete" aria-label="Delete {{ d.filename }}">{{ icon('trash') }}</button>
-      </div>
-    </div>
-  </article>
+  {% include "_doc_card.html" %}
   {% endfor %}
 </div>
 <p class="small muted" id="lib-none" hidden>No documents match this filter.</p>

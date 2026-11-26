@@ -129,7 +129,8 @@ Everything you upload and extract is stored in `./data` (change it with `DATA_DI
 | Page | What you do there |
 |---|---|
 | **Home** `/` | Drop files to upload; see setup status and recent documents. |
-| **Library** `/documents` | Document cards showing native / OCR / LLM coverage and how many pages still have no text. Filter by status or name; delete. |
+| **Library** `/documents` | Document cards showing native / OCR / LLM coverage and how many pages still have no text. Filter by status, workspace or name; delete. |
+| **Workspaces** `/workspaces` | Named groups of documents. Uploading several files or a `.zip` offers to create one, with suggested names (from the file names, or `adjective-scientist` like `festive-albattani`). Open one to rename it, add files or remove documents. |
 | **Overview** `/documents/{id}` | Start background extraction (Tesseract or any LLM) for all pages or a range such as `1-5,9`; follow progress; see every *source* (engine + model + prompt) with token usage; export; page thumbnails. |
 | **Page inspector** `/documents/{id}/pages/{n}` | Page image next to native, OCR and LLM text; run OCR or an LLM on just this page; per-page diff; a *Side by side* tab with all three texts in synced columns; search hits drawn on the image. Keyboard: `←/→`, `/`, `1-5`, `t`, `o`. |
 | **Full text** `/documents/{id}/text` | Read the whole document from one source, optionally beside the page images; find, copy, download. |
@@ -168,11 +169,21 @@ pyocr extract report.pdf --engine llm -p anthropic --pages 1-5 --format jsonl -o
 pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdown to stdout
 pyocr extract born-digital.pdf --engine native              # embedded text only, no network
 pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR / native CER vs an LLM
+pyocr import a.pdf b.pdf scans.zip folder/ -w invoices      # add many files as one workspace (zips unpacked)
 pyocr providers                                             # which providers are ready
 python -m pyocr_toolkit --help                              # same CLI without the script on PATH
 ```
 
 Documents processed on the command line also appear in the web app's library.
+
+### Batch uploads and workspaces
+
+Upload several files, or a `.zip`, and they land together in a **workspace** whose name you can edit. pyocr suggests
+names: the one the files share (`invoices-2024.zip` → `invoices-2024`) first, then short `adjective-scientist` ideas.
+Zips are unpacked; files that can't be used (unsupported type, zip in a zip, encrypted, broken) are skipped and
+reported with the reason. A single file still uploads straight to the library. Workspaces only reference documents
+(`data/workspaces/<id>.json`), so removing a document from one, or deleting a workspace, keeps the document unless
+you ask otherwise.
 
 ## How it works
 

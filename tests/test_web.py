@@ -68,6 +68,7 @@ def test_html_pages_render(client, doc_id):
         ("/providers", "ANTHROPIC_API_KEY"),
         ("/models", "Models your key can use"),
         ("/help", "first principles"),
+        ("/workspaces", "Workspaces"),
     ]:
         r = client.get(url)
         assert r.status_code == 200, url
@@ -77,7 +78,7 @@ def test_html_pages_render(client, doc_id):
     assert r.status_code == 404 and "unknown document" in r.text and "<html" in r.text
     # static assets referenced by the templates exist
     for asset in ["common.js", "workspace.js", "document.js", "reader.js", "compare.js", "search.js",
-                  "jobs.js", "providers.js", "models.js", "library.js", "styles.css"]:
+                  "jobs.js", "providers.js", "models.js", "library.js", "workspaces.js", "styles.css"]:
         assert client.get(f"/static/{asset}").status_code == 200, asset
 
 

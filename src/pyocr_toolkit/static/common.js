@@ -96,28 +96,162 @@ function getConfig() {
 }
 
 // ------------------------------------------------------------------ uploads
-async function uploadFiles(files) {
-  files = Array.from(files || []);
-  if (!files.length) return;
-  const uploaded = [];
+const isZip = (file) => /\.zip$/i.test(file.name);
+const fmtSize = (n) => (n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`);
+const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Workspace name ideas from the server ("adjective-scientist", led by one taken from the file names). */
+async function suggestNames(filenames = [], count = 4) {
+  return (await postJSON("/api/workspaces/suggest-names", { filenames, count })).names;
+}
+
+/**
+ * Upload files one request at a time (so each gets its own progress line) to
+ * /api/uploads, which unpacks zips. `onFile(i, status, text)` reports progress.
+ */
+async function sendBatch(files, workspaceId, onFile = () => {}) {
+  const documents = [], skipped = [];
   for (const [i, file] of files.entries()) {
-    toast(`Uploading ${file.name}${files.length > 1 ? ` (${i + 1}/${files.length})` : ""}…`);
+    onFile(i, "run", isZip(file) ? "unpacking…" : "uploading…");
     const fd = new FormData();
-    fd.append("file", file);
+    fd.append("files", file);
+    if (workspaceId) fd.append("workspace_id", workspaceId);
     try {
-      uploaded.push(await api("/api/documents", { method: "POST", body: fd }));
+      const res = await api("/api/uploads", { method: "POST", body: fd });
+      documents.push(...res.documents);
+      skipped.push(...res.skipped);
+      const n = res.documents.length;
+      if (!n) onFile(i, "err", res.skipped[0]?.reason || "nothing to add");
+      else if (!isZip(file)) onFile(i, "ok", "added");
+      else onFile(i, "ok", plural(n, "document") + (res.skipped.length ? `, ${res.skipped.length} skipped` : ""));
     } catch (e) {
-      toast(`${file.name}: ${e.message}`, true);
-      await new Promise((r) => setTimeout(r, 1500));
+      skipped.push({ name: file.name, reason: e.message });
+      onFile(i, "err", e.message);
     }
   }
-  if (uploaded.length === 1) location.href = `/documents/${uploaded[0].id}`;
-  else if (uploaded.length > 1) location.href = "/documents";
+  return { documents, skipped };
+}
+
+function skippedMessage(skipped) {
+  if (!skipped.length) return "";
+  const first = skipped.slice(0, 3).map((s) => `${s.name}: ${s.reason}`).join("; ");
+  return `Skipped ${plural(skipped.length, "file")} (${first}${skipped.length > 3 ? "; …" : ""})`;
+}
+
+async function uploadFiles(files, { workspaceId } = {}) {
+  files = Array.from(files || []);
+  if (!files.length) return;
+  workspaceId ??= $("#ws-root")?.dataset.wsId;  // on a workspace page, uploads go into it
+  if (workspaceId) {
+    toast(`Adding ${plural(files.length, "file")}…`);
+    const { documents, skipped } = await sendBatch(files, workspaceId);
+    if (skipped.length) { toast(skippedMessage(skipped), true); await new Promise((r) => setTimeout(r, 2500)); }
+    if (documents.length) location.href = `/workspaces/${workspaceId}`;
+    return;
+  }
+  if (files.length > 1 || isZip(files[0])) return openUploadDialog(files);
+
+  const file = files[0];
+  toast(`Uploading ${file.name}…`);
+  const fd = new FormData();
+  fd.append("file", file);
+  try {
+    const doc = await api("/api/documents", { method: "POST", body: fd });
+    location.href = `/documents/${doc.id}`;
+  } catch (e) {
+    toast(`${file.name}: ${e.message}`, true);
+  }
+}
+
+/** Several files or a zip: ask which workspace they belong to (with name suggestions), then upload. */
+async function openUploadDialog(files) {
+  const dlg = $("#upload-dialog");
+  if (!dlg?.showModal) {  // very old browser: upload without a workspace
+    const { skipped } = await sendBatch(files, null);
+    if (skipped.length) toast(skippedMessage(skipped), true);
+    location.href = "/documents";
+    return;
+  }
+  const nameIn = $("#upload-ws-name"), chips = $("#upload-ws-suggest"), existing = $("#upload-ws-existing");
+  const okBtn = $("#upload-ok"), list = $("#upload-files");
+  const radios = $$("input[name=ws-mode]", dlg);
+  const mode = () => $("input[name=ws-mode]:checked", dlg).value;
+  const filenames = files.map((f) => f.name);
+  let done = null;  // set once uploads finish: where "Continue" goes
+
+  const zips = files.filter(isZip).length;
+  const total = files.reduce((n, f) => n + f.size, 0);
+  $("#upload-summary").textContent = `${plural(files.length, "file")} · ${fmtSize(total)}` +
+    (zips ? ` · ${zips === 1 ? "the zip" : `${zips} zips`} will be unpacked` : "");
+  list.innerHTML = files.map((f) => `<li><span title="${esc(f.name)}">${esc(f.name)}</span><span>${esc(fmtSize(f.size))}</span></li>`).join("");
+  okBtn.disabled = false;
+  okBtn.textContent = "Upload";
+  radios.forEach((r) => { r.disabled = false; });
+  $("input[name=ws-mode][value=new]", dlg).checked = true;
+
+  const markChips = () => $$("button", chips).forEach((b) => b.setAttribute("aria-pressed", String(b.textContent === nameIn.value.trim())));
+  async function loadSuggestions(fill) {
+    const names = await suggestNames(filenames);
+    chips.innerHTML = names.map((n) => `<button type="button">${esc(n)}</button>`).join("");
+    if (fill || !nameIn.value.trim()) nameIn.value = names[0] || "";
+    markChips();
+  }
+  chips.onclick = (e) => {
+    const b = e.target.closest("button");
+    if (b) { nameIn.value = b.textContent; markChips(); nameIn.focus(); }
+  };
+  nameIn.oninput = markChips;
+  $("#upload-ws-shuffle").onclick = guard(() => loadSuggestions(false));
+
+  const syncMode = () => $$("[data-ws-mode]", dlg).forEach((el) => { el.hidden = el.dataset.wsMode !== mode(); });
+  radios.forEach((r) => { r.onchange = syncMode; });
+  syncMode();
+
+  nameIn.value = "";
+  guard(() => loadSuggestions(true))();
+  guard(async () => {
+    const spaces = await api("/api/workspaces");
+    existing.innerHTML = spaces.map((w) =>
+      `<option value="${esc(w.id)}">${esc(w.name)} (${esc(plural(w.document_count, "doc"))})</option>`).join("");
+    const radio = $("input[name=ws-mode][value=existing]", dlg);
+    radio.disabled = !spaces.length;
+    radio.parentElement.title = spaces.length ? "" : "No workspaces yet";
+  })();
+
+  $("#upload-cancel").onclick = () => { if (done) location.href = done; else dlg.close(); };
+  $("#upload-form").onsubmit = guard(async (e) => {
+    e.preventDefault();
+    if (done) { location.href = done; return; }
+    let wsId = null;
+    if (mode() === "new") {
+      const name = nameIn.value.trim();
+      if (!name) { nameIn.focus(); throw new Error("Give the workspace a name, or pick a suggestion"); }
+      wsId = (await postJSON("/api/workspaces", { name })).id;
+    } else if (mode() === "existing") {
+      wsId = existing.value;
+    }
+    const restore = setBusy(okBtn, "Uploading…");
+    radios.forEach((r) => { r.disabled = true; });
+    const items = $$("li", list);
+    const { documents, skipped } = await sendBatch(files, wsId, (i, status, text) => {
+      items[i].className = status;
+      items[i].lastElementChild.textContent = text;
+      if (status === "run") items[i].scrollIntoView({ block: "nearest" });
+    });
+    restore();
+    done = wsId ? `/workspaces/${wsId}` : documents.length === 1 ? `/documents/${documents[0].id}` : "/documents";
+    if (!skipped.length) { location.href = done; return; }
+    // stay open so the skipped files and their reasons can be read
+    $("#upload-summary").textContent = `Added ${plural(documents.length, "document")}. ${skippedMessage(skipped)}`;
+    okBtn.textContent = "Continue";
+  });
+
+  dlg.showModal();
 }
 
 function wireUploads() {
   $$(".upload-input").forEach((input) => input.addEventListener("change", (e) => {
-    uploadFiles(e.target.files);
+    uploadFiles(e.target.files, { workspaceId: e.target.dataset.workspace });
     e.target.value = "";
   }));
   const overlay = $("#drop-overlay");

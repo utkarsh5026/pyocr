@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Workspaces{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Workspaces</h1>
+    <p>A workspace groups documents uploaded together, such as several PDFs or a zip, under one name you can edit.</p>
+  </div>
+  <button type="button" class="btn" id="ws-new">{{ icon('folders') }}New empty workspace</button>
+</div>
+{% if spaces %}
+<div class="lib-grid ws-grid">
+  {% for w in spaces %}
+  <a class="card ws-card" href="/workspaces/{{ w.id }}">
+    <div class="ws-thumbs">
+      {% for d in w.docs[:3] %}<img loading="lazy" src="/api/documents/{{ d.id }}/pages/0/image?dpi=40" alt="">{% endfor %}
+      {% if not w.docs %}<span class="ws-thumbs-empty">{{ icon('folders') }}</span>{% endif %}
+    </div>
+    <div class="lib-body">
+      <b class="file-name" title="{{ w.name }}">{{ w.name }}</b>
+      <div class="small muted">{{ w.docs|length }} document{{ 's' if w.docs|length != 1 }} · {{ w.page_count }} page{{ 's' if w.page_count != 1 }} · {{ w.size_bytes|filesize }}</div>
+      <div class="badges">
+        {% if not w.docs %}<span class="badge">Empty</span>
+        {% elif w.missing_pages %}<span class="badge scan">{{ w.missing_pages }} page{{ 's' if w.missing_pages != 1 }} need{{ 's' if w.missing_pages == 1 }} text</span>
+        {% else %}<span class="badge ok">All pages have text</span>{% endif %}
+        <span class="badge">Created {{ w.created_at|datetime }}</span>
+      </div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty">
+  <div class="empty-icon">{{ icon('folders') }}</div>
+  <h2>No workspaces yet</h2>
+  <p>Upload several files at once, or a <b>.zip</b>, and pyocr offers to put them in a workspace.
+    You can also start an empty one and add files to it.</p>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/workspaces.js?v={{ version }}"></script>{% endblock %}

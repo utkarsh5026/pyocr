@@ -11,7 +11,7 @@
   <label class="dropzone" id="home-drop">
     <input class="upload-input" type="file" hidden multiple
            accept=".pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
-    <div class="dz-icon">{{ icon('upload') }}</div>
+    <div class="dz-icon"><span class="emoji" aria-hidden="true">📤</span></div>
     <b>Drop files here or click to upload</b>
     <span class="small">PDF, XPS, EPUB, PNG, JPEG, TIFF, WebP · up to {{ request.app.state.settings.max_upload_mb }} MB</span>
   </label>
@@ -19,16 +19,16 @@
 
 <section class="status-row">
   <a class="card stat" href="/documents">
-    <span class="stat-icon">{{ icon('file') }}</span>
+    <span class="stat-icon"><span class="emoji" aria-hidden="true">📚</span></span>
     <div><div class="v">{{ total_docs }}</div><div class="k">document{{ 's' if total_docs != 1 }} in library</div></div>
   </a>
   <a class="card stat" href="/providers">
-    <span class="stat-icon">{{ icon('sparkles') }}</span>
+    <span class="stat-icon"><span class="emoji" aria-hidden="true">🤖</span></span>
     <div><div class="v {{ 'good' if configured else 'warn' }}">{{ configured|length }} / {{ providers|length }}</div>
     <div class="k">LLM providers configured</div></div>
   </a>
   <a class="card stat" href="/providers">
-    <span class="stat-icon">{{ icon('cpu') }}</span>
+    <span class="stat-icon"><span class="emoji" aria-hidden="true">🔠</span></span>
     {% set ready = ocr_engines|selectattr('available')|list %}
     <div><div class="v {{ 'good' if ready else 'bad' }}">{{ ready|length }} / {{ ocr_engines|length }}</div>
     <div class="k">OCR engines ready</div></div>
@@ -40,17 +40,17 @@
 {% endif %}
 
 <section>
-  <h2>How it works</h2>
+  <h2 class="h-icon">{{ icon('info') }}How it works</h2>
   <ol class="steps">
-    <li><b>Upload</b><span>Any PDF or image. Pages without a real text layer are flagged as scans.</span></li>
-    <li><b>Extract</b><span>Run an OCR engine or an LLM on a page, a range or the whole document.</span></li>
-    <li><b>Inspect &amp; compare</b><span>Page image next to each text, word-level diffs and error rates.</span></li>
-    <li><b>Export</b><span>TXT, Markdown, JSON or JSONL, ready for RAG and ingestion.</span></li>
+    <li><span class="step-icon"><span class="emoji" aria-hidden="true">📤</span></span><b>Upload</b><span>Any PDF or image. Pages without a real text layer are flagged as scans.</span></li>
+    <li><span class="step-icon"><span class="emoji" aria-hidden="true">✨</span></span><b>Extract</b><span>Run an OCR engine or an LLM on a page, a range or the whole document.</span></li>
+    <li><span class="step-icon"><span class="emoji" aria-hidden="true">🔍</span></span><b>Inspect &amp; compare</b><span>Page image next to each text, word-level diffs and error rates.</span></li>
+    <li><span class="step-icon"><span class="emoji" aria-hidden="true">📦</span></span><b>Export</b><span>TXT, Markdown, JSON or JSONL, ready for RAG and ingestion.</span></li>
   </ol>
 </section>
 
 <section>
-  <div class="section-head"><h2>Recent documents</h2>{% if recent %}<a href="/documents" class="small">View all →</a>{% endif %}</div>
+  <div class="section-head"><h2 class="h-icon">{{ icon('clock') }}Recent documents</h2>{% if recent %}<a href="/documents" class="small">View all {{ icon('arrow-right') }}</a>{% endif %}</div>
   {% if recent %}
   <div class="doc-cards">
     {% for d in recent %}

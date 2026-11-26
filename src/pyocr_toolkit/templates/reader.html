@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_icons.html" import icon %}
 {% block title %}Text · {{ doc.filename }}{% endblock %}
 {% block subnav %}{% include "_doctabs.html" %}{% endblock %}
 {% block content %}
@@ -11,12 +12,12 @@
         {% endfor %}
       </select>
     </label>
-    <label class="check"><input type="checkbox" id="show-images"> Page images</label>
+    <label class="check"><input type="checkbox" id="show-images"> {{ icon('image') }}Page images</label>
     <input type="search" id="find" placeholder="Find in text…">
     <span id="find-count" class="small"></span>
     <div class="spacer"></div>
-    <button class="btn small ghost" id="copy-all">Copy all</button>
-    <details class="menu right"><summary class="btn small">Download</summary>
+    <button class="btn small ghost" id="copy-all">{{ icon('copy') }}Copy all</button>
+    <details class="menu right"><summary class="btn small">{{ icon('download') }}Download {{ icon('chevron-down') }}</summary>
       <div id="downloads"></div>
     </details>
   </div>

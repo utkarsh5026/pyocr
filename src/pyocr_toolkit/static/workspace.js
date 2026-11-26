@@ -140,7 +140,7 @@ function renderOcr() {
       ? `Not run yet for this page. Running it sends the page image to ${esc(engine.label)}.`
       : "Not run yet for this page.";
   }
-  $("#run-ocr").textContent = layer ? "Re-run OCR" : "Run OCR";
+  $("#run-ocr .lbl").textContent = layer ? "Re-run OCR" : "Run OCR";
   $("#run-ocr").disabled = !engine?.available;
   setText($("#ocr-text"), layer ? layer.text : "",
     `Click “Run OCR” (or press o) to OCR this page with ${engine?.label || "the selected engine"}.`);

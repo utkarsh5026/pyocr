@@ -31,14 +31,14 @@
           {% for s in sources %}<option value="{{ s.id }}" {{ 'disabled' if not s.page_count }}>{{ s.label }} ({{ s.page_count }}/{{ doc.page_count }})</option>{% endfor %}
         </select></span>
     </label>
-    <button class="btn primary run-btn" id="run">Compare</button>
+    <button class="btn primary run-btn" id="run">{{ icon('diff') }}Compare</button>
   </div>
 
   <div id="cmp-overall" class="stat-grid"></div>
 
   <section id="cmp-chart" class="card chart-card" hidden>
     <div class="section-head">
-      <h3>Character error rate per page</h3>
+      <h3 class="h-icon">{{ icon('layers') }}Character error rate per page</h3>
       <span class="small muted">click a bar to see that page's diff</span>
       <div class="spacer"></div>
       <div class="legend-inline">
@@ -63,7 +63,7 @@
         <span><span class="del-mark">text</span> only in A</span>
         <span><span class="ins-mark">text</span> only in B</span>
       </div>
-      <a id="pg-open" class="btn small ghost" href="#">Open in inspector {{ icon('arrow-right') }}</a>
+      <a id="pg-open" class="btn small ghost" href="#">{{ icon('eye') }}Open in inspector</a>
     </div>
     <div class="diff-cols">
       <div><div class="src-k">A · <span id="pg-a-label"></span></div><pre class="text" id="pg-a"></pre></div>
@@ -72,7 +72,7 @@
   </section>
 
   <details class="card table-details" id="cmp-table-wrap" hidden>
-    <summary>All pages as a table</summary>
+    <summary>{{ icon('text') }}All pages as a table</summary>
     <table class="table hover" id="cmp-table">
       <thead><tr><th>Page</th><th>CER</th><th>WER</th><th>Ref chars</th><th>Cand chars</th><th></th></tr></thead>
       <tbody></tbody>

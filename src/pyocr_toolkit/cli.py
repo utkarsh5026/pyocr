@@ -8,6 +8,8 @@
     pyocr extract FILE --engine llm -p anthropic --pages 1-3 --format jsonl -o out.jsonl
     pyocr extract FILE --engine ocr --ocr-engine easyocr      (or --engine ocr:easyocr)
     pyocr compare FILE -p openai     per-page OCR/native error rate against an LLM
+    pyocr import a.pdf b.pdf scans.zip [--workspace NAME]
+                                     add files (zips unpacked, folders walked) to the library as one workspace
 """
 
 from __future__ import annotations
@@ -138,6 +140,47 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     if not ready:
         print("  Native text and OCR work without any provider; add a key to compare against LLMs.")
     return 0 if ok else 1
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    from .documents import SUPPORTED_EXTENSIONS, DocumentError, DocumentStore
+    from .workspaces import ARCHIVE_EXTENSIONS, WorkspaceStore, ingest, is_archive, suggest_names
+
+    settings = get_settings()
+    store = DocumentStore(settings.documents_dir)
+    spaces = WorkspaceStore(settings.workspaces_dir, store)
+    paths: list[Path] = []
+    for path in args.files:
+        if path.is_dir():
+            wanted = SUPPORTED_EXTENSIONS | ARCHIVE_EXTENSIONS
+            paths += sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in wanted
+                            and not any(part.startswith(".") for part in p.relative_to(path).parts))
+        elif path.is_file():
+            paths.append(path)
+        else:
+            raise FileNotFoundError(f"no such file or folder: {path}")
+    if not paths:
+        raise ValueError("nothing to import: no supported files found")
+
+    grouped = not args.no_workspace and (args.workspace or len(paths) > 1 or any(is_archive(p.name) for p in paths))
+    try:
+        if grouped:
+            name = args.workspace or suggest_names([p.name for p in args.files], taken=[w.name for w in spaces.list()],
+                                                   count=1)[0]
+            ws = spaces.create(name)
+        result = ingest(store, ((p.name, p.read_bytes()) for p in paths), max_bytes=settings.max_upload_mb * 1024 * 1024)
+        if grouped:
+            ws = spaces.add_documents(ws.id, [m.id for m in result.documents])
+    except DocumentError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    for meta in result.documents:
+        print(f"  ✓ {meta.filename}  ({meta.page_count} page{'s' if meta.page_count != 1 else ''})  {meta.id}")
+    for item in result.skipped:
+        print(f"  · skipped {item['name']}: {item['reason']}")
+    where = f"workspace '{ws.name}' ({ws.id})" if grouped else "the library"
+    print(f"Added {len(result.documents)} document(s) to {where}.", file=sys.stderr)
+    return 0 if result.documents else 1
 
 
 def _load_document(path: Path):
@@ -275,6 +318,12 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("--format", choices=["txt", "md", "json", "jsonl"], default="txt")
     e.add_argument("-o", "--output", type=Path, default=None, help="file to write (default: stdout)")
     e.set_defaults(func=lambda a: asyncio.run(_extract(a)))
+
+    m = sub.add_parser("import", help="add files, folders or .zip archives to the library as one workspace")
+    m.add_argument("files", type=Path, nargs="+")
+    m.add_argument("-w", "--workspace", default=None, help="workspace name (default: a suggested one)")
+    m.add_argument("--no-workspace", action="store_true", help="add to the library without grouping")
+    m.set_defaults(func=cmd_import)
 
     c = sub.add_parser("compare", help="score OCR / native text against an LLM transcription")
     c.add_argument("file", type=Path)

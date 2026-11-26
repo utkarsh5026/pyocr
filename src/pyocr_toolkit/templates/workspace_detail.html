@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}{{ ws.name }}{% endblock %}
+{% block content %}
+{% set status_cls = {'complete': 'ok', 'scanned': 'scan', 'partial': 'run'} %}
+<div class="page-head" id="ws-root" data-ws-id="{{ ws.id }}" data-ws-name="{{ ws.name }}">
+  <div class="ws-title">
+    <a href="/workspaces" class="crumb small">Workspaces</a>
+    <div class="ws-name-row">
+      <h1 id="ws-name">{{ ws.name }}</h1>
+      <button type="button" class="btn small ghost icon-only" id="ws-rename" title="Rename" aria-label="Rename workspace">{{ icon('pencil') }}</button>
+    </div>
+    <form id="ws-rename-form" class="ws-rename-form" hidden>
+      <input id="ws-rename-input" maxlength="80" value="{{ ws.name }}" aria-label="Workspace name" required>
+      <button class="btn small primary">Save</button>
+      <button type="button" class="btn small ghost" id="ws-rename-cancel">Cancel</button>
+      <div class="chips ws-suggest" id="ws-rename-suggest"></div>
+    </form>
+    <p>{{ ws.docs|length }} document{{ 's' if ws.docs|length != 1 }} · {{ ws.page_count }} page{{ 's' if ws.page_count != 1 }} · {{ ws.size_bytes|filesize }}
+      {% if ws.docs %} · {% if ws.missing_pages %}<b class="warn">{{ ws.missing_pages }} page{{ 's' if ws.missing_pages != 1 }} still without text</b>{% else %}every page has text{% endif %}{% endif %}</p>
+  </div>
+  <div class="ws-actions">
+    <label class="btn primary">{{ icon('upload') }}Add files
+      <input class="upload-input" type="file" hidden multiple data-workspace="{{ ws.id }}"
+             accept=".zip,.pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
+    </label>
+    <button type="button" class="btn ghost danger" id="ws-delete">{{ icon('trash') }}Delete workspace</button>
+  </div>
+</div>
+{% if ws.docs %}
+<div class="lib-grid" id="lib-grid">
+  {% for d in ws.docs %}{% include "_doc_card.html" %}{% endfor %}
+</div>
+{% else %}
+<div class="empty">
+  <div class="empty-icon">{{ icon('inbox') }}</div>
+  <h2>This workspace is empty</h2>
+  <p>Use <b>Add files</b> or drop PDFs, images or a .zip anywhere on this page. They go straight into <b>{{ ws.name }}</b>.</p>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}<script src="/static/workspaces.js?v={{ version }}"></script>{% endblock %}

@@ -9,10 +9,11 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from dataclasses import asdict
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -26,6 +27,7 @@ from .jobs import JobManager
 from .llm import PROMPT_MODES, ProviderError, build_providers, catalog
 from .ocr import build_ocr_engines
 from .service import LLMSpec, Services, ocr_source_id, parse_pages
+from .workspaces import WorkspaceStore, ingest, suggest_names
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -72,6 +74,24 @@ class JobBody(BaseModel):
     engine: str = Field(DEFAULT_OCR_ENGINE, description="OCR engine id for kind=ocr (see /api/config)")
 
 
+class WorkspaceBody(BaseModel):
+    name: str | None = Field(None, description="empty = a suggested name such as 'festive-albattani'")
+    doc_ids: list[str] = Field(default_factory=list)
+
+
+class WorkspaceRenameBody(BaseModel):
+    name: str
+
+
+class WorkspaceDocsBody(BaseModel):
+    doc_ids: list[str]
+
+
+class SuggestNamesBody(BaseModel):
+    filenames: list[str] = Field(default_factory=list)
+    count: int = Field(4, ge=1, le=12)
+
+
 class ProviderTestBody(BaseModel):
     model: str | None = None
 
@@ -101,7 +121,8 @@ def _safe_stem(filename: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "_", Path(filename).stem) or "document"
 
 
-def build_api(settings: Settings, store: DocumentStore, services: Services, jobs: JobManager) -> APIRouter:
+def build_api(settings: Settings, store: DocumentStore, services: Services, jobs: JobManager,
+              workspaces: WorkspaceStore) -> APIRouter:
     api = APIRouter(prefix="/api")
     providers = services.providers
     engines = services.ocr_engines
@@ -141,6 +162,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         """Search the built-in catalog of vision models, rated for page transcription."""
         return {
             "updated": catalog.CATALOG_UPDATED,
+            "usd_inr_rate": settings.usd_inr_rate,  # prices are USD; the page also shows them in ₹
             "ratings": {k: v[0] for k, v in catalog.RATINGS.items()},
             "sources": [{"label": a, "url": b} for a, b in catalog.SOURCES],
             "models": [m.to_json() for m in catalog.search(q, provider, rating, include_deprecated)],
@@ -228,6 +250,28 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         meta = await run_in_threadpool(store.add, file.filename or "upload.pdf", data)
         return meta.__dict__
 
+    @api.post("/uploads", status_code=201, tags=["documents"])
+    async def upload_batch(files: list[UploadFile] = File(...), workspace_id: str | None = Form(None)):
+        """Upload several files at once; ``.zip`` archives are unpacked. Optionally add them to a workspace.
+
+        Files that can't be opened are reported in ``skipped`` instead of failing the whole batch.
+        """
+        if workspace_id:
+            workspaces.get(workspace_id)  # fail before storing anything
+        max_bytes = settings.max_upload_mb * 1024 * 1024
+        named = []
+        for f in files:
+            data = await f.read(max_bytes + 1)
+            named.append((f.filename or "upload.pdf", data))
+        result = await run_in_threadpool(ingest, store, named, max_bytes=max_bytes)
+        body = result.to_json()
+        if workspace_id and result.documents:
+            ws = await run_in_threadpool(workspaces.add_documents, workspace_id, [m.id for m in result.documents])
+            body["workspace"] = asdict(ws)
+        elif workspace_id:
+            body["workspace"] = asdict(workspaces.get(workspace_id))
+        return body
+
     @api.get("/documents/{doc_id}", tags=["documents"])
     def document(doc_id: str):
         return doc_summary(get_doc(doc_id))
@@ -235,6 +279,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
     @api.delete("/documents/{doc_id}", status_code=204, tags=["documents"])
     def delete_document(doc_id: str):
         store.delete(doc_id)
+        workspaces.forget_document(doc_id)
         return Response(status_code=204)
 
     @api.get("/documents/{doc_id}/source", tags=["documents"])
@@ -286,7 +331,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
     # --------------------------------------------------------------------- LLM
     @api.get("/documents/{doc_id}/pages/{page}/llm", tags=["llm"])
     def llm_results(doc_id: str, page: int):
-        return get_doc(doc_id).list_llm_results(page)
+        return [services.with_cost(r) for r in get_doc(doc_id).list_llm_results(page)]
 
     @api.post("/documents/{doc_id}/pages/{page}/llm", tags=["llm"])
     async def run_llm(doc_id: str, page: int, body: LLMRunBody):
@@ -297,7 +342,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             services.resolve_spec(body.spec())
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return await services.run_llm_page(doc, page, body.spec(), force=body.force)
+        return services.with_cost(await services.run_llm_page(doc, page, body.spec(), force=body.force))
 
     @api.delete("/documents/{doc_id}/pages/{page}/llm/{key}", status_code=204, tags=["llm"])
     def delete_llm_result(doc_id: str, page: int, key: str):
@@ -307,6 +352,52 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         if path.parent != folder or not path.exists():
             raise HTTPException(404, "no such result")
         path.unlink()
+        return Response(status_code=204)
+
+    # -------------------------------------------------------------- workspaces
+    def ws_json(ws, details: bool = False) -> dict:
+        body = asdict(ws)
+        metas = [store.get(d).meta for d in ws.doc_ids]
+        body["document_count"] = len(metas)
+        body["page_count"] = sum(m.page_count for m in metas)
+        if details:
+            body["documents"] = [doc_summary(store.get(d)) for d in ws.doc_ids]
+        return body
+
+    @api.get("/workspaces", tags=["workspaces"])
+    def list_workspaces():
+        return [ws_json(w) for w in workspaces.list()]
+
+    @api.post("/workspaces", status_code=201, tags=["workspaces"])
+    def create_workspace(body: WorkspaceBody):
+        return ws_json(workspaces.create(body.name, body.doc_ids))
+
+    @api.post("/workspaces/suggest-names", tags=["workspaces"])
+    def suggest_workspace_names(body: SuggestNamesBody):
+        """Name ideas in the ``adjective-scientist`` style, led by one taken from the file names if they share one."""
+        taken = [w.name for w in workspaces.list()]
+        return {"names": suggest_names(body.filenames, taken=taken, count=body.count)}
+
+    @api.get("/workspaces/{ws_id}", tags=["workspaces"])
+    def get_workspace(ws_id: str):
+        return ws_json(workspaces.get(ws_id), details=True)
+
+    @api.patch("/workspaces/{ws_id}", tags=["workspaces"])
+    def rename_workspace(ws_id: str, body: WorkspaceRenameBody):
+        return ws_json(workspaces.rename(ws_id, body.name))
+
+    @api.post("/workspaces/{ws_id}/documents", tags=["workspaces"])
+    def add_workspace_documents(ws_id: str, body: WorkspaceDocsBody):
+        return ws_json(workspaces.add_documents(ws_id, body.doc_ids))
+
+    @api.delete("/workspaces/{ws_id}/documents/{doc_id}", tags=["workspaces"])
+    def remove_workspace_document(ws_id: str, doc_id: str):
+        """Take a document out of the workspace. The document itself stays in the library."""
+        return ws_json(workspaces.remove_document(ws_id, doc_id))
+
+    @api.delete("/workspaces/{ws_id}", status_code=204, tags=["workspaces"])
+    def delete_workspace(ws_id: str, delete_documents: bool = False):
+        workspaces.delete(ws_id, delete_documents=delete_documents)
         return Response(status_code=204)
 
     # -------------------------------------------------------------------- jobs
@@ -517,6 +608,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     providers = build_providers(settings)
     services = Services(settings, providers, build_ocr_engines(settings))
     jobs = JobManager(store, services)
+    workspaces = WorkspaceStore(settings.workspaces_dir, store)
 
     app = FastAPI(title="pyocr-toolkit", version=__version__,
                   description="Inspect and compare PDF/image text extraction: native text, OCR engines and LLMs.")
@@ -525,10 +617,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.providers = providers
     app.state.services = services
     app.state.jobs = jobs
+    app.state.workspaces = workspaces
 
     @app.exception_handler(DocumentError)
     async def _doc_error(request: Request, exc: DocumentError):
-        status = 503 if isinstance(exc, OCRUnavailableError) else 404 if "unknown document" in str(exc) else 400
+        status = 503 if isinstance(exc, OCRUnavailableError) else 404 if str(exc).startswith("unknown ") else 400
         if not request.url.path.startswith("/api"):
             from .web import render_error
             return render_error(request, status, str(exc))
@@ -538,10 +631,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _provider_error(_req, exc: ProviderError):
         return JSONResponse({"detail": str(exc)}, status_code=502)
 
-    app.include_router(build_api(settings, store, services, jobs))
+    app.include_router(build_api(settings, store, services, jobs, workspaces))
     from .web import build_web
 
-    app.include_router(build_web(settings, store, services, jobs))
+    app.include_router(build_web(settings, store, services, jobs, workspaces))
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     return app
 

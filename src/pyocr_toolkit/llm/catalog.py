@@ -279,6 +279,14 @@ def lookup(name: str, provider_id: str | None = None) -> dict:
     return {"name": name, "match": None, "rating": rating, "rating_label": RATINGS[rating][0], "note": note}
 
 
+def price(name: str, provider_id: str | None = None) -> tuple[float, float, str] | None:
+    """``(usd_per_1m_in, usd_per_1m_out, catalog_id)`` for a model name, or None if unknown."""
+    info = lookup(name, provider_id)
+    if info.get("match") and info.get("price_in") is not None and info.get("price_out") is not None:
+        return info["price_in"], info["price_out"], info["match"]
+    return None
+
+
 def _sort_key(info: ModelInfo) -> tuple:
     status_order = {"current": 0, "preview": 1, "previous": 2, "deprecated": 3}
     return (RATINGS[info.rating][1], status_order.get(info.status, 9), info.price_in or 0)

@@ -10,10 +10,10 @@
   </div>
   <label class="dropzone" id="home-drop">
     <input class="upload-input" type="file" hidden multiple
-           accept=".pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
+           accept=".zip,.pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.psd,.webp">
     <div class="dz-icon"><span class="emoji" aria-hidden="true">📤</span></div>
     <b>Drop files here or click to upload</b>
-    <span class="small">PDF, XPS, EPUB, PNG, JPEG, TIFF, WebP · up to {{ request.app.state.settings.max_upload_mb }} MB</span>
+    <span class="small">PDF, XPS, EPUB, PNG, JPEG, TIFF, WebP or a .zip of them · several files become a workspace · up to {{ request.app.state.settings.max_upload_mb }} MB</span>
   </label>
 </section>
 
@@ -48,6 +48,23 @@
     <li><span class="step-icon"><span class="emoji" aria-hidden="true">📦</span></span><b>Export</b><span>TXT, Markdown, JSON or JSONL, ready for RAG and ingestion.</span></li>
   </ol>
 </section>
+
+{% if recent_ws %}
+<section>
+  <div class="section-head"><h2>Workspaces</h2><a href="/workspaces" class="small">View all →</a></div>
+  <div class="doc-cards">
+    {% for w in recent_ws %}
+    <a class="card doc-card" href="/workspaces/{{ w.id }}">
+      {% if w.docs %}<img loading="lazy" src="/api/documents/{{ w.docs[0].id }}/pages/0/image?dpi=40" alt="">{% else %}<span class="ws-thumbs-empty">{{ icon('folders') }}</span>{% endif %}
+      <div>
+        <b title="{{ w.name }}">{{ w.name }}</b>
+        <div class="small">{{ w.docs|length }} document{{ 's' if w.docs|length != 1 }} · {{ w.page_count }} page{{ 's' if w.page_count != 1 }}</div>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
 
 <section>
   <div class="section-head"><h2 class="h-icon">{{ icon('clock') }}Recent documents</h2>{% if recent %}<a href="/documents" class="small">View all {{ icon('arrow-right') }}</a>{% endif %}</div>

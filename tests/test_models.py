@@ -85,6 +85,7 @@ def app_client(tmp_path):
 
 def test_models_api(app_client):
     r = app_client.get("/api/models", params={"q": "claude", "provider": "anthropic"}).json()
+    assert r["usd_inr_rate"] > 0  # the Models page shows prices in rupees too
     assert r["models"] and all(m["vendor"] == "Anthropic" for m in r["models"])
     assert r["sources"] and r["ratings"]["excellent"]
     v = app_client.get("/api/models/lookup", params={"name": "openai/gpt-6.2-sol"}).json()

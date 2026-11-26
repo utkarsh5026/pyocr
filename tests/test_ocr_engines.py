@@ -385,7 +385,7 @@ def test_ocr_with_another_engine(client, doc_id):
 
 def test_unknown_and_unavailable_engines(client, doc_id):
     r = client.get(f"/api/documents/{doc_id}/pages/0/text/ocr?engine=nope")
-    assert r.status_code == 400 and "unknown OCR engine" in r.json()["detail"]
+    assert r.status_code == 404 and "unknown OCR engine" in r.json()["detail"]  # "unknown ..." errors are 404s
     r = client.get(f"/api/documents/{doc_id}/pages/0/text/ocr?engine=mistral")
     assert r.status_code == 503 and "MISTRAL_API_KEY" in r.json()["detail"]
     r = client.post(f"/api/documents/{doc_id}/jobs", json={"kind": "ocr", "engine": "google_vision"})

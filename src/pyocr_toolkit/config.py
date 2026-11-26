@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # How many LLM calls may run at once when transcribing many pages.
     llm_concurrency: int = 4
     llm_timeout_s: float = 300.0
+    # Rupees per US dollar, used to show LLM costs in ₹ next to the USD list
+    # prices from the model catalog. Not fetched live (no outbound calls besides
+    # the chosen provider); ~92.5 on 2026-11-26. Set it to today's rate.
+    usd_inr_rate: float = 92.5
 
     # --- extra OCR engines ---------------------------------------------------
     # Longest edge (px) of the page image given to the non-Tesseract OCR
@@ -103,6 +107,10 @@ class Settings(BaseSettings):
     @property
     def documents_dir(self) -> Path:
         return self.data_dir / "documents"
+
+    @property
+    def workspaces_dir(self) -> Path:
+        return self.data_dir / "workspaces"
 
 
 def env_status(settings: BaseSettings | None, env_vars: list[tuple[str, bool, str]]) -> list[dict]:

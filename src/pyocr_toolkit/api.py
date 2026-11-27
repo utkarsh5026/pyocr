@@ -6,7 +6,6 @@ http://127.0.0.1:8000. Interactive API docs live at ``/docs``.
 
 from __future__ import annotations
 
-import json
 import re
 import shutil
 from dataclasses import asdict
@@ -16,11 +15,11 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, compare, search
+from . import __version__, compare, export, search
 from .brands import brands_json
 from .config import Settings, get_settings
 from .documents import DEFAULT_OCR_ENGINE, DocumentError, DocumentStore, OCRUnavailableError, OpenDocument
@@ -608,8 +607,8 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
 
     # ------------------------------------------------------------------ export
     @api.get("/documents/{doc_id}/export", tags=["text"])
-    def export(doc_id: str, source: str = "llm", fmt: Literal["txt", "md", "json", "jsonl"] = "txt",
-               key: str | None = None):
+    def export_source(doc_id: str, source: str = "llm", fmt: Literal["txt", "md", "json", "jsonl"] = "txt",
+                      key: str | None = None):
         """Download the whole document's text from one source.
 
         ``source`` is ``native``, ``ocr`` (Tesseract), ``ocr:<engine>``, ``llm`` (latest per page) or ``llm:<key>``.
@@ -620,25 +619,29 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         if key and source == "llm":
             source = f"llm:{key}"
         texts = [services.page_text(doc, n, source) for n in doc.iter_pages()]
+        name = f"{_safe_stem(doc.meta.filename)}.{export.file_tag(source)}.{fmt}"
+        body = export.one_source(doc.meta.__dict__, source, services.source_label(doc, source), texts, fmt)
+        return Response(body, media_type=export.MEDIA_TYPES[fmt],
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @api.get("/documents/{doc_id}/export/all", tags=["text"])
+    def export_all(doc_id: str, fmt: Literal["json", "jsonl", "csv", "md", "zip"] = "json"):
+        """Download everything extracted for a document: every source that has at least one page.
+
+        ``json`` = ``{document, sources, pages: [{page, texts: {source_id: text|null}}]}``; ``jsonl`` = one line per
+        extracted (page, source); ``csv`` = a row per page, a column per source; ``md`` = sources under each page;
+        ``zip`` = the JSON and CSV plus a TXT and Markdown file per source. Nothing is run implicitly.
+        """
+        doc = get_doc(doc_id)
+        data = services.document_texts(doc)
         stem = _safe_stem(doc.meta.filename)
-        tag = source.replace(":", "-") if source.startswith("ocr:") else source.split(":")[0]
-        disp = lambda ext: {"Content-Disposition": f'attachment; filename="{stem}.{tag}.{ext}"'}  # noqa: E731
-        label = services.source_label(doc, source)
-        if fmt == "json":
-            return JSONResponse({"document": doc.meta.__dict__, "source": source, "source_label": label,
-                                 "pages": [{"page": i + 1, "text": t, "extracted": t is not None}
-                                           for i, t in enumerate(texts)]}, headers=disp("json"))
-        if fmt == "jsonl":
-            lines = (json.dumps({"document_id": doc.meta.id, "filename": doc.meta.filename, "page": i + 1,
-                                 "source": source, "text": t or ""}, ensure_ascii=False)
-                     for i, t in enumerate(texts))
-            return PlainTextResponse("\n".join(lines) + "\n", media_type="application/x-ndjson", headers=disp("jsonl"))
-        if fmt == "md":
-            body = f"# {doc.meta.filename}\n\n_Source: {label}_\n" + "".join(
-                f"\n\n## Page {i + 1}\n\n{(t or '_(not extracted)_').strip()}" for i, t in enumerate(texts))
-            return PlainTextResponse(body + "\n", media_type="text/markdown", headers=disp("md"))
-        body = "".join(f"\n\n===== Page {i + 1} =====\n\n{(t or '').strip()}" for i, t in enumerate(texts)).lstrip()
-        return PlainTextResponse(body, headers=disp("txt"))
+        if fmt == "zip":
+            body: str | bytes = export.all_zip(data, stem)
+        else:
+            body = {"json": export.all_json, "jsonl": export.all_jsonl, "csv": export.all_csv,
+                    "md": export.all_md}[fmt](data)
+        return Response(body, media_type=export.MEDIA_TYPES[fmt],
+                        headers={"Content-Disposition": f'attachment; filename="{stem}.all-sources.{fmt}"'})
 
     return api
 

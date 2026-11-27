@@ -42,7 +42,8 @@ Then you can:
 - **Extract** page by page, a range like `1-5,9`, or the whole document, as background jobs
 - **Compare** any two sources: character and word error rate (CER/WER), word-level diffs, a per-page chart
 - **Search** across every document and every source at once
-- **Export** clean text as TXT, Markdown, JSON or JSONL for your pipeline
+- **Export** clean text as TXT, Markdown, JSON or JSONL for your pipeline, or every source at once as JSON, CSV,
+  Markdown, JSONL or a ZIP
 
 **LLM providers:** Claude (Anthropic API), OpenAI, Azure OpenAI, Claude on Azure (Microsoft Foundry), Google
 Gemini, and any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter) for local or private models.

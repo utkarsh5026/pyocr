@@ -38,6 +38,7 @@ import pymupdf
 from .config import Settings
 from .credentials import CredentialStore
 from .documents import DEFAULT_OCR_ENGINE, DocumentError, OpenDocument, TextLayer
+from .export import DocumentTexts, SourceTexts
 from .llm import (
     BATCH_USER_PROMPT,
     MAX_PAGES_PER_REQUEST,
@@ -504,6 +505,17 @@ class Services:
                 results = [r for r in results if r["key"] == key]
             return results[0]["text"] if results else None
         raise DocumentError(f"unknown source '{source}'")
+
+    def document_texts(self, doc: OpenDocument) -> DocumentTexts:
+        """Every source with at least one extracted page, and its text for every page (for "export everything").
+
+        Uses the concrete ``llm:<key>`` sources, not the ``llm`` alias, so no run is hidden behind a newer one.
+        Reads caches only: nothing is run.
+        """
+        pages = list(doc.iter_pages())
+        return DocumentTexts(document=doc.meta.__dict__, sources=[
+            SourceTexts(source=s, texts=[self.page_text(doc, n, s["id"]) for n in pages])
+            for s in self.list_sources(doc) if s["page_count"]])
 
     def source_label(self, doc: OpenDocument, source: str) -> str:
         if (engine := ocr_engine_of(source)) is not None:

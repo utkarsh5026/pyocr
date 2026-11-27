@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -133,6 +136,46 @@ def test_llm_job_sources_compare_export(client, doc_id):
     lines = client.get(f"/api/documents/{doc_id}/export", params={"source": src, "fmt": "jsonl"}).text.splitlines()
     assert [json.loads(line)["page"] for line in lines] == [1, 2]
     assert "## Page 2" in client.get(f"/api/documents/{doc_id}/export", params={"source": src, "fmt": "md"}).text
+
+
+
+def test_export_all_sources(client, doc_id):
+    url = f"/api/documents/{doc_id}/export/all"
+    # before any extraction only the native text layer has pages
+    only_native = client.get(url).json()
+    assert [s["id"] for s in only_native["sources"]] == ["native"]
+
+    wait_for_job(client, client.post(f"/api/documents/{doc_id}/jobs",
+                                     json={"kind": "llm", "llm": {"provider": "fake"}}).json()["id"])
+    r = client.get(url, params={"fmt": "json"})
+    assert r.status_code == 200 and 'filename="sample.all-sources.json"' in r.headers["content-disposition"]
+    data = r.json()
+    ids = [s["id"] for s in data["sources"]]
+    assert ids[0] == "native" and len(ids) == 2 and ids[1].startswith("llm:")
+    assert "ocr" not in ids  # nothing extracted with Tesseract, so it's left out
+    assert [p["page"] for p in data["pages"]] == [1, 2]
+    assert "lazzy" in data["pages"][0]["texts"][ids[1]]
+    assert all("text" not in s and "pages" not in s for s in data["sources"])  # no UI bookkeeping
+
+    lines = [json.loads(line) for line in client.get(url, params={"fmt": "jsonl"}).text.splitlines()]
+    assert {(row["page"], row["source"]) for row in lines} == {(p, s) for p in (1, 2) for s in ids}
+
+    csv_text = client.get(url, params={"fmt": "csv"}).text
+    rows = list(csv.reader(io.StringIO(csv_text.lstrip("\ufeff"))))
+    assert rows[0][0] == "page" and len(rows[0]) == 3 and len(rows) == 3
+    assert "lazzy" in rows[1][2]
+
+    md = client.get(url, params={"fmt": "md"}).text
+    assert "## Page 2" in md and "### Native text layer" in md
+
+    z = zipfile.ZipFile(io.BytesIO(client.get(url, params={"fmt": "zip"}).content))
+    names = set(z.namelist())
+    assert {"sample/all-sources.json", "sample/all-sources.csv", "sample/sources/native.txt",
+            "sample/sources/llm.md"} <= names
+    assert "lazzy" in z.read("sample/sources/llm.txt").decode()
+
+    assert client.get(url, params={"fmt": "pdf"}).status_code == 422
+    assert client.get("/api/documents/" + "0" * 32 + "/export/all").status_code == 404
 
 
 def test_job_validation(client, doc_id):

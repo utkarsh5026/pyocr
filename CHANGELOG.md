@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Export all sources.** Download everything extracted for a document in one file: Overview → *Export all*,
+  the Full text *Download* menu, or `GET /api/documents/{id}/export/all?fmt=json|jsonl|csv|md|zip`.
+  JSON keeps each page's text per source, CSV puts sources side by side (a column each), and ZIP bundles the JSON
+  and CSV with a TXT and Markdown file per source. Like single-source export, it only reads cached results.
 - **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as
   `pip install "pyocr-toolkit[easyocr]"`), and Google Cloud Vision, Azure AI Document Intelligence, AWS Textract
   and Mistral OCR (cloud, configured with environment variables). Each engine is a separate source

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Faster Overview for large documents: per-page facts (size, text-layer characters, images) are computed once and
+  saved to `pages.json` in the document folder, so later visits to a 2,000-page PDF's Overview drop from ~2.5 s
+  to ~40 ms. Uploads build `pages.json` in the background right away, so the first visit is fast too, and page
+  renders keep working while it runs. The page grid draws thumbnails in batches of 200 as you scroll. Existing
+  folders (and documents added with `pyocr add`) get `pages.json` on first view; it is derived data and is rebuilt
+  if missing or damaged.
+
+## 0.6.0 - 2026-11-27
+
 - **Structured data extraction**: a new prompt, *Structured data (fields → JSON)*, fills a JSON Schema from each page
   instead of transcribing it. Built-in schemas for invoices, receipts and form fields, or your own JSON Schema
   (checked as you type). Providers enforce the schema natively where they can (Claude structured outputs, OpenAI /
@@ -30,12 +39,8 @@
   `/api/config`, and a per-page `data` object in JSON / JSONL exports of an extraction (one source, and
   *Export all* as `data: {source_id: fields}`). CLI:
   `pyocr extract --mode extract --schema invoice|receipt|form|<file.json>`.
-- Faster Overview for large documents: per-page facts (size, text-layer characters, images) are computed once and
-  saved to `pages.json` in the document folder, so later visits to a 2,000-page PDF's Overview drop from ~2.5 s
-  to ~40 ms. Uploads build `pages.json` in the background right away, so the first visit is fast too, and page
-  renders keep working while it runs. The page grid draws thumbnails in batches of 200 as you scroll. Existing
-  folders (and documents added with `pyocr add`) get `pages.json` on first view; it is derived data and is rebuilt
-  if missing or damaged.
+- The README and website now install from PyPI (`pipx install pyocr-toolkit`) instead of from GitHub.
+- Existing results and cache keys are unchanged.
 
 ## 0.5.0 - 2026-11-27
 

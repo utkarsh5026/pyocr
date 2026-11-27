@@ -1,0 +1,9 @@
+{# Brand logo tile for a provider / OCR engine. Usage: {% from "_brand.html" import logo %}{{ logo(p.brand) }}
+   The SVG is used as a CSS mask, so it is drawn in the brand's foreground colour on the brand
+   colour and looks the same in light and dark themes. Mirrors logoHtml() in common.js. #}
+{% macro logo(key, size='') -%}
+{%- set b = brand_of(key) -%}
+<span class="logo{{ ' ' ~ size if size }}{{ ' mono' if not b.icon }}" style="--brand:{{ b.color }};--brand-fg:{{ b.fg }}" title="{{ b.name }}" aria-hidden="true">
+{%- if b.icon %}<i style="--icon:url(/static/logos/{{ b.icon }})"></i>{% else %}{{ b.text }}{% endif -%}
+</span>
+{%- endmacro %}

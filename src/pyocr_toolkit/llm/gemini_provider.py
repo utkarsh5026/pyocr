@@ -23,6 +23,7 @@ def _image_parts(req: TranscriptionRequest) -> list:
 class GeminiProvider(Provider):
     id = "gemini"
     label = "Google Gemini"
+    brand = "gemini"
     docs_url = "https://aistudio.google.com/apikey"
     can_list_models = True
     env_vars = [

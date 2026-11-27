@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "_icons.html" import icon %}
+{% from "_brand.html" import logo %}
 {% block title %}{{ doc.filename }}{% endblock %}
 {% block subnav %}{% include "_doctabs.html" %}{% endblock %}
 {% block content %}
@@ -10,7 +11,7 @@
     <form id="extract-form" class="form">
       <div class="seg" role="radiogroup" aria-label="Engine">
         <label><input type="radio" name="kind" value="llm" checked> {{ icon('sparkles') }}LLM transcription</label>
-        <label><input type="radio" name="kind" value="ocr"> {{ icon('cpu') }}Tesseract OCR</label>
+        <label><input type="radio" name="kind" value="ocr"> {{ icon('cpu') }}OCR engine</label>
       </div>
       <div class="field">
         <div class="field-head">
@@ -30,6 +31,11 @@
           <span class="legend-key"><i class="key-scan"></i>scan</span>
           <span class="legend-key"><i class="key-done"></i><span id="legend-done">has text from this engine</span></span>
         </div>
+      </div>
+      <div id="ocr-options" hidden>
+        <label>OCR engine <span class="select-logo"><span id="ocr-engine-logo"></span>
+          <select name="engine" id="ocr-engine"></select></span></label>
+        <div class="small" id="ocr-engine-note"></div>
       </div>
       <div id="llm-options">{% set picker_id = 'ex' %}{% include "_llm_picker.html" %}
         <div class="field preprocess-field">
@@ -77,7 +83,7 @@
       <tbody>
       {% for s in sources %}
       <tr>
-        <td><b title="{{ s.id }}" style="font-weight:600">{{ s.label }}</b></td>
+        <td><span class="with-logo">{% if s.brand %}{{ logo(s.brand, 'sm') }}{% endif %}<b title="{{ s.id }}" style="font-weight:600">{{ s.label }}</b></span></td>
         <td><span class="badge {{ 'ok' if s.page_count == doc.page_count }}">{{ s.page_count }}/{{ doc.page_count }}</span></td>
         <td class="small muted">{% if s.kind == 'llm' %}{{ "{:,}".format(s.input_tokens) }} / {{ "{:,}".format(s.output_tokens) }}{% else %}–{% endif %}</td>
         <td class="actions">
@@ -115,7 +121,7 @@
     <h2 class="h-icon">{{ icon('file') }}Pages</h2>
     <div class="legend-inline">
       <span><span class="badge scan">scan</span> no text layer</span>
-      <span><span class="badge ok">OCR</span> Tesseract done</span>
+      <span><span class="badge ok">OCR</span> OCR done (×n = several engines)</span>
       <span><span class="badge ok">LLM</span> transcribed</span>
     </div>
   </div>

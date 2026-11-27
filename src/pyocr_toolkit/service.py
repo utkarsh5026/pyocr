@@ -5,7 +5,10 @@ of a document, so a whole document can be read, exported or compared "per
 source":
 
 * ``native``       - the file's embedded text layer
-* ``ocr``          - Tesseract OCR
+* ``ocr``          - Tesseract OCR (kept as the plain id so existing links,
+                     exports and caches keep working)
+* ``ocr:<engine>`` - another OCR engine (``ocr:easyocr``, ``ocr:google_vision``,
+                     ...); ``ocr:tesseract`` is accepted as an alias of ``ocr``
 * ``llm:<key>``    - one LLM configuration (provider + model + prompt); the key
                      is derived from those three, so it is identical across pages
 * ``llm``          - shorthand for "the most recent LLM result on each page"
@@ -34,7 +37,7 @@ import pymupdf
 
 from .config import Settings
 from .credentials import CredentialStore
-from .documents import DocumentError, OpenDocument
+from .documents import DEFAULT_OCR_ENGINE, DocumentError, OpenDocument, TextLayer
 from .llm import (
     BATCH_USER_PROMPT,
     MAX_PAGES_PER_REQUEST,
@@ -50,10 +53,24 @@ from .llm import (
     resolve_prompt,
     split_batch,
 )
+from .ocr import OCREngine, build_ocr_engines
 from .preprocess import MAX_PNG_BYTES, Preprocess, process_bytes
 
 #: stop reasons that mean "the output limit cut the reply short" (Claude, OpenAI, Gemini)
 _TRUNCATED = {"max_tokens", "length", "MAX_TOKENS"}
+
+
+def ocr_engine_of(source: str) -> str | None:
+    """``ocr`` -> ``tesseract``, ``ocr:<id>`` -> ``<id>``, anything else -> ``None``."""
+    if source == "ocr":
+        return DEFAULT_OCR_ENGINE
+    if source.startswith("ocr:"):
+        return source[4:] or DEFAULT_OCR_ENGINE
+    return None
+
+
+def ocr_source_id(engine: str) -> str:
+    return "ocr" if engine == DEFAULT_OCR_ENGINE else f"ocr:{engine}"
 
 
 @dataclass
@@ -69,13 +86,15 @@ class LLMSpec:
 
 
 class Services:
-    def __init__(self, settings: Settings, providers: dict[str, Provider]) -> None:
+    def __init__(self, settings: Settings, providers: dict[str, Provider],
+                 ocr_engines: dict[str, OCREngine] | None = None) -> None:
         self.settings = settings
         self.providers = providers
+        self.ocr_engines = ocr_engines if ocr_engines is not None else build_ocr_engines(settings)
         self.llm_semaphore = asyncio.Semaphore(settings.llm_concurrency)
         # Values saved on the Providers page override env vars; applied here so the
         # web app and the CLI see the same configuration.
-        self.credentials = CredentialStore(settings, providers)
+        self.credentials = CredentialStore(settings, providers, self.ocr_engines)
 
     # ----------------------------------------------------------------- LLM
     def resolve_spec(self, spec: LLMSpec) -> tuple[Provider, str, str]:
@@ -407,24 +426,50 @@ class Services:
         return out
 
     # ----------------------------------------------------------------- OCR
-    def run_ocr_page(self, doc: OpenDocument, page: int, force: bool = False):
-        return doc.ocr_text(page, dpi=self.settings.ocr_dpi, language=self.settings.tesseract_language, force=force)
+    def ocr_engine(self, engine_id: str | None) -> OCREngine:
+        engine = self.ocr_engines.get(engine_id or DEFAULT_OCR_ENGINE)
+        if engine is None:
+            raise DocumentError(f"unknown OCR engine '{engine_id}' (known: {', '.join(self.ocr_engines)})")
+        return engine
+
+    def ocr_label(self, engine_id: str) -> str:
+        engine = self.ocr_engines.get(engine_id)
+        return engine.label if engine else engine_id
+
+    def run_ocr_page(self, doc: OpenDocument, page: int, force: bool = False,
+                     engine: str = DEFAULT_OCR_ENGINE) -> TextLayer:
+        """OCR one page with one engine (cached per engine). Blocking: use a thread from async code."""
+        return self.ocr_engine(engine).extract(doc, page, force=force)
+
+    async def test_ocr_engine(self, engine_id: str) -> dict[str, Any]:
+        engine = self.ocr_engine(engine_id)
+        return await asyncio.to_thread(engine.test)
 
     # ----------------------------------------------------------------- sources
-    @staticmethod
-    def list_sources(doc: OpenDocument) -> list[dict[str, Any]]:
-        """All text sources available for a document, with page coverage."""
+    def list_sources(self, doc: OpenDocument) -> list[dict[str, Any]]:
+        """All text sources available for a document, with page coverage.
+
+        Tesseract is always listed (as before); other OCR engines only once
+        they have a result on at least one page.
+        """
         n = doc.meta.page_count
-        ocr_pages = [p for p in range(n) if doc.cached_ocr_text(p) is not None]
-        sources = [
-            {"id": "native", "kind": "native", "label": "Native text layer", "pages": list(range(n))},
-            {"id": "ocr", "kind": "ocr", "label": "Tesseract OCR", "pages": ocr_pages},
-        ]
+        ocr_pages: dict[str, list[int]] = {DEFAULT_OCR_ENGINE: []}
+        for p in range(n):
+            for engine in doc.ocr_engines_cached(p):
+                ocr_pages.setdefault(engine, []).append(p)
+        sources = [{"id": "native", "kind": "native", "label": "Native text layer", "pages": list(range(n))}]
+        order = list(self.ocr_engines)
+        for engine in sorted(ocr_pages, key=lambda e: order.index(e) if e in order else len(order)):
+            known = self.ocr_engines.get(engine)
+            sources.append({"id": ocr_source_id(engine), "kind": "ocr", "engine": engine,
+                            "label": self.ocr_label(engine), "brand": known.brand if known else "",
+                            "pages": ocr_pages[engine]})
         llm: dict[str, dict[str, Any]] = {}
         for p in range(n):
             for r in doc.list_llm_results(p):
                 entry = llm.setdefault(r["key"], {
                     "id": f"llm:{r['key']}", "kind": "llm", "key": r["key"],
+                    "brand": getattr(self.providers.get(r["provider"]), "brand", ""),
                     "provider": r["provider"], "model": r["model"], "prompt_mode": r.get("prompt_mode"),
                     "preprocess": r.get("preprocess"),
                     "pages_per_request": r.get("pages_per_request", 1),
@@ -449,8 +494,8 @@ class Services:
         """Text of one page from one source, or ``None`` if not extracted yet."""
         if source == "native":
             return doc.native_text(page).text
-        if source == "ocr":
-            layer = self.run_ocr_page(doc, page) if run_ocr else doc.cached_ocr_text(page)
+        if (engine := ocr_engine_of(source)) is not None:
+            layer = self.run_ocr_page(doc, page, engine=engine) if run_ocr else doc.cached_ocr_text(page, engine)
             return layer.text if layer else None
         if source == "llm" or source.startswith("llm:"):
             key = source[4:] if source.startswith("llm:") else None
@@ -461,6 +506,8 @@ class Services:
         raise DocumentError(f"unknown source '{source}'")
 
     def source_label(self, doc: OpenDocument, source: str) -> str:
+        if (engine := ocr_engine_of(source)) is not None:
+            return self.ocr_label(engine)
         for s in self.list_sources(doc):
             if s["id"] == source:
                 return s["label"]
@@ -490,4 +537,4 @@ def parse_pages(spec: str | None, page_count: int) -> list[int]:
     return out
 
 
-__all__ = ["LLMSpec", "ProviderError", "Services", "parse_pages"]
+__all__ = ["LLMSpec", "ProviderError", "Services", "ocr_engine_of", "ocr_source_id", "parse_pages"]

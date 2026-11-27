@@ -13,6 +13,7 @@ const kind = () => $("#extract-form input[name=kind]:checked").value;
  * The "Pages" text box is the source of truth (it's what the API gets: 1-based ranges
  * like "1-3, 7"). The page map and the preset chips read and write it.
  */
+const ocrSelect = $("#ocr-engine");
 const pagesIn = $("#ex-pages");
 const pageMap = $("#page-map");
 let pageInfo = [];      // from /api/documents/{id}/pages, once loaded
@@ -55,7 +56,9 @@ function formatPages(pages) {
 
 const selection = () => parsePages(pagesIn.value);
 /** Page already has text from the chosen engine (any LLM result counts for LLM). */
-const isDone = (n) => !!pageInfo[n] && (kind() === "ocr" ? pageInfo[n].has_ocr_cache : pageInfo[n].llm_results > 0);
+const isDone = (n) => !!pageInfo[n] && (kind() === "ocr"
+  ? (pageInfo[n].ocr_engines || (pageInfo[n].has_ocr_cache ? ["tesseract"] : [])).includes(ocrSelect.value || "tesseract")
+  : pageInfo[n].llm_results > 0);
 
 function setPages(pages) {
   pagesIn.value = formatPages(pages);
@@ -151,6 +154,14 @@ perRequestIn.addEventListener("change", () => setPerRequest(perRequestN)); // ti
 
 function updateForm() {
   $("#llm-options").hidden = kind() !== "llm";
+  $("#ocr-options").hidden = kind() !== "ocr";
+  const engine = ocrEngineInfo(ocrSelect.value);
+  if (engine) {
+    $("#ocr-engine-logo").innerHTML = logoHtml(engine.brand);
+    $("#ocr-engine-note").innerHTML = engine.available
+      ? `<span class="muted">${esc(engine.description)}</span>`
+      : `<span class="warn">${esc(engine.problem)}</span> <a href="/providers">Setup</a>`;
+  }
   const sel = selection();
   const summary = $("#pages-summary");
   pagesIn.classList.toggle("invalid", !!sel.error);
@@ -176,7 +187,9 @@ function updateForm() {
   $("#extract-hint").textContent = kind() === "llm" && picker
     ? `Sends ${what} as images${pre ? " (preprocessed)" : ""} to ${picker.describe()}` +
       (n > 1 ? `, ${n} pages per request` : "")
-    : `Runs locally on ${what}; about 1–5 s per page`;
+    : engine?.kind === "cloud"
+      ? `Sends ${what} as images to ${engine.label}`
+      : `Runs locally on ${what} with ${engine?.label || "OCR"}`;
 }
 
 async function loadPages() {
@@ -188,7 +201,7 @@ async function loadPages() {
       <img loading="lazy" src="/api/documents/${DOC_ID}/pages/${n}/image?dpi=50" alt="Page ${n + 1}">
       <div class="tile-foot"><b>${n + 1}</b>
         ${p.looks_scanned ? '<span class="badge scan">scan</span>' : `<span class="badge">${p.native_chars} ch</span>`}
-        ${p.has_ocr_cache ? '<span class="badge ok">OCR</span>' : ""}
+        ${p.ocr_engines?.length ? `<span class="badge ok" title="${esc(p.ocr_engines.map(ocrLabel).join(", "))}">OCR${p.ocr_engines.length > 1 ? "×" + p.ocr_engines.length : ""}</span>` : ""}
         ${p.llm_results ? `<span class="badge ok">LLM${p.llm_results > 1 ? "×" + p.llm_results : ""}</span>` : ""}
       </div>
     </a>`).join("");
@@ -219,6 +232,13 @@ $("#extract-form").addEventListener("submit", guard(async (e) => {
     throw new Error(sel.error);
   }
   const body = { kind: kind(), pages: form.pages.value.trim() || null, force: form.force.checked };
+  if (body.kind === "ocr") {
+    const engine = ocrEngineInfo(ocrSelect.value);
+    if (!engine?.available) throw new Error(engine?.problem || "pick an OCR engine");
+    body.engine = engine.id;
+    localStorage.setItem("pyocr.ocrEngine", engine.id);
+    if (engine.kind === "cloud" && !confirm(`Send ${body.pages ? `pages ${body.pages}` : `all ${PAGE_COUNT} pages`} to ${engine.label}?`)) return;
+  }
   if (body.kind === "llm") {
     body.llm = { ...picker.spec(), pages_per_request: perRequest() };
     body.llm.preprocess = form.preprocess.value.trim() || null;
@@ -248,18 +268,21 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
   try {
     picker = await initLlmPicker($("#llm-options [data-llm-picker]"));
     const cfg = await getConfig();
+    ocrSelect.innerHTML = ocrEngineOptions(cfg);
+    ocrSelect.value = preferredOcrEngine(cfg);
+    ocrSelect.addEventListener("change", updateForm);
     perRequestIn.max = cfg.max_pages_per_request || 20;
     setPerRequest(localStorage.getItem("pyocr.perRequest") || 1);
     $("#llm-options").addEventListener("change", updateForm);
     $("#pre-presets").innerHTML = cfg.preprocess_presets.filter((p) => p.spec)
       .map((p) => `<option value="${esc(p.spec)}">${esc(p.label)}: ${esc(p.hint)}</option>`).join("");
     $("#extract-form input[name=preprocess]").value = preprocessStore.get(DOC_ID);
-    updateForm();
-    if (!cfg.tesseract_available) {
+    if (!cfg.ocr_engines.some((e) => e.available)) {
       const ocr = $("#extract-form input[value=ocr]");
       ocr.disabled = true;
-      ocr.parentElement.title = "Tesseract is not installed on the server";
+      ocr.parentElement.title = "No OCR engine is installed or configured: see Providers";
     }
+    updateForm();
     await loadPages();
     const jobs = await refreshJobs();
     jobs.filter((j) => ["running", "queued"].includes(j.status)).forEach((j) => follow(j.id));

@@ -90,9 +90,39 @@ async function copyText(text) {
 
 // ------------------------------------------------------------------ config
 let _configPromise;
+let _config = null; // set once /api/config has loaded (for sync helpers like logoHtml)
 function getConfig() {
-  _configPromise ??= api("/api/config");
+  _configPromise ??= api("/api/config").then((c) => { _config = c; return c; });
   return _configPromise;
+}
+
+// ------------------------------------------------------------------ brand logos
+/** Logo tile for a provider / OCR engine brand key. Mirrors the _brand.html macro. */
+function logoHtml(key, size = "") {
+  const b = (_config?.brands || {})[key] || { name: "", color: "#64748b", text: "?", fg: "#ffffff" };
+  const inner = b.icon ? `<i style="--icon:url(/static/logos/${esc(b.icon)})"></i>` : esc(b.text);
+  return `<span class="logo${size ? " " + size : ""}${b.icon ? "" : " mono"}" ` +
+    `style="--brand:${esc(b.color)};--brand-fg:${esc(b.fg)}" title="${esc(b.name)}" aria-hidden="true">${inner}</span>`;
+}
+const providerBrand = (id) => (_config?.providers || []).find((p) => p.id === id)?.brand || "";
+const ocrEngineInfo = (id) => (_config?.ocr_engines || []).find((e) => e.id === (id || "tesseract"));
+const ocrLabel = (id) => ocrEngineInfo(id)?.label || id;
+
+// ------------------------------------------------------------------ OCR engines
+/** The OCR engine to preselect: the last one used if it still works, else the first ready one. */
+function preferredOcrEngine(cfg) {
+  const saved = localStorage.getItem("pyocr.ocrEngine");
+  const ready = cfg.ocr_engines.filter((e) => e.available);
+  if (saved && cfg.ocr_engines.some((e) => e.id === saved && e.available)) return saved;
+  return (ready[0] || cfg.ocr_engines[0]).id;
+}
+
+/** <option>s for an engine <select>; `done` = ids that already have a result (marked ✓). */
+function ocrEngineOptions(cfg, done = []) {
+  return cfg.ocr_engines.map((e) => {
+    const note = done.includes(e.id) ? " ✓" : e.available ? "" : e.installed ? " (not configured)" : " (not installed)";
+    return `<option value="${esc(e.id)}"${e.available || done.includes(e.id) ? "" : " disabled"}>${esc(e.label)}${note}</option>`;
+  }).join("");
 }
 
 // ------------------------------------------------------------------ uploads
@@ -337,6 +367,7 @@ async function initLlmPicker(root) {
   const provSel = $("[data-provider]", root), modelIn = $("[data-model]", root), promptSel = $("[data-prompt]", root);
   const customBox = $("[data-custom-box]", root), customTa = $("[data-custom]", root), status = $("[data-status]", root);
   const datalist = document.getElementById(modelIn.getAttribute("list"));
+  const logoEl = $("[data-provider-logo]", root);
 
   const providers = [...cfg.providers].sort((a, b) => b.configured - a.configured);
   provSel.innerHTML = providers.map((p) =>
@@ -353,6 +384,7 @@ async function initLlmPicker(root) {
   function syncProvider() {
     const p = provider();
     localStorage.setItem("pyocr.provider", p.id);
+    if (logoEl) logoEl.innerHTML = logoHtml(p.brand);
     modelIn.value = localStorage.getItem(`pyocr.model.${p.id}`) || p.default_model || "";
     modelIn.placeholder = p.model_hint;
     fillModelDatalist(datalist, p.model_options || []);
@@ -468,6 +500,7 @@ function jobHtml(job, docName) {
   return `<div class="job${active ? " is-active" : ""}" data-job="${job.id}"${phase}>
     <div class="job-head">
       <span class="badge ${statusCls}">${status}</span>
+      ${logoHtml(job.kind === "ocr" ? ocrEngineInfo(job.engine)?.brand : providerBrand(job.llm?.provider), "sm")}
       <b>${esc(job.label)}</b>
       ${docName ? `<a href="/documents/${job.doc_id}">${esc(docName)}</a>` : ""}
       <div class="spacer"></div>

@@ -1,4 +1,4 @@
-"""Provider credentials and settings saved from the web UI.
+"""Provider and OCR engine credentials and settings saved from the web UI.
 
 Environment variables and ``.env`` stay the primary way to configure providers, but
 editing a file and restarting the server is a poor experience for a local tool. The
@@ -23,6 +23,10 @@ from typing import Any
 
 from .config import Settings
 from .llm.base import Provider
+from .ocr.base import OCREngine
+
+#: Anything with ``id``, ``label``, ``env_vars``, ``env_status()`` and ``reset_client()``.
+Owner = Provider | OCREngine
 
 
 def is_secret(name: str) -> bool:
@@ -32,15 +36,22 @@ def is_secret(name: str) -> bool:
 class CredentialStore:
     FILENAME = "credentials.json"
 
-    def __init__(self, settings: Settings, providers: dict[str, Provider]) -> None:
+    def __init__(self, settings: Settings, providers: dict[str, Provider],
+                 ocr_engines: dict[str, OCREngine] | None = None) -> None:
         self.settings = settings
         self.providers = providers
+        #: providers and OCR engines (their ids don't overlap), keyed by id
+        self.owners: dict[str, Owner] = {**(ocr_engines or {}), **providers}
         self.path = Path(settings.data_dir) / self.FILENAME
-        #: env var name -> provider id, for every setting a provider declares
+        #: env var name -> owner id, for every setting a provider or OCR engine declares
         self.allowed: dict[str, str] = {}
-        for p in providers.values():
+        fields = type(settings).model_fields
+        for p in self.owners.values():
             for name, _required, _desc in p.env_vars:
-                if hasattr(settings, name.lower()):
+                # Only text settings: values are stored as strings, and "false" would be a
+                # truthy string for a boolean like OCR_GPU (those stay env-only).
+                field = fields.get(name.lower())
+                if field is not None and field.annotation in (str, str | None):
                     self.allowed.setdefault(name, p.id)
         # What the environment / .env / defaults gave us, so "clear" can restore it.
         self._base: dict[str, Any] = {n: getattr(settings, n.lower()) for n in self.allowed}
@@ -71,7 +82,7 @@ class CredentialStore:
         Empty strings in ``values`` mean "leave unchanged", so a form can send every field
         without re-typing secrets it doesn't show.
         """
-        provider = self.providers.get(provider_id)
+        provider = self.owners.get(provider_id)
         if provider is None:
             raise ValueError(f"unknown provider '{provider_id}'")
         own = {name for name, _r, _d in provider.env_vars if name in self.allowed}
@@ -90,9 +101,13 @@ class CredentialStore:
             self.saved[name] = value
             setattr(self.settings, name.lower(), value)
         self._write()
-        provider.reset_client()
+        # A setting can be shared (OCR_GPU): reset everyone that declares a changed one.
+        changed = {*values, *(clear or [])}
+        for owner in self.owners.values():
+            if any(name in changed for name, _r, _d in owner.env_vars):
+                owner.reset_client()
 
-    def status(self, provider: Provider) -> list[dict]:
+    def status(self, provider: Owner) -> list[dict]:
         """``env_status()`` plus where each value comes from and, for non-secrets, the value."""
         out = []
         for e in provider.env_status():

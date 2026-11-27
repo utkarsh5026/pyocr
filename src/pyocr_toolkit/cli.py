@@ -2,9 +2,11 @@
 
     pyocr serve [--open]             start the web app on http://127.0.0.1:8000
     pyocr init                       write a .env template to the current directory
-    pyocr doctor                     check Tesseract, providers and the data directory
+    pyocr doctor                     check OCR engines, providers and the data directory
     pyocr providers                  list LLM providers and whether they are configured
+    pyocr engines                    list OCR engines and whether they are ready
     pyocr extract FILE --engine llm -p anthropic --pages 1-3 --format jsonl -o out.jsonl
+    pyocr extract FILE --engine ocr --ocr-engine easyocr      (or --engine ocr:easyocr)
     pyocr compare FILE -p openai     per-page OCR/native error rate against an LLM
     pyocr import a.pdf b.pdf scans.zip [--workspace NAME]
                                      add files (zips unpacked, folders walked) to the library as one workspace
@@ -78,6 +80,21 @@ def cmd_providers(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_engines(_args: argparse.Namespace) -> int:
+    _, services = _services()
+    for e in services.ocr_engines.values():
+        problem = e.problem()
+        status = "ready" + (f" ({e.settings_summary()})" if e.settings_summary() else "") if not problem else problem
+        print(f"{e.id:15} {e.kind:6} {status}")
+    return 0
+
+
+def _ocr_engine_arg(args: argparse.Namespace) -> str:
+    """``--engine ocr:easyocr`` and ``--engine ocr --ocr-engine easyocr`` mean the same."""
+    engine = args.engine[4:] if args.engine.startswith("ocr:") else args.ocr_engine
+    return engine or "tesseract"
+
+
 def cmd_doctor(_args: argparse.Namespace) -> int:
     settings, services = _services()
     ok = True
@@ -96,7 +113,12 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
             ok = False
             print(f"  ✗ language pack(s) missing for TESSERACT_LANGUAGE={settings.tesseract_language}: {', '.join(missing)}")
     else:
-        print("  ✗ Tesseract not found: OCR is disabled (apt install tesseract-ocr / brew install tesseract)")
+        print("  ✗ Tesseract not found (apt install tesseract-ocr / brew install tesseract)")
+    engines = services.ocr_engines.values()
+    print(f"  OCR engines    {sum(e.available for e in engines)} of {len(engines)} ready")
+    for e in engines:
+        problem = e.problem()
+        print(f"     {'·' if problem else '✓'} {e.label} [{e.kind}]" + (f"  ({problem})" if problem else ""))
     data = settings.data_dir.resolve()
     try:
         data.mkdir(parents=True, exist_ok=True)
@@ -179,10 +201,16 @@ async def _extract(args: argparse.Namespace) -> int:
     texts: dict[int, str] = {}
     if args.engine == "native":
         texts = {n: doc.native_text(n).text for n in pages}
-    elif args.engine == "ocr":
+    elif args.engine == "ocr" or args.engine.startswith("ocr:"):
+        engine = services.ocr_engine(_ocr_engine_arg(args))
+        if problem := engine.problem():
+            print(problem, file=sys.stderr)
+            return 2
         for n in pages:
-            texts[n] = (await asyncio.to_thread(services.run_ocr_page, doc, n)).text
-            print(f"  OCR page {n + 1}/{doc.meta.page_count}", file=sys.stderr)
+            layer = await asyncio.to_thread(services.run_ocr_page, doc, n, False, engine.id)
+            texts[n] = layer.text
+            print(f"  {engine.label} page {n + 1}/{doc.meta.page_count}: {(layer.elapsed_ms or 0) / 1000:.1f}s",
+                  file=sys.stderr)
     else:
         spec = LLMSpec(args.provider, args.model, args.mode, preprocess=args.preprocess or "",
                        pages_per_request=args.pages_per_request)
@@ -204,7 +232,10 @@ async def _extract(args: argparse.Namespace) -> int:
             texts[n] = res["text"]
 
     ordered = [(n, texts.get(n, "")) for n in pages]
-    source = args.engine if args.engine != "llm" else f"llm:{args.provider}"
+    from .service import ocr_source_id
+
+    source = (f"llm:{args.provider}" if args.engine == "llm" else
+              ocr_source_id(_ocr_engine_arg(args)) if args.engine.startswith("ocr") else args.engine)
     if args.format == "jsonl":
         out = "".join(json.dumps({"document_id": doc.meta.id, "filename": doc.meta.filename, "page": n + 1,
                                   "source": source, "text": t}, ensure_ascii=False) + "\n" for n, t in ordered)
@@ -234,13 +265,18 @@ async def _compare(args: argparse.Namespace) -> int:
     pages = parse_pages(args.pages, doc.meta.page_count)
     llm = await asyncio.gather(*(services.run_llm_page(doc, n, spec) for n in pages))
     opts = compare.NormalizeOptions(ignore_case=True)
-    has_tess = shutil.which("tesseract") is not None
+    engine = services.ocr_engine(args.ocr_engine)
+    problem = engine.problem()
+    if problem:
+        print(f"OCR columns skipped: {problem}", file=sys.stderr)
+    print(f"OCR engine: {engine.label}", file=sys.stderr)
     print(f"{'page':>5}  {'OCR CER':>8}  {'OCR WER':>8}  {'native CER':>10}")
     for n, res in zip(pages, llm):
         native = doc.native_text(n).text
         ocr_cer = ocr_wer = "–"
-        if has_tess:
-            s = compare.score(res["text"], services.run_ocr_page(doc, n).text, opts)
+        if not problem:
+            layer = await asyncio.to_thread(services.run_ocr_page, doc, n, False, engine.id)
+            s = compare.score(res["text"], layer.text, opts)
             ocr_cer, ocr_wer = f"{s['cer']:.1%}", f"{s['wer']:.1%}"
         nat = f"{compare.score(res['text'], native, opts)['cer']:.1%}" if native.strip() else "no text"
         print(f"{n + 1:>5}  {ocr_cer:>8}  {ocr_wer:>8}  {nat:>10}")
@@ -276,10 +312,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="check the installation").set_defaults(func=cmd_doctor)
     sub.add_parser("providers", help="list LLM providers").set_defaults(func=cmd_providers)
+    sub.add_parser("engines", help="list OCR engines").set_defaults(func=cmd_engines)
 
     e = sub.add_parser("extract", help="extract text from a PDF/image (whole document or pages)")
     e.add_argument("file", type=Path)
-    e.add_argument("--engine", choices=["native", "ocr", "llm"], default="llm")
+    e.add_argument("--engine", default="llm", metavar="{native,ocr,ocr:<engine>,llm}",
+                   help="text source (default: llm)")
+    e.add_argument("--ocr-engine", default="tesseract", help="for --engine ocr; see `pyocr engines`")
     e.add_argument("-p", "--provider", default="anthropic", help="for --engine llm")
     e.add_argument("-m", "--model", default=None)
     e.add_argument("--mode", default="verbatim", choices=["verbatim", "markdown"], help="LLM prompt")
@@ -297,8 +336,9 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--no-workspace", action="store_true", help="add to the library without grouping")
     m.set_defaults(func=cmd_import)
 
-    c = sub.add_parser("compare", help="score Tesseract / native text against an LLM transcription")
+    c = sub.add_parser("compare", help="score OCR / native text against an LLM transcription")
     c.add_argument("file", type=Path)
+    c.add_argument("--ocr-engine", default="tesseract", help="OCR engine to score; see `pyocr engines`")
     c.add_argument("-p", "--provider", default="anthropic")
     c.add_argument("-m", "--model", default=None)
     c.add_argument("--pages", default=None)
@@ -315,10 +355,17 @@ def main(argv: list[str] | None = None) -> None:
                 stream.reconfigure(errors="replace")
             except (ValueError, OSError):
                 pass
-    args = build_parser().parse_args(argv)
+    from .documents import DocumentError
+    from .llm import ProviderError
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    engine = getattr(args, "engine", None)
+    if engine and engine not in ("native", "ocr", "llm") and not engine.startswith("ocr:"):
+        parser.error(f"--engine must be native, ocr, ocr:<engine> or llm (got '{engine}')")
     try:
         sys.exit(args.func(args))
-    except (ValueError, FileNotFoundError) as exc:
+    except (ValueError, FileNotFoundError, DocumentError, ProviderError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
 

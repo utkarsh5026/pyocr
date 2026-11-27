@@ -909,3 +909,38 @@ h3.h-icon .icon { width: 16px; height: 16px; }
 .upload-files li.err span:last-child { color: var(--bad); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .dialog[open], .ws-card { animation: none; transition: none; } }
+/* ---------------------------------------------------------------- brand logos
+   A rounded tile in the brand colour. Bundled SVGs (static/logos/) are drawn
+   through a CSS mask in --brand-fg; brands without a free logo show letters. */
+.logo {
+  --logo-size: 22px;
+  display: inline-grid; place-items: center; flex: none; vertical-align: middle;
+  width: var(--logo-size); height: var(--logo-size); border-radius: calc(var(--logo-size) * .26);
+  background: var(--brand, #64748b); color: var(--brand-fg, #fff);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12), 0 1px 2px rgba(0, 0, 0, .12);
+  font: 700 calc(var(--logo-size) * .4)/1 system-ui, sans-serif; letter-spacing: -.03em;
+  user-select: none;
+}
+.logo.mono { font-size: calc(var(--logo-size) * .36); }
+.logo i {
+  width: 64%; height: 64%; background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
+}
+.logo.sm { --logo-size: 16px; }
+.logo.lg { --logo-size: 34px; }
+.with-logo { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.select-logo { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.select-logo select { flex: 1; min-width: 0; }
+.engine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+.engine-card { min-width: 0; display: flex; flex-direction: column; }
+.engine-card pre.code { overflow-x: auto; white-space: pre; max-width: 100%; }
+.engine-card .env { width: 100%; table-layout: fixed; }
+.engine-card .env td:first-child { overflow-wrap: anywhere; }
+.engine-card .env td:last-child { width: 9.5em; text-align: right; }
+.engine-card .env .small.muted { margin-top: 2px; font-family: inherit; }
+.engine-card > .row { margin-top: auto; padding-top: 8px; }
+.engine-card .section-head h3 { margin: 0; }
+.engine-card .desc { margin: 4px 0 10px; }
+.kind-badge { text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
+.engine-card .env td.nowrap { white-space: normal; overflow-wrap: anywhere; }
+.ocr-engine-pick { flex: 1 1 180px; max-width: 300px; }

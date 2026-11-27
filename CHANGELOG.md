@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.6.0 - 2026-11-27
+
 - **Structured data extraction**: a new prompt, *Structured data (fields → JSON)*, fills a JSON Schema from each page
   instead of transcribing it. Built-in schemas for invoices, receipts and form fields, or your own JSON Schema
   (checked as you type). Providers enforce the schema natively where they can (Claude structured outputs, OpenAI /
@@ -31,6 +33,7 @@
   *Export all* as `data: {source_id: fields}`). CLI:
   `pyocr extract --mode extract --schema invoice|receipt|form|<file.json>`.
 - The README and website now install from PyPI (`pipx install pyocr-toolkit`) instead of from GitHub.
+- Existing results and cache keys are unchanged.
 
 ## 0.5.0 - 2026-11-27
 

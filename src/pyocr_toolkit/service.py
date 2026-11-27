@@ -42,7 +42,7 @@ from typing import Any
 
 import pymupdf
 
-from . import extract
+from . import compare, extract
 from .config import Settings
 from .credentials import CredentialStore
 from .documents import DEFAULT_OCR_ENGINE, DocumentError, OpenDocument, TextLayer
@@ -603,6 +603,131 @@ class Services:
         return rows
 
     # ----------------------------------------------------------------- sources
+    # ------------------------------------------------------------ leaderboard
+    #: at most this many sources vote in a page's consensus (as on the Compare page)
+    MAX_VOTERS = 8
+
+    @staticmethod
+    def _independent(src: dict[str, Any]) -> bool:
+        """Sources that read the page on their own, so they can vote in a consensus.
+
+        Extra PDF libraries re-read the PyMuPDF text layer, and corrected text is
+        the answer rather than a reading.
+        """
+        return src["kind"] in ("ocr", "llm") or src["id"] == "native"
+
+    @staticmethod
+    def _rankable(src: dict[str, Any]) -> bool:
+        """Sources that are readings of the page: everything but corrected text and JSON extraction runs."""
+        return src["kind"] != "corrected" and src.get("prompt_mode") != EXTRACT_MODE
+
+    def leaderboard(self, docs: list[OpenDocument], reference: str = "auto", shared: bool = False,
+                    opts: compare.NormalizeOptions | None = None) -> dict[str, Any]:
+        """Rank every source across documents by how well it reads them.
+
+        Each page is scored against the best reference it has: text a person
+        corrected (``reference="corrected"``: real accuracy), else the consensus of
+        three or more independent sources (``"consensus"``: agreement, not proof).
+        ``"auto"`` takes corrected text where it exists and the consensus elsewhere.
+        Pages with neither are skipped. With ``shared``, only pages that every
+        ranked source has read count, so a source run on a few easy pages can't
+        top the table. Rates are micro-averaged: total edits / total reference
+        characters, so long pages weigh more.
+        """
+        if reference not in ("auto", "corrected", "consensus"):
+            raise ValueError("reference must be auto, corrected or consensus")
+        opts = opts or compare.NormalizeOptions(ignore_case=True)
+        info: dict[str, dict[str, Any]] = {}
+        pages: list[dict[str, Any]] = []  # one entry per page that has a reference
+        skipped = 0
+        for doc in docs:
+            sources = self.list_sources(doc)
+            ranked = [s for s in sources if self._rankable(s)]
+            voters = [s["id"] for s in sources if self._independent(s) and self._rankable(s)][: self.MAX_VOTERS]
+            for src in ranked:
+                e = info.setdefault(src["id"], {"id": src["id"], "label": src["label"], "kind": src["kind"],
+                                                "brand": src.get("brand", ""), "provider": src.get("provider"),
+                                                "model": src.get("model"), "pages_run": 0, "input_tokens": 0,
+                                                "output_tokens": 0, "latency_ms": 0.0, "has_usage": False})
+                if src["kind"] == "llm":
+                    e["pages_run"] += src["page_count"]
+                    e["input_tokens"] += src.get("input_tokens") or 0
+                    e["output_tokens"] += src.get("output_tokens") or 0
+                    e["latency_ms"] += src.get("latency_ms") or 0
+                    e["has_usage"] = True
+            for n in doc.iter_pages():
+                texts = {s["id"]: t for s in ranked if (t := self.page_text(doc, n, s["id"])) is not None}
+                ref_text, ref_kind = None, None
+                if reference in ("auto", "corrected"):
+                    ref_text = self.page_text(doc, n, CORRECTED_SOURCE)
+                    ref_kind = "corrected" if ref_text else None
+                if ref_text is None and reference in ("auto", "consensus"):
+                    votes = {sid: texts[sid] for sid in voters if sid in texts and texts[sid].strip()}
+                    if len(votes) >= 3:
+                        ref_text, ref_kind = compare.consensus(votes, opts)["text"], "consensus"
+                if not ref_text or not texts:
+                    skipped += 1
+                    continue
+                pages.append({"doc": doc.meta.id, "page": n, "reference": ref_kind, "texts": texts,
+                              "ref": ref_text})
+        ids = [i for i in info if any(i in p["texts"] for p in pages)]
+        if shared:
+            pages = [p for p in pages if all(i in p["texts"] for i in ids)]
+        keys = ("char_distance", "reference_chars", "word_distance", "reference_words",
+                "misread", "missed", "added", "numbers_total", "numbers_correct")
+        tot = {i: dict.fromkeys(keys, 0) | {"pages": 0, "docs": set(), "by_doc": {}} for i in ids}
+        for p in pages:
+            for sid, text in p["texts"].items():
+                if sid not in tot:
+                    continue
+                t, sc = tot[sid], compare.score(p["ref"], text, opts)
+                br = compare.error_breakdown(p["ref"], text, opts, max_examples=0, max_confusions=0)
+                num = compare.check_numbers(p["ref"], text, max_wrong=0)
+                for k in ("char_distance", "reference_chars", "word_distance", "reference_words"):
+                    t[k] += sc[k]
+                for k in ("misread", "missed", "added"):
+                    t[k] += br[k]
+                t["numbers_total"] += num["total"]
+                t["numbers_correct"] += num["correct"]
+                t["pages"] += 1
+                t["docs"].add(p["doc"])
+                d = t["by_doc"].setdefault(p["doc"], [0, 0])
+                d[0] += sc["char_distance"]
+                d[1] += sc["reference_chars"]
+
+        def rate(num: int, den: int) -> float | None:
+            return round(num / den, 4) if den else None
+
+        entries = []
+        for sid in ids:
+            t, e = tot[sid], info[sid]
+            if not t["pages"]:
+                continue
+            per_page = None
+            if e["has_usage"] and e["pages_run"]:
+                cost = self.cost(e["provider"] or "", e["model"], e["input_tokens"], e["output_tokens"])
+                per_page = {"usd": cost["usd"] / e["pages_run"], "inr": cost["inr"] / e["pages_run"]} if cost else None
+            entries.append({
+                "id": sid, "label": e["label"], "kind": e["kind"], "brand": e["brand"],
+                "pages": t["pages"], "docs": len(t["docs"]),
+                "cer": rate(t["char_distance"], t["reference_chars"]),
+                "wer": rate(t["word_distance"], t["reference_words"]),
+                "errors": {k: t[k] for k in ("misread", "missed", "added")},
+                "numbers": {"total": t["numbers_total"], "correct": t["numbers_correct"]},
+                "by_doc": {d: rate(*v) for d, v in t["by_doc"].items()},
+                "cost_per_page": per_page,
+                "seconds_per_page": round(e["latency_ms"] / e["pages_run"] / 1000, 2)
+                if e["has_usage"] and e["pages_run"] and e["latency_ms"] else None,
+            })
+        entries.sort(key=lambda r: (r["cer"] is None, r["cer"] or 0, -r["pages"]))
+        by_ref = {"corrected": sum(p["reference"] == "corrected" for p in pages),
+                  "consensus": sum(p["reference"] == "consensus" for p in pages)}
+        return {"reference": reference, "shared": shared, "documents": len(docs),
+                "docs": [{"id": d.meta.id, "filename": d.meta.filename} for d in docs
+                         if any(p["doc"] == d.meta.id for p in pages)],
+                "pages_scored": len(pages), "pages_by_reference": by_ref, "pages_skipped": skipped,
+                "entries": entries}
+
     def list_sources(self, doc: OpenDocument) -> list[dict[str, Any]]:
         """All text sources available for a document, with page coverage.
 

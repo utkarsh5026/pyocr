@@ -787,6 +787,27 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
                 "pages_scored": sum(r["scored"] for r in rows), "counts": counts,
                 "overall": overall, "matrix": matrix, "pages": rows}
 
+    @api.get("/leaderboard", tags=["compare"])
+    def leaderboard(workspace: str | None = Query(None, description="workspace id; empty = every document"),
+                    reference: Literal["auto", "corrected", "consensus"] = "auto", shared: bool = False,
+                    ignore_case: bool = True, ignore_punctuation: bool = False):
+        """Rank every source (OCR engines, LLM runs, PDF libraries) across documents.
+
+        Each page is scored against corrected text where a person reviewed it, else the
+        consensus of three or more independent sources (``reference`` picks). See
+        ``Services.leaderboard``.
+        """
+        ids = workspaces.get(workspace).doc_ids if workspace else [m.id for m in store.list()]
+        docs = []
+        for i in ids:
+            try:
+                docs.append(store.get(i))
+            except DocumentError:  # deleted since it was added to the workspace
+                continue
+        opts = compare.NormalizeOptions(ignore_case, ignore_punctuation)
+        res = services.leaderboard(docs, reference, shared, opts)
+        return {"workspace": workspace, **res}
+
     @api.get("/documents/{doc_id}/report", tags=["compare"])
     def report(doc_id: str, ignore_case: bool = True, ignore_punctuation: bool = False):
         """Per-page overview against the most recent LLM transcription of each page."""

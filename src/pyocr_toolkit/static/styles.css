@@ -709,6 +709,26 @@ pre.text:empty::before { content: attr(data-empty); color: var(--subtle); font-f
   .cons-body.reviewing { grid-template-columns: minmax(0, 1fr); }
   .rv-page { border-right: 0; border-bottom: 1px solid var(--border); max-height: 50vh; }
 }
+/* ---- leaderboard ---- */
+.lb-controls { display: flex; flex-wrap: wrap; gap: 14px 28px; align-items: flex-end; margin-bottom: 16px; }
+.lb-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.lb-field select { min-width: 220px; max-width: 100%; }
+.lb-checks { flex-direction: row; flex-wrap: wrap; gap: 8px 16px; padding-bottom: 6px; }
+.lb-table-card { padding: 0; overflow: hidden; margin-bottom: 16px; }
+.lb-table-card .table-wrap { overflow-x: auto; }
+.lb-table { margin: 0; min-width: 860px; }
+.lb-table th:first-child, .lb-table td:first-child { padding-left: 18px; width: 28px; }
+.lb-table th[data-sort] { cursor: pointer; user-select: none; white-space: nowrap; }
+.lb-table th[data-sort]:hover { color: var(--text); }
+.lb-table th[aria-sort="ascending"]::after { content: " ↑"; }
+.lb-table th[aria-sort="descending"]::after { content: " ↓"; }
+.lb-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lb-table .v { font-weight: 700; }
+.lb-src { display: flex; align-items: center; gap: 8px; max-width: 420px; }
+.lb-src span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.lb-bar { display: block; height: 4px; border-radius: 2px; background: var(--bg-sunken); margin-top: 4px; min-width: 64px; }
+.lb-bar i { display: block; height: 100%; border-radius: 2px; margin-left: auto; }
+.lb-bar i.good { background: var(--chart-good); } .lb-bar i.warn { background: var(--chart-warn); } .lb-bar i.bad { background: var(--chart-bad); }
 .del-mark { background: var(--del-bg); border-radius: 3px; padding: 0 2px; }
 .ins-mark { background: var(--ins-bg); border-radius: 3px; padding: 0 2px; }
 .table-details { padding: 0; }

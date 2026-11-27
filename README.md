@@ -145,6 +145,7 @@ Everything you upload and extract is stored in `./data` (change it with `DATA_DI
 | **Jobs** `/jobs` | All background extractions, with progress, errors and tokens. |
 | **Providers** `/providers` | Which settings are set or missing, a form to set keys/endpoints in the browser, plus a **Test connection** button per provider. |
 | **Models** `/models` | Search a catalog of vision models rated for transcription (excellent / good / fair / not suitable, with price and reason); list the models your key can use and pick one. |
+| **Leaderboard** `/leaderboard` | Every OCR engine, LLM run and PDF library ranked across the library or one workspace: CER/WER, misread / missed / added, numbers read exactly, pages scored, cost and time per page. Each page is scored against your corrected text where you reviewed it, otherwise the consensus of three or more sources; *Only pages every source has read* makes it like for like. |
 | **Help** `/help` | The full guide: concepts, metrics, workflows, troubleshooting. |
 | **API docs** `/docs` | Interactive OpenAPI docs for the JSON API. |
 

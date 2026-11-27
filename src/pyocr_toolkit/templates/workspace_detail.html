@@ -24,6 +24,7 @@
       <input class="upload-input" type="file" hidden multiple data-workspace="{{ ws.id }}"
              accept=".zip,.pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.pam,.psd,.webp,.cbr,.txt">
     </label>
+    {% if ws.docs %}<a class="btn ghost" href="/leaderboard?workspace={{ ws.id }}">{{ icon('columns') }}Leaderboard</a>{% endif %}
     <button type="button" class="btn ghost danger" id="ws-delete">{{ icon('trash') }}Delete workspace</button>
   </div>
 </div>

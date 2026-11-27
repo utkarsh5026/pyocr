@@ -31,6 +31,13 @@
   `corrected/<page>.json` in the document's folder; existing folders are unaffected. API:
   `GET/PUT/DELETE /api/documents/{id}/pages/{n}/corrected`; the page consensus adds a word `box` per column (from
   native text or OCR), `page_size` and the page's `corrected` state.
+- **Leaderboard** (new page, `/leaderboard`, also linked from each workspace): every OCR engine, LLM run and PDF
+  library ranked across the whole library or one workspace, with CER and WER, misread / missed / added, numbers read
+  exactly, pages scored, and for LLM runs cost per page at catalog list price and model time per page; sortable, with
+  a sources × documents grid. Each page is scored against corrected text where it has it (real accuracy), otherwise
+  the consensus of three or more independent sources (agreement: the page says so); *Score against* can force either.
+  *Only pages every source has read* compares like for like. Extraction runs and corrected text aren't ranked.
+  API: `GET /api/leaderboard?workspace=&reference=auto|corrected|consensus&shared=`.
 - Faster Overview for large documents: per-page facts (size, text-layer characters, images) are computed once and
   saved to `pages.json` in the document folder, so later visits to a 2,000-page PDF's Overview drop from ~2.5 s
   to ~40 ms. Uploads build `pages.json` in the background right away, so the first visit is fast too, and page

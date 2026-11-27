@@ -221,3 +221,59 @@ def test_consensus_page_has_word_boxes_and_review_state(client, doc_id):
     client.put(f"/api/documents/{doc_id}/pages/0/corrected", json={"text": res["text"], "based_on": res["sources"]})
     res = client.get(url, params={"sources": f"native,llm:{k}"}).json()
     assert res["corrected"]["based_on"] == ["native", f"llm:{k}"]
+
+
+def test_leaderboard_ranks_sources_against_the_best_reference(client, doc_id):
+    url = f"/api/documents/{doc_id}/pages/0/llm"
+    k1 = client.post(url, json={"provider": "fake"}).json()["key"]  # reads "lazzy"
+    client.fake.typo = ("quick brown", "quack")  # one misread word and one missed word
+    k2 = client.post(url, json={"provider": "fake", "prompt_mode": "custom", "custom_prompt": "Read it"}).json()["key"]
+
+    # no reviewed page yet: page 1 is scored against the consensus of native + two LLM runs
+    lb = client.get("/api/leaderboard").json()
+    assert lb["pages_by_reference"] == {"corrected": 0, "consensus": 1} and lb["pages_scored"] == 1
+    assert lb["pages_skipped"] == 1  # page 2 is a scan: no corrected text and fewer than three voters
+    by_id = {e["id"]: e for e in lb["entries"]}
+    assert by_id["native"]["cer"] == 0 and by_id[f"llm:{k2}"]["cer"] > by_id[f"llm:{k1}"]["cer"] > 0
+    assert by_id[f"llm:{k2}"]["errors"]["missed"] == 1
+    assert [e["id"] for e in lb["entries"]].index(f"llm:{k1}") < [e["id"] for e in lb["entries"]].index(f"llm:{k2}")
+    llm = by_id[f"llm:{k1}"]
+    assert llm["pages"] == 1 and llm["docs"] == 1 and llm["seconds_per_page"] is None  # the fake reports 0 ms
+    assert llm["by_doc"] == {doc_id: llm["cer"]}
+
+    # a reviewed page is scored against the person's text instead
+    client.put(f"/api/documents/{doc_id}/pages/0/corrected", json={"text": TEXT_PAGE.replace("lazy", "lazzy")})
+    lb = client.get("/api/leaderboard", params={"reference": "corrected"}).json()
+    assert lb["pages_by_reference"] == {"corrected": 1, "consensus": 0}
+    by_id = {e["id"]: e for e in lb["entries"]}
+    assert by_id[f"llm:{k1}"]["cer"] == 0 and by_id["native"]["cer"] > 0  # the "typo" was really on the page
+    assert "corrected" not in by_id  # the answer is never ranked against itself
+    assert client.get("/api/leaderboard", params={"reference": "consensus"}).json()["pages_by_reference"]["corrected"] == 0
+    assert client.get("/api/leaderboard", params={"reference": "nope"}).status_code == 422
+
+
+def test_leaderboard_scope_and_shared_pages(client, doc_id, sample_pdf):
+    other = client.post("/api/documents", files={"file": ("other.pdf", sample_pdf, "application/pdf")}).json()["id"]
+    for d in (doc_id, other):
+        client.put(f"/api/documents/{d}/pages/0/corrected", json={"text": TEXT_PAGE})
+    k = client.post(f"/api/documents/{doc_id}/pages/0/llm", json={"provider": "fake"}).json()["key"]
+
+    lb = client.get("/api/leaderboard").json()
+    by_id = {e["id"]: e for e in lb["entries"]}
+    assert lb["pages_scored"] == 2 and by_id["native"]["pages"] == 2 and by_id[f"llm:{k}"]["pages"] == 1
+    # only pages every source has read: the LLM ran on one document, so one page is left
+    lb = client.get("/api/leaderboard", params={"shared": True}).json()
+    assert lb["pages_scored"] == 1 and all(e["pages"] == 1 for e in lb["entries"])
+
+    ws = client.post("/api/workspaces", json={"name": "Only the other one", "doc_ids": [other]}).json()
+    lb = client.get("/api/leaderboard", params={"workspace": ws["id"]}).json()
+    assert [d["id"] for d in lb["docs"]] == [other] and f"llm:{k}" not in {e["id"] for e in lb["entries"]}
+
+
+def test_leaderboard_leaves_out_extraction_runs():
+    from pyocr_toolkit.service import Services
+
+    assert not Services._rankable({"kind": "llm", "prompt_mode": "extract"})
+    assert not Services._rankable({"kind": "corrected"})
+    assert Services._rankable({"kind": "llm", "prompt_mode": "verbatim"}) and Services._rankable({"kind": "native"})
+    assert not Services._independent({"id": "native:pypdf", "kind": "native"})

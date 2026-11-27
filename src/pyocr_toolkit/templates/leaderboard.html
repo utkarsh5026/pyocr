@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% block title %}Leaderboard{% endblock %}
+{% block content %}
+<div id="lb-root">
+  <div class="page-head">
+    <div>
+      <h1>Which source reads your documents best?</h1>
+      <p>Every OCR engine, LLM run and PDF library, scored on your own pages. Each page is checked against the best
+        reference it has: <b>text you corrected</b> on Compare → All sources → Review, otherwise the <b>consensus</b>
+        of three or more independent sources.</p>
+    </div>
+  </div>
+
+  <section class="card lb-controls">
+    <label class="lb-field"><span class="src-k">Documents</span>
+      <select id="lb-scope">
+        <option value="">Whole library</option>
+        {% for w in spaces %}<option value="{{ w.id }}" {{ 'selected' if w.id == workspace }}>Workspace: {{ w.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="lb-field"><span class="src-k" id="lb-ref-label">Score against</span>
+      <div class="seg" role="radiogroup" aria-labelledby="lb-ref-label">
+        <label title="Corrected text where a page has it, the consensus elsewhere"><input type="radio" name="lb-ref" value="auto" checked> Best available</label>
+        <label title="Only pages you reviewed: real accuracy"><input type="radio" name="lb-ref" value="corrected"> Corrected only</label>
+        <label title="Only the vote of the sources: agreement, not proof"><input type="radio" name="lb-ref" value="consensus"> Consensus only</label>
+      </div>
+    </div>
+    <div class="lb-field lb-checks">
+      <label class="check" title="A source run on a few easy pages can't top the table"><input type="checkbox" id="lb-shared"> Only pages every source has read</label>
+      <label class="check"><input type="checkbox" id="lb-case" checked> Ignore case</label>
+      <label class="check"><input type="checkbox" id="lb-punct"> Ignore punctuation</label>
+    </div>
+  </section>
+
+  <div id="lb-summary" class="cons-banner" hidden></div>
+
+  <section class="card lb-table-card" id="lb-table-card" hidden>
+    <div class="table-wrap">
+      <table class="table hover lb-table" id="lb-table">
+        <thead><tr>
+          <th>#</th>
+          <th data-sort="label">Source</th>
+          <th data-sort="cer" class="num" aria-sort="ascending">CER</th>
+          <th data-sort="wer" class="num">WER</th>
+          <th title="Words misread · missed · added, in total">Word errors</th>
+          <th data-sort="numbers" class="num" title="Tokens with a digit (amounts, dates, IDs) read exactly">Numbers</th>
+          <th data-sort="pages" class="num">Pages</th>
+          <th data-sort="cost" class="num" title="Catalog list price per page, from the tokens each run used">Cost / page</th>
+          <th data-sort="speed" class="num" title="Model time per page (LLM runs)">Time / page</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="card" id="lb-heat-card" hidden>
+    <div class="section-head">
+      <h3 class="h-icon">{{ icon('layers') }}Character error rate per document</h3>
+      <span class="small muted">where each source does well or badly; click a cell to compare that document</span>
+      <div class="spacer"></div>
+      <div class="legend-inline">
+        <span><i class="swatch good"></i>≤ 2%</span><span><i class="swatch warn"></i>≤ 10%</span>
+        <span><i class="swatch bad"></i>&gt; 10%</span><span><i class="swatch missing"></i>not scored</span>
+      </div>
+    </div>
+    <div class="heat-wrap"><table class="heat" id="lb-heat"></table></div>
+  </section>
+  <p class="small muted" id="lb-note"></p>
+</div>
+{% endblock %}
+{% block scripts %}<script src="/static/leaderboard.js?v={{ version }}"></script>{% endblock %}

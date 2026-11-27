@@ -304,6 +304,22 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
   <li>The highlight comes from word boxes, which native text and OCR have and LLMs don't. A word only an LLM read is
     shown with a dashed box on the word before it.</li>
 </ul>
+<h3 id="leaderboard">Leaderboard: which source reads your documents best?</h3>
+<p>The <a href="/leaderboard">Leaderboard</a> ranks every source (each OCR engine, each LLM run, each PDF library)
+  across the whole library or one workspace (the workspace page links to its own). Each page is scored against the
+  best reference it has:</p>
+<ul>
+  <li><b>Corrected text</b>, where you reviewed the page: real accuracy.</li>
+  <li>Otherwise the <b>consensus</b> of three or more independent sources: agreement, not proof. A source the others
+    outvote scores badly even when it is right, so the page says when no reviewed page was available. Reviewing even a
+    few pages turns the ranking into a measure of accuracy.</li>
+  <li>Pages with neither are skipped. <i>Score against</i> can force one kind of reference.</li>
+</ul>
+<p>Each row shows CER and WER (micro-averaged: long pages count more), the misread / missed / added split, numbers read
+  exactly, how many pages it was scored on, and for LLM runs the cost per page at catalog list price and the model time
+  per page. Click a column to sort. A source scored on fewer pages than the others is marked: it may have run only on
+  easy pages. <i>Only pages every source has read</i> makes the comparison like for like. Structured-extraction runs
+  (JSON output) and corrected text itself are not ranked.</p>
 <p class="callout"><b>Disagreement is not the same as error.</b> "OCR vs LLM" tells you how much two engines disagree,
   not which one is right. For real ground truth, use a born-digital PDF: its native text is exact, so comparing OCR and
   each LLM against it shows how every engine performs on your kind of documents.</p>
@@ -407,6 +423,7 @@ GET  /api/documents/{id}/compare?a=llm&amp;b=ocr      per-page CER/WER, misread/
 GET  /api/documents/{id}/consensus?sources=native,ocr,llm:KEY   vote sources into a consensus, score each
 GET  /api/documents/{id}/pages/{n}/consensus?sources=…          one page, with the word-by-word alignment and word boxes
 PUT  /api/documents/{id}/pages/{n}/corrected     {"text": "…"} save a page's corrected text (GET reads it, DELETE removes it)
+GET  /api/leaderboard?workspace=ID&amp;reference=auto   rank every source across documents
 POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)</pre>
 
 <h2 id="data">Data and privacy</h2>

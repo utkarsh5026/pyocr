@@ -431,3 +431,21 @@ def test_draft_schema_errors(client, doc_id):
     r = client.post("/api/extract/draft-schema", json={"provider": "fakejson", "description": "x"},
                     headers={"origin": "https://evil.example"})
     assert r.status_code == 403
+
+
+def test_extraction_is_one_page_per_request(client, doc_id):
+    """A batched reply is split into pages by marker lines; extraction needs one JSON object per page."""
+    r = _run(client, doc_id, extract_schema="invoice", pages_per_request=2)
+    assert r.status_code == 400 and "one page per request" in r.json()["detail"]
+    r = client.post(f"/api/documents/{doc_id}/jobs", json={"kind": "llm", "llm": {
+        "provider": "fakejson", "prompt_mode": "extract", "extract_schema": "invoice", "pages_per_request": 3}})
+    assert r.status_code == 400 and "one page per request" in r.json()["detail"]
+    assert client.fake.calls == []
+
+
+def test_text_only_request_has_no_page_images():
+    from pyocr_toolkit.llm import TranscriptionRequest
+
+    assert TranscriptionRequest(image=b"", mime_type="", system_prompt="S", user_prompt="U").page_images() == []
+    assert len(TranscriptionRequest(image=b"x", mime_type="image/png", system_prompt="S",
+                                    user_prompt="U").page_images()) == 1

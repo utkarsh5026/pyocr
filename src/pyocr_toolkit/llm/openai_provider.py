@@ -45,7 +45,12 @@ class _OpenAIChatBase(Provider):
             raise ProviderError(f"{self.label}: could not list models: {exc}") from exc
 
     async def _transcribe(self, req: TranscriptionRequest, model: str) -> TranscriptionResult:
-        data_url = f"data:{req.mime_type};base64,{base64.b64encode(req.image).decode('ascii')}"
+        parts: list[dict] = [{"type": "text", "text": req.user_prompt}]
+        for page in req.page_images():
+            if page.label:
+                parts.append({"type": "text", "text": page.label})
+            data_url = f"data:{page.mime_type};base64,{base64.b64encode(page.image).decode('ascii')}"
+            parts.append({"type": "image_url", "image_url": {"url": data_url, "detail": "high"}})
         extra: dict = {}
         system = req.system_prompt
         if req.output_schema is not None:
@@ -58,13 +63,7 @@ class _OpenAIChatBase(Provider):
                 model=model,
                 messages=[
                     {"role": "system", "content": system},
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": req.user_prompt},
-                            *([{"type": "image_url", "image_url": {"url": data_url, "detail": "high"}}] if req.image else []),
-                        ],
-                    },
+                    {"role": "user", "content": parts},
                 ],
                 **{self.token_param: req.max_output_tokens},
                 **extra,
@@ -107,6 +106,7 @@ class _OpenAIChatBase(Provider):
 class OpenAIProvider(_OpenAIChatBase):
     id = "openai"
     label = "OpenAI"
+    brand = "openai"
     docs_url = "https://platform.openai.com/api-keys"
     can_list_models = True
     env_vars = [
@@ -134,6 +134,7 @@ class OpenAIProvider(_OpenAIChatBase):
 class AzureOpenAIProvider(_OpenAIChatBase):
     id = "azure_openai"
     label = "Azure OpenAI"
+    brand = "azure"
     model_hint = "Azure deployment name"
     docs_url = "https://learn.microsoft.com/azure/ai-services/openai/"
     env_vars = [
@@ -171,6 +172,7 @@ class AzureOpenAIProvider(_OpenAIChatBase):
 class OpenAICompatibleProvider(_OpenAIChatBase):
     id = "openai_compatible"
     label = "OpenAI-compatible (Ollama, vLLM, ...)"
+    brand = "openai_compatible"
     docs_url = "https://github.com/ollama/ollama/blob/main/docs/openai.md"
     can_list_models = True
     env_vars = [

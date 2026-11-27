@@ -5,7 +5,10 @@ of a document, so a whole document can be read, exported or compared "per
 source":
 
 * ``native``       - the file's embedded text layer
-* ``ocr``          - Tesseract OCR
+* ``ocr``          - Tesseract OCR (kept as the plain id so existing links,
+                     exports and caches keep working)
+* ``ocr:<engine>`` - another OCR engine (``ocr:easyocr``, ``ocr:google_vision``,
+                     ...); ``ocr:tesseract`` is accepted as an alias of ``ocr``
 * ``llm:<key>``    - one LLM configuration (provider + model + prompt); the key
                      is derived from those three, so it is identical across pages
 * ``llm``          - shorthand for "the most recent LLM result on each page"
@@ -14,6 +17,12 @@ An LLM configuration may include image preprocessing (grayscale, contrast,
 binarize, ...; see :mod:`pyocr_toolkit.preprocess`). It is part of the cache
 key, so "same model on the original page" and "same model on the cleaned-up
 page" are two sources you can compare against each other.
+
+LLM pages can also be sent several to a request (``LLMSpec.pages_per_request``),
+the way many production pipelines batch them. The reply is split back into pages
+by marker lines, and every page is still cached on its own, so a batched run is
+just another ``llm:<key>`` source: read, export and compare it like any other,
+including against the same model run one page at a time.
 
 The ``extract`` prompt mode fills a JSON Schema instead of transcribing (see
 :mod:`pyocr_toolkit.extract`). The schema is part of the cache key too, and the
@@ -34,21 +43,44 @@ import pymupdf
 from . import extract
 from .config import Settings
 from .credentials import CredentialStore
-from .documents import DocumentError, OpenDocument
+from .documents import DEFAULT_OCR_ENGINE, DocumentError, OpenDocument, TextLayer
 from .llm import (
+    BATCH_USER_PROMPT,
     DRAFT_SYSTEM,
     EXTRACT_MODE,
     EXTRACT_USER_PROMPT,
+    MAX_PAGES_PER_REQUEST,
     PROMPT_MODES,
     USER_PROMPT,
+    PageImage,
     Provider,
     ProviderError,
     TranscriptionRequest,
+    TranscriptionResult,
+    batch_rules,
     catalog,
     draft_user_prompt,
     resolve_prompt,
+    split_batch,
 )
+from .ocr import OCREngine, build_ocr_engines
 from .preprocess import MAX_PNG_BYTES, Preprocess, process_bytes
+
+#: stop reasons that mean "the output limit cut the reply short" (Claude, OpenAI, Gemini)
+_TRUNCATED = {"max_tokens", "length", "MAX_TOKENS"}
+
+
+def ocr_engine_of(source: str) -> str | None:
+    """``ocr`` -> ``tesseract``, ``ocr:<id>`` -> ``<id>``, anything else -> ``None``."""
+    if source == "ocr":
+        return DEFAULT_OCR_ENGINE
+    if source.startswith("ocr:"):
+        return source[4:] or DEFAULT_OCR_ENGINE
+    return None
+
+
+def ocr_source_id(engine: str) -> str:
+    return "ocr" if engine == DEFAULT_OCR_ENGINE else f"ocr:{engine}"
 
 
 @dataclass
@@ -59,6 +91,8 @@ class LLMSpec:
     custom_prompt: str | None = None
     #: image preprocessing spec, e.g. ``"gray;contrast=1.5"`` or a preset id; empty = the page as rendered
     preprocess: str = ""
+    #: pages sent together in one request; 1 = one page per request (the default)
+    pages_per_request: int = 1
     #: for ``prompt_mode="extract"``: a preset id (``invoice``, ...) or JSON Schema text
     extract_schema: str = ""
 
@@ -75,13 +109,15 @@ class ExtractSchema:
 
 
 class Services:
-    def __init__(self, settings: Settings, providers: dict[str, Provider]) -> None:
+    def __init__(self, settings: Settings, providers: dict[str, Provider],
+                 ocr_engines: dict[str, OCREngine] | None = None) -> None:
         self.settings = settings
         self.providers = providers
+        self.ocr_engines = ocr_engines if ocr_engines is not None else build_ocr_engines(settings)
         self.llm_semaphore = asyncio.Semaphore(settings.llm_concurrency)
         # Values saved on the Providers page override env vars; applied here so the
         # web app and the CLI see the same configuration.
-        self.credentials = CredentialStore(settings, providers)
+        self.credentials = CredentialStore(settings, providers, self.ocr_engines)
 
     # ----------------------------------------------------------------- LLM
     def resolve_spec(self, spec: LLMSpec) -> tuple[Provider, str, str]:
@@ -89,7 +125,15 @@ class Services:
         provider = self.providers.get(spec.provider)
         if provider is None:
             raise ValueError(f"unknown provider '{spec.provider}'")
+        if not 1 <= spec.pages_per_request <= MAX_PAGES_PER_REQUEST:
+            raise ValueError(f"pages per request must be between 1 and {MAX_PAGES_PER_REQUEST}")
+        if spec.prompt_mode == EXTRACT_MODE and spec.pages_per_request > 1:
+            # a batched reply is split into pages by marker lines; an extraction reply is one JSON object per page
+            raise ValueError("structured data extraction runs one page per request; set pages per request to 1")
         system_prompt = resolve_prompt(spec.prompt_mode, spec.custom_prompt)
+        if spec.pages_per_request > 1:
+            # part of the prompt, so part of the cache key: a batched run is its own source
+            system_prompt += batch_rules(spec.pages_per_request)
         model = (spec.model or provider.default_model or "").strip()
         Preprocess.parse(spec.preprocess)
         self.resolve_schema(spec)
@@ -160,7 +204,15 @@ class Services:
         ``on_start`` is called once this page holds an ``llm_semaphore`` slot, just
         before the provider call. Jobs use it to tell "waiting for a slot" apart
         from "the model is reading this page"; it isn't called for cache hits.
+
+        With a batched spec the page goes out as a batch of one, so it lands in the
+        same source as the rest of that run.
         """
+        if spec.pages_per_request > 1:
+            outcome = (await self.run_llm_batch(doc, [page], spec, force=force, on_start=on_start))[page]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
         provider, model, system_prompt = self.resolve_spec(spec)
         pre = Preprocess.parse(spec.preprocess)
         schema = self.resolve_schema(spec)
@@ -261,6 +313,163 @@ class Services:
             "warnings": result.warnings,
         }
 
+    # ------------------------------------------------------- batched LLM
+    def plan_llm_chunks(self, doc: OpenDocument, pages: list[int], spec: LLMSpec,
+                        force: bool = False) -> tuple[list[int], list[list[int]]]:
+        """``(cached_pages, chunks)``: how a run over ``pages`` is split into requests.
+
+        With one page per request every page is its own chunk and the cache is checked
+        per page as before. With batching, pages already cached are left out first, so
+        each request carries ``pages_per_request`` pages that really need the model.
+        """
+        n = spec.pages_per_request
+        if n <= 1:
+            return [], [[p] for p in pages]
+        key = self.llm_key(doc, spec)
+        cached = [] if force else [p for p in pages if doc.load_llm_result(p, key)]
+        skip = set(cached)
+        todo = [p for p in pages if p not in skip]
+        return cached, [todo[i:i + n] for i in range(0, len(todo), n)]
+
+    async def _send_pages(self, provider: Provider, model: str, system_prompt: str, pages: list[int],
+                          images: dict[int, tuple[bytes, str]],
+                          on_start: Callable[[], None] | None = None) -> TranscriptionResult:
+        """One request carrying ``pages``, each labelled with its 1-based number."""
+        first_image, first_mime = images[pages[0]]
+        req = TranscriptionRequest(
+            image=first_image, mime_type=first_mime, system_prompt=system_prompt, user_prompt=BATCH_USER_PROMPT,
+            model=model, max_output_tokens=self.settings.llm_batch_max_output_tokens,
+            pages=[PageImage(images[p][0], images[p][1], f"Page {p + 1}") for p in pages],
+        )
+        async with self.llm_semaphore:
+            if on_start:
+                on_start()
+            try:
+                return await provider.transcribe(req)
+            except ProviderError as exc:
+                if "token" in str(exc).lower():
+                    raise ProviderError(f"{exc} (this request carried {len(pages)} page(s); if the model allows "
+                                        f"fewer output tokens, lower LLM_BATCH_MAX_OUTPUT_TOKENS)") from exc
+                raise
+
+    async def run_llm_batch(self, doc: OpenDocument, pages: list[int], spec: LLMSpec, force: bool = False,
+                            on_start: Callable[[], None] | None = None) -> dict[int, dict[str, Any] | Exception]:
+        """Transcribe ``pages`` in one request and split the reply back into pages.
+
+        Returns ``{page: result}`` for every page, where a result is the same dict
+        :meth:`run_llm_page` returns, or the exception for that page. Cached pages are
+        returned without a call. If the batched request itself fails, the error is
+        raised: every page in it failed the same way.
+
+        A page the reply can't be matched to (marker missing or repeated, or cut off by
+        the output limit) is re-sent on its own, with the same prompt, so it still
+        lands in this source; the record says so in ``warnings``. Tokens and latency of
+        the shared request are split evenly over its pages, so per-page and per-source
+        totals still add up to what was paid; ``batch`` holds the request's totals.
+        """
+        provider, model, system_prompt = self.resolve_spec(spec)
+        pre = Preprocess.parse(spec.preprocess)
+        key = doc.llm_cache_key(provider.id, model, system_prompt, str(pre))
+        out: dict[int, dict[str, Any] | Exception] = {}
+        todo: list[int] = []
+        for p in pages:
+            cached = None if force else doc.load_llm_result(p, key)
+            if cached:
+                out[p] = {**cached, "key": key, "cached": True}
+            else:
+                todo.append(p)
+        if not todo:
+            return out
+        # the same images a one-page run would send (preprocessing included)
+        images = {p: await asyncio.to_thread(self.llm_image, doc, p, pre) for p in todo}
+        result = await self._send_pages(provider, model, system_prompt, todo, images, on_start)
+
+        texts, problems = split_batch(result.text, [p + 1 for p in todo])
+        truncated = result.stop_reason in _TRUNCATED
+        shared_warnings = [w for w in result.warnings if "max token limit" not in w]
+        if truncated and texts:
+            # the last page in the reply was still being written when the limit hit
+            texts.pop([p + 1 for p in todo if p + 1 in texts][-1])
+            problems.append("the reply hit the output-token limit")
+        size = len(todo)
+        batch = {"pages": todo, "size": size, "input_tokens": result.input_tokens,
+                 "output_tokens": result.output_tokens, "latency_ms": result.latency_ms, "problems": problems}
+
+        def share(total: int | None, i: int) -> int | None:
+            if total is None:
+                return None
+            q, r = divmod(total, size)
+            return q + (1 if i < r else 0)
+
+        def save(i: int, page: int, text: str, res: TranscriptionResult, warnings: list[str],
+                 extra: TranscriptionResult | None = None) -> dict[str, Any]:
+            def plus(a, b):
+                return a if b is None else (a or 0) + b
+            record = {
+                "provider": provider.id,
+                "provider_label": provider.label,
+                "model": res.model,
+                "requested_model": model,
+                "prompt_mode": spec.prompt_mode,
+                "prompt": system_prompt if spec.prompt_mode == "custom" else None,
+                "text": text,
+                "latency_ms": round(plus(result.latency_ms / size, extra.latency_ms if extra else None), 1),
+                "input_tokens": plus(share(result.input_tokens, i), extra.input_tokens if extra else None),
+                "output_tokens": plus(share(result.output_tokens, i), extra.output_tokens if extra else None),
+                "stop_reason": res.stop_reason,
+                "warnings": warnings,
+                "image_bytes": len(images[page][0]),
+                "image_mime": images[page][1],
+                "preprocess": str(pre) or None,
+                "preprocess_label": pre.describe() if not pre.is_identity else None,
+                "created_at": time.time(),
+                "pages_per_request": spec.pages_per_request,
+                "batch": {**batch, "retried_alone": extra is not None},
+            }
+            doc.save_llm_result(page, key, record)
+            return {**record, "key": key, "cached": False}
+
+        async def alone(i: int, page: int) -> dict[str, Any] | Exception:
+            reason = "; ".join(problems) or "the reply could not be matched to this page"
+            try:
+                single = await self._send_pages(provider, model, system_prompt, [page], images)
+            except ProviderError as exc:
+                return ProviderError(f"page {page + 1} was not in the batched reply ({reason}) and re-sending "
+                                     f"it alone failed: {exc}")
+            found, why = split_batch(single.text, [page + 1])
+            if page + 1 not in found:
+                return ProviderError(f"page {page + 1}: the model's reply could not be matched to this page "
+                                     f"({'; '.join(why)}); try again or use one page per request")
+            note = f"not in the batched reply ({reason}); transcribed on its own"
+            return save(i, page, found[page + 1], single, [note, *single.warnings], extra=single)
+
+        retry: list[tuple[int, int]] = []
+        for i, page in enumerate(todo):
+            if page + 1 in texts:
+                out[page] = save(i, page, texts[page + 1], result, list(shared_warnings))
+            else:
+                retry.append((i, page))
+        for (_, page), outcome in zip(retry, await asyncio.gather(*(alone(i, p) for i, p in retry))):
+            out[page] = outcome
+        return {p: out[p] for p in pages}
+
+    async def run_llm_pages(self, doc: OpenDocument, pages: list[int], spec: LLMSpec,
+                            force: bool = False) -> dict[int, dict[str, Any] | Exception]:
+        """Transcribe many pages (one or several per request); ``{page: result or exception}``."""
+        if spec.pages_per_request <= 1:
+            results = await asyncio.gather(*(self.run_llm_page(doc, p, spec, force=force) for p in pages),
+                                           return_exceptions=True)
+            return dict(zip(pages, results))
+        cached, chunks = self.plan_llm_chunks(doc, pages, spec, force)
+        groups = ([cached] if cached else []) + chunks
+        results = await asyncio.gather(*(self.run_llm_batch(doc, g, spec, force=force) for g in groups),
+                                       return_exceptions=True)
+        out: dict[int, dict[str, Any] | Exception] = {}
+        for group, res in zip(groups, results):
+            for p in group:
+                out[p] = res if isinstance(res, BaseException) else res[p]
+        return {p: out[p] for p in pages}
+
     async def test_provider(self, provider_id: str, model: str | None) -> dict[str, Any]:
         """Send a tiny generated image and report what came back."""
         provider = self.providers.get(provider_id)
@@ -314,29 +523,58 @@ class Services:
         return out
 
     # ----------------------------------------------------------------- OCR
-    def run_ocr_page(self, doc: OpenDocument, page: int, force: bool = False):
-        return doc.ocr_text(page, dpi=self.settings.ocr_dpi, language=self.settings.tesseract_language, force=force)
+    def ocr_engine(self, engine_id: str | None) -> OCREngine:
+        engine = self.ocr_engines.get(engine_id or DEFAULT_OCR_ENGINE)
+        if engine is None:
+            raise DocumentError(f"unknown OCR engine '{engine_id}' (known: {', '.join(self.ocr_engines)})")
+        return engine
+
+    def ocr_label(self, engine_id: str) -> str:
+        engine = self.ocr_engines.get(engine_id)
+        return engine.label if engine else engine_id
+
+    def run_ocr_page(self, doc: OpenDocument, page: int, force: bool = False,
+                     engine: str = DEFAULT_OCR_ENGINE) -> TextLayer:
+        """OCR one page with one engine (cached per engine). Blocking: use a thread from async code."""
+        return self.ocr_engine(engine).extract(doc, page, force=force)
+
+    async def test_ocr_engine(self, engine_id: str) -> dict[str, Any]:
+        engine = self.ocr_engine(engine_id)
+        return await asyncio.to_thread(engine.test)
 
     # ----------------------------------------------------------------- sources
-    @staticmethod
-    def list_sources(doc: OpenDocument) -> list[dict[str, Any]]:
-        """All text sources available for a document, with page coverage."""
+    def list_sources(self, doc: OpenDocument) -> list[dict[str, Any]]:
+        """All text sources available for a document, with page coverage.
+
+        Tesseract is always listed (as before); other OCR engines only once
+        they have a result on at least one page.
+        """
         n = doc.meta.page_count
-        ocr_pages = [p for p in range(n) if doc.cached_ocr_text(p) is not None]
-        sources = [
-            {"id": "native", "kind": "native", "label": "Native text layer", "pages": list(range(n))},
-            {"id": "ocr", "kind": "ocr", "label": "Tesseract OCR", "pages": ocr_pages},
-        ]
+        ocr_pages: dict[str, list[int]] = {DEFAULT_OCR_ENGINE: []}
+        for p in range(n):
+            for engine in doc.ocr_engines_cached(p):
+                ocr_pages.setdefault(engine, []).append(p)
+        sources = [{"id": "native", "kind": "native", "label": "Native text layer", "pages": list(range(n))}]
+        order = list(self.ocr_engines)
+        for engine in sorted(ocr_pages, key=lambda e: order.index(e) if e in order else len(order)):
+            known = self.ocr_engines.get(engine)
+            sources.append({"id": ocr_source_id(engine), "kind": "ocr", "engine": engine,
+                            "label": self.ocr_label(engine), "brand": known.brand if known else "",
+                            "pages": ocr_pages[engine]})
         llm: dict[str, dict[str, Any]] = {}
         for p in range(n):
             for r in doc.list_llm_results(p):
                 entry = llm.setdefault(r["key"], {
                     "id": f"llm:{r['key']}", "kind": "llm", "key": r["key"],
+                    "brand": getattr(self.providers.get(r["provider"]), "brand", ""),
                     "provider": r["provider"], "model": r["model"], "prompt_mode": r.get("prompt_mode"),
                     "preprocess": r.get("preprocess"), "schema_label": r.get("schema_label"),
+                    "pages_per_request": r.get("pages_per_request", 1),
                     "label": f"{r.get('provider_label') or r['provider']} · {r['model']} · {r.get('prompt_mode')}"
                              + (f" ({r['schema_label']})" if r.get("schema_label") else "")
-                             + (f" · image: {r['preprocess_label']}" if r.get("preprocess_label") else ""),
+                             + (f" · image: {r['preprocess_label']}" if r.get("preprocess_label") else "")
+                             + (f" · {r['pages_per_request']} pages/request" if r.get("pages_per_request", 1) > 1
+                                else ""),
                     "pages": [], "input_tokens": 0, "output_tokens": 0, "latency_ms": 0.0,
                     "updated_at": 0.0,
                 })
@@ -369,8 +607,8 @@ class Services:
         """Text of one page from one source, or ``None`` if not extracted yet."""
         if source == "native":
             return doc.native_text(page).text
-        if source == "ocr":
-            layer = self.run_ocr_page(doc, page) if run_ocr else doc.cached_ocr_text(page)
+        if (engine := ocr_engine_of(source)) is not None:
+            layer = self.run_ocr_page(doc, page, engine=engine) if run_ocr else doc.cached_ocr_text(page, engine)
             return layer.text if layer else None
         if source == "llm" or source.startswith("llm:"):
             result = self._llm_result(doc, page, source)
@@ -378,6 +616,8 @@ class Services:
         raise DocumentError(f"unknown source '{source}'")
 
     def source_label(self, doc: OpenDocument, source: str) -> str:
+        if (engine := ocr_engine_of(source)) is not None:
+            return self.ocr_label(engine)
         for s in self.list_sources(doc):
             if s["id"] == source:
                 return s["label"]
@@ -407,4 +647,4 @@ def parse_pages(spec: str | None, page_count: int) -> list[int]:
     return out
 
 
-__all__ = ["ExtractSchema", "LLMSpec", "ProviderError", "Services", "parse_pages"]
+__all__ = ["ExtractSchema", "LLMSpec", "ProviderError", "Services", "ocr_engine_of", "ocr_source_id", "parse_pages"]

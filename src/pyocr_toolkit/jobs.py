@@ -13,6 +13,11 @@ Progress is reported in pages. ``current_pages`` are pages the engine is working
 on right now; LLM pages that are still waiting for an ``LLM_CONCURRENCY`` slot
 (another job or a workspace run holds it) are in ``waiting_pages`` instead, so
 the UI doesn't claim the model is reading a page it hasn't been sent yet.
+
+With ``pages_per_request`` > 1 a worker takes a *chunk* of pages and sends them in
+one request (``Services.plan_llm_chunks`` leaves cached pages out first, so each
+request is full). The chunk holds one ``LLM_CONCURRENCY`` slot, since it is one
+call, and progress is still counted in pages.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 
-from .documents import DocumentStore
+from .documents import DEFAULT_OCR_ENGINE, DocumentStore
 from .llm import catalog
 from .preprocess import Preprocess
 from .service import LLMSpec, Services
@@ -39,6 +44,8 @@ class Job:
     pages: list[int]
     label: str
     llm: dict[str, Any] | None = None
+    #: OCR engine id for ``ocr`` jobs
+    engine: str | None = None
     force: bool = False
     status: str = "queued"  # queued | running | done | failed | cancelled
     done: int = 0
@@ -122,7 +129,7 @@ class JobManager:
         return self.jobs.get(job_id)
 
     def start(self, doc_id: str, kind: JobKind, pages: list[int], llm: LLMSpec | None = None,
-              force: bool = False) -> Job:
+              force: bool = False, engine: str = DEFAULT_OCR_ENGINE) -> Job:
         doc = self.store.get(doc_id)  # validates the id
         price: dict[str, Any] | None = None
         if kind == "llm":
@@ -138,14 +145,24 @@ class JobManager:
             pre = Preprocess.parse(llm.preprocess)
             if not pre.is_identity:
                 label += f" · image: {pre.describe()}"
+            if llm.pages_per_request > 1:
+                label += f" · {llm.pages_per_request} pages/request"
             found = catalog.price(model, provider.id)
             if found:
                 price = {"in": found[0], "out": found[1], "model": found[2],
                          "usd_inr_rate": self.services.settings.usd_inr_rate}
         else:
-            label = f"Tesseract OCR ({self.services.settings.tesseract_language})"
+            try:
+                ocr = self.services.ocr_engine(engine)
+            except Exception as exc:  # DocumentError -> ValueError for the API layer
+                raise ValueError(str(exc)) from exc
+            if problem := ocr.problem():
+                raise ValueError(problem)
+            summary = ocr.settings_summary()
+            label = f"{ocr.label}{f' ({summary})' if summary else ''}"
         job = Job(id=uuid.uuid4().hex[:12], doc_id=doc.meta.id, kind=kind, pages=pages, label=label,
-                  llm=asdict(llm) if llm else None, force=force, price=price)
+                  llm=asdict(llm) if llm else None, engine=engine if kind == "ocr" else None, force=force,
+                  price=price)
         self.jobs[job.id] = job
         self._tasks[job.id] = asyncio.get_running_loop().create_task(self._run(job))
         return job
@@ -161,48 +178,76 @@ class JobManager:
         doc = self.store.get(job.doc_id)
         job.status = "running"
         job.started_at = time.time()
-        queue: asyncio.Queue[int] = asyncio.Queue()
-        for p in job.pages:
-            queue.put_nowait(p)
         spec = LLMSpec(**job.llm) if job.llm else None
+        batched = spec is not None and spec.pages_per_request > 1
+        chunks: list[list[int]] = [[p] for p in job.pages]
+        if batched:
+            cached, chunks = self.services.plan_llm_chunks(doc, job.pages, spec, job.force)
+            job.cached += len(cached)
+            job.done += len(cached)
+        queue: asyncio.Queue[list[int]] = asyncio.Queue()
+        for chunk in chunks:
+            queue.put_nowait(chunk)
+
+        def count(res: dict[str, Any]) -> None:
+            if res.get("cached"):
+                job.cached += 1
+            else:
+                job.input_tokens += res.get("input_tokens") or 0
+                job.output_tokens += res.get("output_tokens") or 0
 
         async def worker() -> None:
             while not queue.empty():
-                page = queue.get_nowait()
+                chunk = queue.get_nowait()
                 # LLM pages wait for a semaphore slot before the model sees them.
-                (job.waiting_pages if job.kind == "llm" else job.current_pages).append(page)
+                (job.waiting_pages if job.kind == "llm" else job.current_pages).extend(chunk)
 
-                def started(page: int = page) -> None:
-                    job.waiting_pages.remove(page)
-                    job.current_pages.append(page)
+                def started(chunk: list[int] = chunk) -> None:
+                    for page in chunk:
+                        if page in job.waiting_pages:
+                            job.waiting_pages.remove(page)
+                            job.current_pages.append(page)
 
                 try:
                     if job.kind == "ocr":
-                        if not job.force and doc.cached_ocr_text(page) is not None:
+                        page, engine = chunk[0], job.engine or DEFAULT_OCR_ENGINE
+                        if not job.force and doc.cached_ocr_text(page, engine) is not None:
                             job.cached += 1
                         else:
-                            await asyncio.to_thread(self.services.run_ocr_page, doc, page, job.force)
+                            await asyncio.to_thread(self.services.run_ocr_page, doc, page, job.force, engine)
+                    elif batched:
+                        outcomes = await self.services.run_llm_batch(doc, chunk, spec, force=job.force,
+                                                                     on_start=started)
+                        for page, res in outcomes.items():
+                            if isinstance(res, Exception):
+                                job.failed += 1
+                                job.errors.append(f"page {page + 1}: {res}")
+                            else:
+                                count(res)
                     else:
-                        res = await self.services.run_llm_page(doc, page, spec, force=job.force, on_start=started)
-                        if res.get("cached"):
-                            job.cached += 1
-                        else:
-                            job.input_tokens += res.get("input_tokens") or 0
-                            job.output_tokens += res.get("output_tokens") or 0
+                        count(await self.services.run_llm_page(doc, chunk[0], spec, force=job.force,
+                                                               on_start=started))
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # keep going; report per page
-                    job.failed += 1
-                    job.errors.append(f"page {page + 1}: {exc}")
+                    job.failed += len(chunk)
+                    pages = ", ".join(str(p + 1) for p in chunk)
+                    job.errors.append(f"page{'s' if len(chunk) > 1 else ''} {pages}: {exc}")
                 finally:
                     for active in (job.current_pages, job.waiting_pages):
-                        if page in active:
-                            active.remove(page)
-                    job.done += 1
+                        for page in chunk:
+                            if page in active:
+                                active.remove(page)
+                    job.done += len(chunk)
 
-        concurrency = self.ocr_concurrency if job.kind == "ocr" else self.services.settings.llm_concurrency
+        if job.kind == "ocr":
+            # local engines are CPU-bound and serialised anyway; cloud ones can overlap
+            ocr = self.services.ocr_engines.get(job.engine or DEFAULT_OCR_ENGINE)
+            concurrency = max(self.ocr_concurrency, ocr.concurrency if ocr else 1)
+        else:
+            concurrency = self.services.settings.llm_concurrency
         try:
-            await asyncio.gather(*(worker() for _ in range(max(1, min(concurrency, job.total)))))
+            await asyncio.gather(*(worker() for _ in range(max(1, min(concurrency, len(chunks))))))
             job.status = "failed" if job.failed == job.total else "done"
         except asyncio.CancelledError:
             job.status = "cancelled"

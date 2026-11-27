@@ -18,7 +18,8 @@ const state = {
   searchHits: {},     // page -> {count, native: boxes[], ocr: boxes[]}
   llmResults: [],
   native: null,
-  ocr: null,
+  ocr: null,          // cached layer of the selected OCR engine on this page
+  ocrEngine: "tesseract",
   // image preprocessing (see preprocess.py); "" = send the page as rendered
   pre: preprocessStore.get(DOC_ID),
   preLabel: "",
@@ -45,7 +46,11 @@ function pageBadges(p, n) {
   const b = [];
   if (p.looks_scanned) b.push('<span class="badge scan" title="Little or no embedded text - needs OCR">scan</span>');
   else b.push(`<span class="badge" title="Characters in the embedded text layer">${p.native_chars} ch</span>`);
-  if (p.has_ocr_cache) b.push('<span class="badge ok" title="Tesseract OCR done">OCR</span>');
+  const ocrDone = p.ocr_engines || (p.has_ocr_cache ? ["tesseract"] : []);
+  if (ocrDone.length) {
+    b.push(`<span class="badge ok" title="OCR done: ${esc(ocrDone.map(ocrLabel).join(", "))}">` +
+      `OCR${ocrDone.length > 1 ? "×" + ocrDone.length : ""}</span>`);
+  }
   if (p.llm_results) b.push(`<span class="badge ok" title="LLM transcriptions stored">LLM${p.llm_results > 1 ? "×" + p.llm_results : ""}</span>`);
   const hits = state.searchHits[n];
   if (hits) b.push(`<span class="badge hit">${hits.count} hit${hits.count > 1 ? "s" : ""}</span>`);
@@ -95,7 +100,7 @@ async function gotoPage(n) {
 
   const [native, ocr, llm] = await Promise.all([
     api(pageUrl(n, "/text/native")),
-    api(pageUrl(n, "/text/ocr?cached_only=true")),
+    api(pageUrl(n, `/text/ocr?cached_only=true&engine=${encodeURIComponent(state.ocrEngine)}`)),
     api(pageUrl(n, "/llm")),
   ]);
   if (n !== state.page) return; // user moved on while loading
@@ -118,21 +123,48 @@ function renderNative() {
   renderSide();
 }
 
+function renderOcrEngines() {
+  const sel = $("#ocr-engine"), p = state.pages[state.page];
+  sel.innerHTML = ocrEngineOptions(state.config, p?.ocr_engines || []);
+  sel.value = state.ocrEngine;
+  $("#ocr-engine-logo").innerHTML = logoHtml(ocrEngineInfo(state.ocrEngine)?.brand);
+}
+
 function renderOcr() {
-  const layer = state.ocr;
+  renderOcrEngines();
+  const layer = state.ocr, engine = ocrEngineInfo(state.ocrEngine);
   const meta = $("#ocr-meta");
-  if (!state.config.tesseract_available) {
-    meta.innerHTML = '<span class="err">Tesseract is not installed on the server.</span> <a href="/providers">How to install</a>';
-  } else if (layer) {
-    meta.textContent = `${layer.text.trim().length} characters · ${layer.words.length} words · ` +
-      `${(layer.elapsed_ms / 1000).toFixed(1)}s · lang ${state.config.tesseract_language}`;
+  if (layer) {
+    const m = layer.meta || {};
+    const details = m.settings || (state.ocrEngine === "tesseract" ? `lang ${state.config.tesseract_language}` : "");
+    meta.innerHTML = `${layer.text.trim().length} characters · ${layer.words.length} words · ` +
+      `${((layer.elapsed_ms || 0) / 1000).toFixed(1)}s` + (m.model ? ` · <b>${esc(m.model)}</b>` : "") +
+      (details ? ` · ${esc(details)}` : "") +
+      (engine && !engine.has_boxes ? ' · <span class="muted">text only, no word boxes</span>' : "") +
+      (m.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
+  } else if (engine && !engine.available) {
+    meta.innerHTML = `<span class="err">${esc(engine.problem)}</span> <a href="/providers">Setup</a>`;
   } else {
-    meta.textContent = "Not run yet for this page.";
+    meta.innerHTML = engine?.kind === "cloud"
+      ? `Not run yet for this page. Running it sends the page image to ${esc(engine.label)}.`
+      : "Not run yet for this page.";
   }
   $("#run-ocr .lbl").textContent = layer ? "Re-run OCR" : "Run OCR";
-  $("#run-ocr").disabled = !state.config.tesseract_available;
-  setText($("#ocr-text"), layer ? layer.text : "", "Click “Run OCR” (or press o) to OCR this page with Tesseract.");
+  $("#run-ocr").disabled = !engine?.available;
+  setText($("#ocr-text"), layer ? layer.text : "",
+    `Click “Run OCR” (or press o) to OCR this page with ${engine?.label || "the selected engine"}.`);
   renderSide();
+}
+
+async function selectOcrEngine(id) {
+  state.ocrEngine = id;
+  localStorage.setItem("pyocr.ocrEngine", id);
+  const n = state.page;
+  const layer = await api(pageUrl(n, `/text/ocr?cached_only=true&engine=${encodeURIComponent(id)}`));
+  if (n !== state.page || id !== state.ocrEngine) return;
+  state.ocr = layer;
+  renderOcr();
+  renderCompareOptions();
 }
 
 function renderLlm(selectKey) {
@@ -156,7 +188,7 @@ function showLlmResult(key) {
   const tokens = r.input_tokens != null ? ` · ${fmtInt(r.input_tokens)} in / ${fmtInt(r.output_tokens)} out tokens` : "";
   const warns = (r.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
   const image = r.preprocess_label ? ` · image: <span class="badge accent" title="${esc(r.preprocess)}">${esc(r.preprocess_label)}</span>` : "";
-  $("#llm-meta").innerHTML = `${esc(r.provider_label || r.provider)} · <b>${esc(r.model)}</b> · ` +
+  $("#llm-meta").innerHTML = `${logoHtml(providerBrand(r.provider), "sm")} ${esc(r.provider_label || r.provider)} · <b>${esc(r.model)}</b> · ` +
     `${(r.latency_ms / 1000).toFixed(1)}s${tokens}${r.cost ? ` · ${costHtml(r.cost)}` : ""} · ${r.text.length} chars${image}${warns}`;
   setText($("#llm-text"), r.text);
   renderSide();
@@ -185,6 +217,7 @@ function renderSide() {
   if (!state.native) return;
   const llm = state.llmResults.find((x) => x.key === $("#llm-result-select").value);
   $("#side-native-meta").textContent = `${state.native.text.trim().length.toLocaleString()} ch`;
+  $("#side-ocr-title").innerHTML = `${logoHtml(ocrEngineInfo(state.ocrEngine)?.brand, "sm")} ${esc(ocrLabel(state.ocrEngine))}`;
   $("#side-ocr-meta").textContent = state.ocr ? `${state.ocr.text.trim().length.toLocaleString()} ch` : "not run";
   $("#side-llm-meta").textContent = llm ? `${llm.model} · ${llm.text.length.toLocaleString()} ch` : "none yet";
   setSideText($("#side-native"), state.native.text, "No embedded text.");
@@ -208,13 +241,16 @@ function switchTab(name) {
 
 // ------------------------------------------------------------------ actions
 async function runOcr(force = true) {
-  const n = state.page, btn = $("#run-ocr");
-  const done = setBusy(btn, "Running OCR…", [[$("#page-frame"), "is-reading"], [$("#ocr-text"), "is-thinking"]]);
+  const n = state.page, engine = state.ocrEngine, btn = $("#run-ocr");
+  const done = setBusy(btn, `Running ${ocrLabel(engine)}…`,
+    [[$("#page-frame"), "is-reading"], [$("#ocr-text"), "is-thinking"]]);
   try {
-    const layer = await api(pageUrl(n, `/text/ocr?force=${force}`));
-    state.pages[n].has_ocr_cache = true;
+    const layer = await api(pageUrl(n, `/text/ocr?force=${force}&engine=${encodeURIComponent(engine)}`));
+    const p = state.pages[n];
+    p.ocr_engines = [...new Set([...(p.ocr_engines || []), engine])];
+    if (engine === "tesseract") p.has_ocr_cache = true;
     refreshPageBadges(n);
-    if (n === state.page) { state.ocr = layer; renderCompareOptions(); }
+    if (n === state.page && engine === state.ocrEngine) { state.ocr = layer; renderCompareOptions(); }
   } finally {
     done();
     renderOcr();
@@ -333,7 +369,8 @@ async function runSearch(ev) {
     for (const h of pg.hits) {
       const s = h.snippets[0];
       const snippet = s ? `${esc(s.before)}<mark>${esc(s.match)}</mark>${esc(s.after)}` : "";
-      html += `<div class="sr-hit"><span class="src">${esc(h.label)} · ${h.count}</span><div>${snippet}</div></div>`;
+      const brand = h.source === "ocr" ? ocrEngineInfo(h.engine)?.brand : h.source === "llm" ? providerBrand(h.provider) : null;
+      html += `<div class="sr-hit"><span class="src">${brand ? logoHtml(brand, "sm") + " " : ""}${esc(h.label)} · ${h.count}</span><div>${snippet}</div></div>`;
     }
     html += "</div>";
   }
@@ -356,7 +393,8 @@ function rerenderTexts() {
 // ------------------------------------------------------------------ compare
 function renderCompareOptions() {
   const opts = [["native", "Native text layer"]];
-  if (state.ocr) opts.push(["ocr", "Tesseract OCR"]);
+  const ocrDone = state.pages[state.page]?.ocr_engines || [];
+  for (const id of ocrDone) opts.push([ocrSourceId(id), ocrLabel(id)]);
   for (const r of state.llmResults) {
     opts.push([`llm:${r.key}`, `LLM: ${r.provider} / ${r.model} (${r.prompt_mode})` +
       (r.preprocess_label ? ` · image: ${r.preprocess_label}` : " · original image")]);
@@ -368,11 +406,14 @@ function renderCompareOptions() {
   // Defaults: newest LLM transcription as the reference, OCR (or the native
   // text if OCR hasn't run) as the candidate. User choices are kept while valid.
   ref.value = valid(prev.ref) ? prev.ref : (state.llmResults.length ? `llm:${state.llmResults[0].key}` : "native");
-  const fallback = state.ocr ? "ocr" : "native";
+  const selected = ocrSourceId(state.ocrEngine);
+  const fallback = ocrDone.includes(state.ocrEngine) ? selected : ocrDone.length ? ocrSourceId(ocrDone[0]) : "native";
   hyp.value = valid(prev.hyp) && prev.hyp !== ref.value ? prev.hyp : (fallback !== ref.value ? fallback : "native");
 }
 
-const textRef = (v) => (v.startsWith("llm:") ? { source: "llm", key: v.slice(4) } : { source: v });
+const ocrSourceId = (engine) => (engine === "tesseract" ? "ocr" : `ocr:${engine}`);
+const textRef = (v) => (v.startsWith("llm:") ? { source: "llm", key: v.slice(4) }
+  : v.startsWith("ocr:") ? { source: "ocr", engine: v.slice(4) } : { source: v });
 
 async function runCompare() {
   const refV = $("#cmp-ref").value, hypV = $("#cmp-hyp").value;
@@ -667,6 +708,7 @@ function wire() {
   $$("[data-copy]").forEach((b) => b.addEventListener("click", () => copyText($(b.dataset.copy).textContent)));
 
   $("#run-ocr").addEventListener("click", guard(() => runOcr(true)));
+  $("#ocr-engine").addEventListener("change", guard((e) => selectOcrEngine(e.target.value)));
   $("#run-llm").addEventListener("click", guard(() => runLlm(false)));
   $("#rerun-llm").addEventListener("click", guard(() => runLlm(true)));
   $("#llm-json-toggle").addEventListener("click", () => {
@@ -744,6 +786,7 @@ function wire() {
   wire();
   try {
     state.config = await getConfig();
+    state.ocrEngine = preferredOcrEngine(state.config);
     const dpis = [100, 150, 300, 400].filter((d) => d !== state.config.llm_dpi);
     $('[data-adj="dpi"]').innerHTML = `<option value="">Default (${state.config.llm_dpi} dpi)</option>` +
       dpis.map((d) => `<option value="${d}">${d} dpi</option>`).join("");

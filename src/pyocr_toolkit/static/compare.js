@@ -9,7 +9,8 @@ const cmp = { a: null, b: null, pages: [], page: null };
 
 const optLabel = (sel) => sel.selectedOptions[0]?.textContent.replace(/\s*\(\d+\/\d+\)$/, "") || "";
 const textRef = (v) => (v.startsWith("llm:") ? { source: "llm", key: v.slice(4) }
-  : v.startsWith("ocr:") ? { source: "ocr", engine: v.slice(4) } : { source: v });
+  : v.startsWith("ocr:") ? { source: "ocr", engine: v.slice(4) }
+  : v.startsWith("native:") ? { source: "native", library: v.slice(7) } : { source: v });
 
 function pickDefaults() {
   const p = new URLSearchParams(location.search);

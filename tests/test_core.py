@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from pyocr_toolkit import compare, search
-from pyocr_toolkit.documents import DocumentError, DocumentStore, Word
+from pyocr_toolkit.documents import DocumentError, DocumentStore, TextLayer, Word
 from pyocr_toolkit.llm.anthropic_provider import _supports_effort
 
 from .conftest import HAS_TESSERACT
@@ -100,6 +100,45 @@ def test_store_roundtrip(tmp_path, sample_pdf):
     assert [m.id for m in store.list()] == [meta.id]
     store.delete(meta.id)
     assert store.list() == []
+
+
+def test_page_stats_cached_on_disk(tmp_path, sample_pdf):
+    store = DocumentStore(tmp_path)
+    meta = store.add("sample.pdf", sample_pdf)
+    doc = store.get(meta.id)
+    stats = doc.page_stats()
+    cache = doc.folder / "pages.json"
+    assert cache.exists() and len(stats) == 2 and not stats[0]["looks_scanned"] and stats[1]["looks_scanned"]
+
+    # A fresh store (as after a restart) reads the file instead of re-extracting.
+    fresh = DocumentStore(tmp_path).get(meta.id)
+    fresh._compute_page_stats = None  # would raise if called
+    assert fresh.page_stats() == stats
+
+    # A damaged or missing file is derived data: it is rebuilt, not an error.
+    for broken in ("not json", '{"version": 1, "pages": []}'):
+        cache.write_text(broken)
+        assert DocumentStore(tmp_path).get(meta.id).page_stats() == stats
+    cache.unlink()
+    assert DocumentStore(tmp_path).get(meta.id).page_stats() == stats
+
+
+def test_page_infos_report_caches(tmp_path, sample_pdf):
+    store = DocumentStore(tmp_path)
+    doc = store.get(store.add("sample.pdf", sample_pdf).id)
+    layer = TextLayer(source="ocr", text="x", words=[])
+    doc.save_ocr_layer(1, "tesseract", layer)
+    doc.save_ocr_layer(1, "easyocr", layer)
+    doc.save_llm_result(0, "k1", {"text": "a"})
+    doc.save_llm_result(0, "k2", {"text": "b"})
+    infos = doc.page_infos()
+    assert [i["number"] for i in infos] == [0, 1]
+    assert infos[0]["ocr_engines"] == [] and not infos[0]["has_ocr_cache"] and infos[0]["llm_results"] == 2
+    assert infos[1]["ocr_engines"] == ["tesseract", "easyocr"] and infos[1]["has_ocr_cache"]
+    assert infos[1]["ocr_engines"] == doc.ocr_engines_cached(1) and infos[1]["llm_results"] == 0
+    assert doc.page_info(1) == infos[1]
+    with pytest.raises(DocumentError):
+        doc.page_info(2)
 
 
 def test_store_rejects_bad_input(tmp_path):

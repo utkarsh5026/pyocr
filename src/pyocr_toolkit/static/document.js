@@ -192,11 +192,13 @@ function updateForm() {
       : `Runs locally on ${what} with ${engine?.label || "OCR"}`;
 }
 
-async function loadPages() {
-  const pages = await api(`/api/documents/${DOC_ID}/pages`);
-  pageInfo = pages;
-  updateForm();
-  $("#page-grid").innerHTML = pages.map((p, n) => `
+// Tiles are added in batches as the grid scrolls into view, so a document with
+// thousands of pages doesn't build thousands of DOM nodes up front.
+const TILE_BATCH = 200;
+let tileObserver = null;
+
+function tileHtml(p, n) {
+  return `
     <a class="page-tile" href="/documents/${DOC_ID}/pages/${n + 1}">
       <img loading="lazy" src="/api/documents/${DOC_ID}/pages/${n}/image?dpi=50" alt="Page ${n + 1}">
       <div class="tile-foot"><b>${n + 1}</b>
@@ -204,7 +206,36 @@ async function loadPages() {
         ${p.ocr_engines?.length ? `<span class="badge ok" title="${esc(p.ocr_engines.map(ocrLabel).join(", "))}">OCR${p.ocr_engines.length > 1 ? "×" + p.ocr_engines.length : ""}</span>` : ""}
         ${p.llm_results ? `<span class="badge ok">LLM${p.llm_results > 1 ? "×" + p.llm_results : ""}</span>` : ""}
       </div>
-    </a>`).join("");
+    </a>`;
+}
+
+function renderTiles(grid, start) {
+  const end = Math.min(start + TILE_BATCH, pageInfo.length);
+  grid.querySelector(".grid-more")?.remove();
+  grid.insertAdjacentHTML("beforeend", pageInfo.slice(start, end).map((p, i) => tileHtml(p, start + i)).join(""));
+  if (end >= pageInfo.length) return;
+  const more = document.createElement("div");
+  more.className = "grid-more muted small";
+  more.textContent = `Showing ${end} of ${plural(pageInfo.length, "page")}…`;
+  grid.append(more);
+  tileObserver ??= new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      tileObserver.unobserve(e.target);
+      renderTiles(grid, Number(e.target.dataset.next));
+    }
+  }, { rootMargin: "800px" });
+  more.dataset.next = end;
+  tileObserver.observe(more);
+}
+
+async function loadPages() {
+  const pages = await api(`/api/documents/${DOC_ID}/pages`);
+  pageInfo = pages;
+  updateForm();
+  const grid = $("#page-grid");
+  grid.innerHTML = "";
+  renderTiles(grid, 0);
 }
 
 async function refreshJobs() {

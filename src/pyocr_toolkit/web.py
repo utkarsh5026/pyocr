@@ -61,16 +61,11 @@ def build_web(settings: Settings, store: DocumentStore, services: Services, jobs
     def page(request: Request, template: str, nav: str, **ctx) -> HTMLResponse:
         return TEMPLATES.TemplateResponse(request, template, {"nav": nav, **ctx})
 
-    # Pages with a usable embedded text layer never change for a stored file,
-    # so remember them per document instead of re-reading every page.
-    native_cache: dict[str, frozenset[int]] = {}
-
     def summary(doc_id: str, memberships: dict | None = None) -> dict:
         doc = store.get(doc_id)
         n = doc.meta.page_count
-        if doc_id not in native_cache:
-            native_cache[doc_id] = frozenset(p for p in range(n) if not doc.page_info(p)["looks_scanned"])
-        native = native_cache[doc_id]
+        # page_stats() is cached in pages.json, so this stays cheap on large documents.
+        native = {p for p, s in enumerate(doc.page_stats()) if not s["looks_scanned"]}
         ocr = {p for p in range(n) if doc.ocr_engines_cached(p)}
         llm = {p for p in range(n) if doc.list_llm_results(p)}
         missing = n - len(native | ocr | llm)  # pages with no text from any source

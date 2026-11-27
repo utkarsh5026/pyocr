@@ -13,6 +13,10 @@
 - Existing Tesseract results (`ocr/<page>.json`) are read as before; other engines cache under `ocr/<engine>/`.
 - Fix: running Tesseract on two documents at once (e.g. two OCR jobs) failed with "Attempt to use Leptonica from
   2 threads at once"; Tesseract calls are now serialised across the whole process.
+- Faster Overview for large documents: per-page facts (size, text-layer characters, images) are computed once and
+  saved to `pages.json` in the document folder, so later visits to a 2,000-page PDF's Overview drop from ~2.5 s
+  to ~40 ms. The page grid draws thumbnails in batches of 200 as you scroll. Existing folders get `pages.json` on
+  first view; it is derived data and is rebuilt if missing or damaged.
 
 ## 0.4.0 - 2026-11-27
 

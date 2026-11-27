@@ -9,6 +9,7 @@ On disk, each upload lives in its own folder::
 
     data/documents/<doc_id>/
         meta.json          # filename, page count, ...
+        pages.json         # per-page facts (size, text-layer chars, ...); derived, rebuilt if missing
         source.<ext>       # the original bytes, untouched
         ocr/<page>.json    # cached Tesseract result (text + word boxes)
         ocr/<engine>/<page>.json  # cached result of another OCR engine (EasyOCR, ...)
@@ -66,6 +67,9 @@ class OCRUnavailableError(DocumentError):
 #: The engine whose results live in ``ocr/<page>.json`` (the original layout).
 DEFAULT_OCR_ENGINE = "tesseract"
 _ENGINE_ID_RE = re.compile(r"^[a-z0-9_]+$")
+
+#: Bump when the fields in ``pages.json`` change; older files are then recomputed.
+_PAGE_STATS_VERSION = 1
 
 
 @dataclass
@@ -147,6 +151,7 @@ class OpenDocument:
         self.meta = meta
         self._lock = threading.RLock()
         self._doc: pymupdf.Document | None = None
+        self._page_stats: list[dict[str, Any]] | None = None
 
     # -- lifecycle -----------------------------------------------------------
     @property
@@ -170,27 +175,89 @@ class OpenDocument:
         return self._handle()[number]
 
     # -- page info / rendering ----------------------------------------------
-    def page_info(self, number: int) -> dict[str, Any]:
+    @property
+    def _page_stats_path(self) -> Path:
+        return self.folder / "pages.json"
+
+    def page_stats(self) -> list[dict[str, Any]]:
+        """Facts about every page that never change for a stored file (size, text-layer chars, images).
+
+        Reading them takes a full text extraction per page (seconds for a few thousand pages), so they are
+        computed once and kept in ``pages.json``. The file is derived data: a missing, stale or damaged one is
+        simply rebuilt, so folders from older versions keep working.
+        """
         with self._lock:
-            page = self._page(number)
-            text = page.get_text()
-            image_count = len(page.get_images(full=False))
-            native_chars = len(text.strip())
-            return {
-                "number": number,
-                "width": round(page.rect.width, 2),
-                "height": round(page.rect.height, 2),
-                "rotation": page.rotation,
-                "native_chars": native_chars,
-                "image_count": image_count,
-                # A page with images but (almost) no text layer is almost
-                # certainly a scan and needs OCR to be searchable. Raster
-                # uploads (PNG/JPEG/...) never have a text layer.
-                "looks_scanned": (native_chars < 20 and image_count > 0) or native_chars == 0,
-                "has_ocr_cache": self._ocr_cache_path(number).exists(),
-                "ocr_engines": self.ocr_engines_cached(number),
-                "llm_results": len(list(self._llm_dir(number).glob("*.json"))),
-            }
+            if self._page_stats is not None:
+                return self._page_stats
+            stats = self._load_page_stats()
+            if stats is None:
+                doc = self._handle()
+                stats = [self._compute_page_stats(doc[n]) for n in range(self.meta.page_count)]
+                tmp = self._page_stats_path.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps({"version": _PAGE_STATS_VERSION, "pages": stats}, separators=(",", ":")))
+                tmp.replace(self._page_stats_path)
+            self._page_stats = stats
+            return stats
+
+    def _load_page_stats(self) -> list[dict[str, Any]] | None:
+        try:
+            data = json.loads(self._page_stats_path.read_text())
+        except (OSError, ValueError):
+            return None
+        pages = data.get("pages") if isinstance(data, dict) else None
+        if data.get("version") != _PAGE_STATS_VERSION or not isinstance(pages, list) \
+                or len(pages) != self.meta.page_count:
+            return None
+        return pages
+
+    @staticmethod
+    def _compute_page_stats(page: pymupdf.Page) -> dict[str, Any]:
+        native_chars = len(page.get_text().strip())
+        image_count = len(page.get_images(full=False))
+        return {
+            "width": round(page.rect.width, 2),
+            "height": round(page.rect.height, 2),
+            "rotation": page.rotation,
+            "native_chars": native_chars,
+            "image_count": image_count,
+            # A page with images but (almost) no text layer is almost
+            # certainly a scan and needs OCR to be searchable. Raster
+            # uploads (PNG/JPEG/...) never have a text layer.
+            "looks_scanned": (native_chars < 20 and image_count > 0) or native_chars == 0,
+        }
+
+    def page_info(self, number: int) -> dict[str, Any]:
+        if not 0 <= number < self.meta.page_count:
+            raise DocumentError(f"page {number} out of range (document has {self.meta.page_count} pages)")
+        return self.page_infos()[number]
+
+    def page_infos(self) -> list[dict[str, Any]]:
+        """:meth:`page_stats` plus which caches each page has, for every page.
+
+        Scans the ``ocr/`` and ``llm/`` folders once instead of probing them page by page.
+        """
+        stats = self.page_stats()
+        ocr: dict[int, list[str]] = {}
+        ocr_root = self.folder / "ocr"
+        if ocr_root.is_dir():
+            for f in ocr_root.glob("*.json"):  # Tesseract, the original layout
+                if f.stem.isdigit():
+                    ocr.setdefault(int(f.stem), []).append(DEFAULT_OCR_ENGINE)
+            for d in sorted(e for e in ocr_root.iterdir() if e.is_dir()):
+                for f in d.glob("*.json"):
+                    if f.stem.isdigit():
+                        ocr.setdefault(int(f.stem), []).append(d.name)
+        llm: dict[int, int] = {}
+        llm_root = self.folder / "llm"
+        if llm_root.is_dir():
+            for d in llm_root.iterdir():
+                if d.is_dir() and d.name.isdigit():
+                    llm[int(d.name)] = sum(1 for _ in d.glob("*.json"))
+        return [
+            {"number": n, **s, "has_ocr_cache": DEFAULT_OCR_ENGINE in ocr.get(n, ()),
+             "ocr_engines": ocr.get(n, []), "llm_results": llm.get(n, 0)}
+            for n, s in enumerate(stats)
+        ]
 
     def render(self, number: int, dpi: int, fmt: str = "png", max_edge_px: int | None = None,
                jpg_quality: int = 90) -> bytes:

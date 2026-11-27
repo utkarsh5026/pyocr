@@ -305,7 +305,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
     @api.get("/documents/{doc_id}/pages", tags=["pages"])
     def pages(doc_id: str):
         doc = get_doc(doc_id)
-        return [doc.page_info(n) for n in doc.iter_pages()]
+        return doc.page_infos()
 
     @api.get("/documents/{doc_id}/pages/{page}/image", tags=["pages"])
     def page_image(doc_id: str, page: int, dpi: int = Query(None, ge=36, le=600),

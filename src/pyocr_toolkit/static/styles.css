@@ -393,6 +393,7 @@ details.meta dd { margin: 0; word-break: break-word; }
 
 /* ---- page grid ---- */
 .page-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 16px; }
+.grid-more { grid-column: 1 / -1; text-align: center; padding: 12px; }
 .page-tile { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; color: var(--text); display: flex; flex-direction: column; box-shadow: var(--shadow-sm); transition: transform .15s, box-shadow .15s, border-color .15s; }
 .page-tile:hover { color: var(--text); border-color: var(--border-strong); box-shadow: var(--shadow-md); transform: translateY(-2px); }
 .page-tile img { width: 100%; aspect-ratio: .75; object-fit: cover; object-position: top; background: #fff; filter: var(--paper-filter); border-bottom: 1px solid var(--border); }

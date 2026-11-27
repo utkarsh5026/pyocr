@@ -88,6 +88,10 @@ class LLMSpec:
     pages_per_request: int = 1
 
 
+#: Source id of the text a person confirmed on the Compare page's Review panel.
+CORRECTED_SOURCE = "corrected"
+CORRECTED_LABEL = "Corrected (reviewed)"
+
 class Services:
     def __init__(self, settings: Settings, providers: dict[str, Provider],
                  ocr_engines: dict[str, OCREngine] | None = None,
@@ -467,6 +471,17 @@ class Services:
         lib = self.text_library(library)
         return doc.native_text(page) if lib is None else lib.extract(doc, page, force=force)
 
+    def word_layer(self, doc: OpenDocument, page: int, source: str) -> TextLayer | None:
+        """The text layer with word boxes behind a source, if it has one (native text and OCR do; LLMs don't).
+
+        Only reads what is already there: OCR is not run, so asking never starts slow work.
+        """
+        if (library := native_library_of(source)) is not None:
+            return self.native_layer(doc, page, library)
+        if (engine := ocr_engine_of(source)) is not None:
+            return doc.cached_ocr_text(page, engine)
+        return None
+
     def compare_libraries(self, doc: OpenDocument, page: int) -> list[dict[str, Any]]:
         """Run every PDF library on one page: does each one get text out, and how much?"""
         rows = []
@@ -538,12 +553,19 @@ class Services:
                 entry["latency_ms"] += r.get("latency_ms") or 0
                 entry["updated_at"] = max(entry["updated_at"], r.get("created_at") or 0)
         sources.extend(sorted(llm.values(), key=lambda e: e["updated_at"], reverse=True))
+        if corrected := doc.corrected_pages():
+            # listed first: it is ground truth, the natural reference for every other source
+            sources.insert(0, {"id": CORRECTED_SOURCE, "kind": "corrected", "label": CORRECTED_LABEL,
+                               "pages": corrected})
         for s in sources:
             s["page_count"] = len(s["pages"])
         return sources
 
     def page_text(self, doc: OpenDocument, page: int, source: str, run_ocr: bool = False) -> str | None:
         """Text of one page from one source, or ``None`` if not extracted yet."""
+        if source == CORRECTED_SOURCE:
+            record = doc.load_corrected(page)
+            return record["text"] if record else None
         if (library := native_library_of(source)) is not None:
             return self.native_layer(doc, page, library).text
         if (engine := ocr_engine_of(source)) is not None:
@@ -558,6 +580,8 @@ class Services:
         raise DocumentError(f"unknown source '{source}'")
 
     def source_label(self, doc: OpenDocument, source: str) -> str:
+        if source == CORRECTED_SOURCE:
+            return CORRECTED_LABEL
         if (engine := ocr_engine_of(source)) is not None:
             return self.ocr_label(engine)
         if (library := native_library_of(source)) is not None and (lib := self.text_library(library)):
@@ -591,4 +615,4 @@ def parse_pages(spec: str | None, page_count: int) -> list[int]:
     return out
 
 
-__all__ = ["LLMSpec", "ProviderError", "Services", "ocr_engine_of", "ocr_source_id", "parse_pages"]
+__all__ = ["CORRECTED_SOURCE", "LLMSpec", "ProviderError", "Services", "ocr_engine_of", "ocr_source_id", "parse_pages"]

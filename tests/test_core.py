@@ -148,6 +148,22 @@ def test_consensus_needs_two_sources():
         compare.consensus({"a": "x"})
 
 
+def test_consensus_columns_point_back_to_each_sources_words():
+    texts = {"a": "one two three", "b": "one too three four"}
+    res = compare.consensus(texts)
+    for col in res["columns"]:
+        for sid, i, tok in zip(res["sources"], col["pos"], col["tokens"]):
+            assert (compare.split_words(texts[sid])[i] if i >= 0 else "") == tok
+
+
+def test_map_word_boxes_follows_the_text():
+    boxes = [("a", [0, 0, 1, 1]), ("recog-", [2, 0, 5, 1]), ("nition", [0, 2, 4, 3]), ("b", [5, 2, 6, 3])]
+    # the text joins the hyphenated word; it gets the union of both boxes, and "b" keeps its own
+    assert compare.map_word_boxes("a recog-\nnition b", boxes) == [[0, 0, 1, 1], [0, 0, 5, 3], [5, 2, 6, 3]]
+    assert compare.map_word_boxes("a extra b", [("a", [0, 0, 1, 1]), ("b", [5, 2, 6, 3])]) == \
+        [[0, 0, 1, 1], None, [5, 2, 6, 3]]
+
+
 # ---------------------------------------------------------------- search
 def _words(*texts):
     return [Word(i * 10, 0, i * 10 + 8, 10, t, 0, 0) for i, t in enumerate(texts)]

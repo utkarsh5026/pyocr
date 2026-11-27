@@ -168,3 +168,47 @@ def test_consensus_errors(client, doc_id):
     r = client.get(url, params={"sources": "native,llm"})  # no LLM text yet: only one source votes
     assert r.status_code == 400 and "two or more" in r.json()["detail"]
     assert client.get(f"/api/documents/{doc_id}/pages/99/consensus", params={"sources": "native,llm"}).status_code == 400
+
+
+def test_corrected_text_lifecycle(client, doc_id):
+    url = f"/api/documents/{doc_id}/pages/0/corrected"
+    assert client.get(url).status_code == 404
+    assert all(src["id"] != "corrected" for src in client.get(f"/api/documents/{doc_id}/sources").json())
+
+    fixed = "Invoice 2024-117\nThe quick brown fox jumps over the lazy dog.\nTotal due: $1,250.00"
+    # writes are refused from other sites and must be JSON
+    assert client.put(url, json={"text": fixed}, headers={"Origin": "http://evil.example"}).status_code == 403
+    assert client.put(url, content=fixed, headers={"Content-Type": "text/plain"}).status_code in (415, 422)
+    assert client.put(url, json={"text": "   "}).status_code == 400
+    assert client.put(f"/api/documents/{doc_id}/pages/9/corrected", json={"text": "x"}).status_code == 400
+
+    saved = client.put(url, json={"text": fixed, "based_on": ["native", "ocr"]}).json()
+    assert saved["text"] == fixed and saved["based_on"] == ["native", "ocr"] and saved["updated_at"] > 0
+    assert client.get(url).json()["text"] == fixed
+
+    # it is a source like any other: listed first, exported, and usable as a compare reference
+    sources = client.get(f"/api/documents/{doc_id}/sources").json()
+    assert sources[0]["id"] == "corrected" and sources[0]["pages"] == [0]
+    export = client.get(f"/api/documents/{doc_id}/export", params={"source": "corrected"}).text
+    assert "lazy dog" in export
+    cmp = client.post(f"/api/documents/{doc_id}/pages/0/compare", json={
+        "reference": {"source": "corrected"}, "hypothesis": {"source": "native"}}).json()
+    assert cmp["reference"]["label"] == "Corrected (reviewed)" and cmp["metrics"]["cer"] == 0
+
+    assert client.delete(url).status_code == 204
+    assert client.get(url).status_code == 404 and client.delete(url).status_code == 404
+
+
+def test_consensus_page_has_word_boxes_and_review_state(client, doc_id):
+    k = client.post(f"/api/documents/{doc_id}/pages/0/llm", json={"provider": "fake"}).json()["key"]
+    url = f"/api/documents/{doc_id}/pages/0/consensus"
+    res = client.get(url, params={"sources": f"native,llm:{k}"}).json()
+    assert res["page_size"][0] > 0 and res["corrected"] is None
+    # the native layer has word boxes, so every word gets one, the LLM's "lazzy" included
+    lazy = next(c for c in res["columns"] if "lazzy" in c["tokens"])
+    assert lazy["box"] and len(lazy["box"]) == 4 and not lazy["box_approx"]
+    assert all(c["box"] for c in res["columns"])
+
+    client.put(f"/api/documents/{doc_id}/pages/0/corrected", json={"text": res["text"], "based_on": res["sources"]})
+    res = client.get(url, params={"sources": f"native,llm:{k}"}).json()
+    assert res["corrected"]["based_on"] == ["native", f"llm:{k}"]

@@ -24,6 +24,13 @@
   much each pair of sources agrees. Sources with no text on a page don't vote there, and pages with only two voters
   are flagged, since two readings can't outvote each other. API: `GET /api/documents/{id}/consensus` and
   `GET /api/documents/{id}/pages/{n}/consensus` (`?sources=` 2–8 ids).
+- **Review & correct.** On the consensus page view, *Review & correct* puts the page image next to the text: click a
+  word to see it highlighted on the image and every source's reading of it, pick the right one or type your own, and
+  the next close call is selected. *Save corrected text* stores the page as a new **Corrected** source (ground
+  truth): it can be exported, read on *Full text*, and becomes the default reference in two-source mode. Stored in
+  `corrected/<page>.json` in the document's folder; existing folders are unaffected. API:
+  `GET/PUT/DELETE /api/documents/{id}/pages/{n}/corrected`; the page consensus adds a word `box` per column (from
+  native text or OCR), `page_size` and the page's `corrected` state.
 - **Other PDF libraries.** Besides PyMuPDF, the text layer can be read with pypdf, pdfplumber, pdfminer.six and
   pypdfium2 (optional: `pip install "pyocr-toolkit[pdf]"`). Each installed library is its own source
   (`native:<library>`; `native` stays PyMuPDF) that can be compared and exported. The page inspector's Native tab

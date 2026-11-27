@@ -133,12 +133,22 @@
         <span id="cp-counts" class="small muted"></span>
         <div class="spacer"></div>
         <label class="check small"><input type="checkbox" id="cp-only"> Only lines where sources disagree</label>
+        <button class="btn small" id="cp-review" aria-pressed="false">{{ icon('pencil') }}Review &amp; correct</button>
         <button class="btn small ghost" id="cp-copy">{{ icon('copy') }}Copy consensus</button>
         <a id="cp-open" class="btn small ghost" href="#">{{ icon('eye') }}Open in inspector</a>
       </div>
       <div class="callout warn cons-warn" id="cp-warn" hidden></div>
       <div class="cons-legend" id="cp-legend"></div>
-      <div class="cons-text" id="cp-text"></div>
+      <div class="cons-body" id="cp-body">
+        <div class="rv-page" id="rv-page" hidden>
+          <div class="rv-frame"><img id="rv-img" alt=""><div class="rv-hl" id="rv-hl" hidden></div></div>
+        </div>
+        <div class="cons-main">
+          <div class="rv-panel" id="rv-panel" hidden></div>
+          <div class="cons-text" id="cp-text"></div>
+          <div class="rv-save" id="rv-save" hidden></div>
+        </div>
+      </div>
     </section>
 
     <section id="all-matrix-card" class="card" hidden>

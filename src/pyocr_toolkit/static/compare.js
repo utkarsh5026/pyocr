@@ -18,7 +18,8 @@ function pickDefaults() {
   const enabled = (sel) => [...sel.options].filter((o) => !o.disabled).map((o) => o.value);
   const has = (sel, v) => enabled(sel).includes(v);
   const llm = enabled(a).find((v) => v.startsWith("llm:"));
-  a.value = has(a, p.get("a")) ? p.get("a") : (llm || "native");
+  // text a person corrected is ground truth: the natural reference whenever it exists
+  a.value = has(a, p.get("a")) ? p.get("a") : has(a, "corrected") ? "corrected" : (llm || "native");
   const ocrIds = enabled(b).filter((v) => v === "ocr" || v.startsWith("ocr:"));
   const fallback = [...ocrIds, "native", ...enabled(b)].find((v) => has(b, v) && v !== a.value);
   b.value = has(b, p.get("b")) && p.get("b") !== a.value ? p.get("b") : (fallback || a.value);
@@ -215,6 +216,8 @@ $("#swap").addEventListener("click", () => {
 const PALETTE = ["#2563eb", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#64748b", "#dc2626"];
 const MAX_SOURCES = 8;
 const all = { ids: [], doc: null, page: null, pageRes: null };
+// Review: the column picked, and the readings a person chose (column index -> text; "" = no word)
+const rv = { on: false, sel: null, choices: {} };
 const chipIds = $$("#all-sources input").map((i) => i.value);
 const srcColor = (id) => PALETTE[Math.max(0, chipIds.indexOf(id)) % PALETTE.length];
 const srcLabel = (id) => all.doc?.labels[id] || all.pageRes?.labels[id] || id;
@@ -229,7 +232,9 @@ function pickAllDefaults() {
   // One vote per independent reading: the PyMuPDF text layer, every OCR engine and every LLM run.
   // Extra PDF libraries read the same text layer, so they are left out unless picked.
   const inputs = $$("#all-sources input");
-  const defaults = inputs.filter((i) => !("library" in i.dataset)).map((i) => i.value).slice(0, MAX_SOURCES);
+  // Corrected text is the answer, not a reading, so it doesn't vote either.
+  const defaults = inputs.filter((i) => !("library" in i.dataset) && i.dataset.kind !== "corrected")
+    .map((i) => i.value).slice(0, MAX_SOURCES);
   const want = new Set(fromUrl.length ? fromUrl : defaults);
   inputs.forEach((i) => (i.checked = want.has(i.value)));
   updatePickHint();
@@ -343,6 +348,7 @@ function renderMatrix(res) {
 
 async function showConsPage(n) {
   const res = await api(`/api/documents/${DOC_ID}/pages/${n}/consensus?${new URLSearchParams({ sources: all.ids.join(","), ...optsQS() })}`);
+  if (all.page !== n || all.pageRes?.sources.join() !== res.sources.join()) Object.assign(rv, { sel: null, choices: {} });
   all.page = n;
   all.pageRes = res;
   history.replaceState(null, "", `${location.search}#p${n + 1}`);
@@ -363,6 +369,7 @@ async function showConsPage(n) {
   }
   $("#cp-open").href = `/documents/${DOC_ID}/pages/${n + 1}`;
   renderConsText();
+  renderReview();
   $$("#all-heat [data-cgoto]").forEach((b) => b.classList.toggle("selected", +b.dataset.cgoto === n));
   const scored = all.doc.pages.filter((p) => p.scored).map((p) => p.page);
   $("#cp-prev").disabled = scored[0] === n;
@@ -379,6 +386,8 @@ function renderConsText() {
   const only = $("#cp-only").checked;
   const n = res.sources.length;
   const colHtml = (c) => {
+    const i = c.idx;
+    if (rv.on) return reviewColHtml(c, i, n);
     if (c.status === "agree") return `<span class="cw">${esc(c.winner)}</span>`;
     const alts = c.dissent.map((i) => `<span class="cw-alt" title="${esc(srcLabel(res.sources[i]))}">${dot(res.sources[i])}${
       c.tokens[i] ? esc(c.tokens[i]) : '<span class="muted">∅</span>'}</span>`).join("");
@@ -388,7 +397,8 @@ function renderConsText() {
   };
   const lines = [];
   let cur = [];
-  for (const c of res.columns) {
+  for (const [idx, col] of res.columns.entries()) {
+    const c = { ...col, idx };
     cur.push(c);
     if (c.br) { lines.push({ cols: cur, br: c.br }); cur = []; }
   }
@@ -408,6 +418,176 @@ function renderConsText() {
   $("#cp-text").innerHTML = out.join("") || '<p class="muted">Every source agrees on this page.</p>';
 }
 
+// ---- review: pick the right reading for each disputed word, save as the "corrected" source
+const reading = (i) => (i in rv.choices ? rv.choices[i] : all.pageRes.columns[i].winner);
+const isOpen = (c, i) => c.status === "tie" && !(i in rv.choices);
+
+function reviewColHtml(c, i, n) {
+  const text = reading(i);
+  const cls = ["cw", "rv-w", c.status !== "agree" ? `stack ${c.status}` : "",
+    i in rv.choices ? "chosen" : "", i === rv.sel ? "sel" : "", text ? "" : "dropped"].join(" ");
+  const top = text ? esc(text) : "∅";
+  if (c.status === "agree" && !(i in rv.choices)) {
+    return `<button type="button" class="${cls}" data-col="${i}">${top}</button>`;
+  }
+  return `<button type="button" class="${cls}" data-col="${i}" title="${c.votes} of ${n} sources agree">
+    <span class="cw-win">${top}${c.status !== "agree" ? `<small>${i in rv.choices ? "✓" : `${c.votes}/${n}`}</small>` : ""}</span></button>`;
+}
+
+/** Text of the page with the person's choices applied, laid out like the consensus. */
+function buildText() {
+  const parts = [];
+  all.pageRes.columns.forEach((c, i) => {
+    const t = reading(i).trim();
+    const sep = c.br === 2 ? "\n\n" : c.br === 1 ? "\n" : " ";
+    if (t) parts.push(t, sep);
+    else if (c.br && parts.length) parts[parts.length - 1] = sep;
+  });
+  return parts.join("").trim();
+}
+
+function setReview(on) {
+  rv.on = on;
+  $("#cp-review").setAttribute("aria-pressed", String(on));
+  $("#cp-review").classList.toggle("primary", on);
+  $("#cp-body").classList.toggle("reviewing", on);
+  if (on && rv.sel == null) {
+    const cols = all.pageRes.columns;
+    const first = cols.findIndex((c) => c.status === "tie");
+    rv.sel = first >= 0 ? first : Math.max(0, cols.findIndex((c) => c.status !== "agree"));
+  }
+  renderConsText();
+  renderReview();
+}
+
+function renderReview() {
+  const res = all.pageRes;
+  for (const id of ["#rv-page", "#rv-panel", "#rv-save"]) $(id).hidden = !rv.on || !res;
+  if (!rv.on || !res) return;
+  const img = $("#rv-img");
+  const src = `/api/documents/${DOC_ID}/pages/${res.page}/image`;
+  if (img.getAttribute("src") !== src) { img.src = src; img.alt = `Page ${res.page + 1}`; }
+  renderChoicePanel();
+  renderSaveBar();
+  placeHighlight();
+}
+
+function placeHighlight() {
+  const res = all.pageRes, hl = $("#rv-hl");
+  const c = res.columns[rv.sel];
+  hl.hidden = !c?.box;
+  if (!c?.box) return;
+  const [x0, y0, x1, y1] = c.box, [w, h] = res.page_size;
+  Object.assign(hl.style, { left: `${(x0 / w) * 100}%`, top: `${(y0 / h) * 100}%`,
+    width: `${((x1 - x0) / w) * 100}%`, height: `${((y1 - y0) / h) * 100}%` });
+  hl.classList.toggle("approx", c.box_approx);
+  // keep the word in view inside the scrolling page panel
+  const pane = $("#rv-page");
+  const top = (y0 / h) * $("#rv-img").clientHeight;
+  if (top < pane.scrollTop + 40 || top > pane.scrollTop + pane.clientHeight - 60) {
+    pane.scrollTo({ top: Math.max(0, top - pane.clientHeight / 3), behavior: "smooth" });
+  }
+}
+
+function renderChoicePanel() {
+  const res = all.pageRes, n = res.sources.length, i = rv.sel;
+  const c = res.columns[i];
+  if (!c) { $("#rv-panel").innerHTML = '<p class="muted small">Click a word to review it.</p>'; return; }
+  const groups = new Map();  // reading -> source indexes, winner first
+  groups.set(c.winner, []);
+  c.tokens.forEach((t, k) => { if (!groups.has(t)) groups.set(t, []); groups.get(t).push(k); });
+  const current = reading(i);
+  const opts = [...groups].filter(([, who]) => who.length).map(([t, who]) => `
+    <button type="button" class="rv-opt${t === current ? " on" : ""}" data-val="${esc(t)}">
+      <span class="rv-tok">${t ? esc(t) : '<i class="muted">no word here</i>'}</span>
+      <span class="rv-who">${who.map((k) => dot(res.sources[k])).join("")} ${who.length}/${n}</span>
+    </button>`).join("");
+  const status = { agree: ["ok", "all sources agree"], majority: ["info", "settled by majority"], tie: ["scan", "close call"] }[c.status];
+  const open = res.columns.filter(isOpen).length;
+  $("#rv-panel").innerHTML = `
+    <div class="rv-head">
+      <span class="badge ${status[0]}">${status[1]}</span>
+      <span class="small muted">${c.votes} of ${n} sources read “${esc(c.winner || "nothing")}”</span>
+      <div class="spacer"></div>
+      <button type="button" class="btn small ghost" id="rv-prev" title="Previous disputed word">←</button>
+      <button type="button" class="btn small ghost" id="rv-next" title="Next disputed word">→</button>
+    </div>
+    <div class="rv-opts">${opts}</div>
+    <form class="rv-custom" id="rv-form">
+      <input id="rv-input" aria-label="What the page says" placeholder="Or type what the page says (empty = no word)" value="${esc(current)}">
+      <button class="btn small">Use</button>
+    </form>
+    <div class="small muted">${c.box ? (c.box_approx ? "Highlight is approximate: no source with word boxes read this word." : "")
+      : "No word box: none of the sources with word boxes read this word."}
+      ${open ? `${plural(open, "close call")} still open.` : "No close calls left."}</div>`;
+}
+
+function renderSaveBar() {
+  const res = all.pageRes;
+  const open = res.columns.filter(isOpen).length;
+  const saved = res.corrected;
+  const when = saved ? new Date(saved.updated_at * 1000).toLocaleString() : "";
+  const other = res.sources.find((s) => s !== "corrected") || "";
+  $("#rv-save").innerHTML = `
+    <div class="small">${saved ? `This page has corrected text, saved ${esc(when)}. Saving replaces it.`
+      : "Saving makes this page's text the <b>Corrected</b> source: ground truth to score every other source against."}
+      ${open ? `<span class="warn">${plural(open, "close call")} not decided: ${open === 1 ? "it keeps" : "they keep"} the reading shown.</span>` : ""}</div>
+    <div class="row" style="margin:0;gap:8px">
+      ${saved ? `<a class="btn small ghost" href="?a=corrected&b=${encodeURIComponent(other)}">Compare against it</a>
+        <button type="button" class="btn small ghost danger" id="rv-delete">Delete</button>` : ""}
+      <button type="button" class="btn small primary" id="rv-saveb">Save corrected text</button>
+    </div>`;
+}
+
+function selectCol(i) {
+  rv.sel = i;
+  renderConsText();
+  renderChoicePanel();
+  placeHighlight();
+}
+
+function stepDisputed(dir) {
+  const cols = all.pageRes.columns;
+  for (let i = rv.sel + dir; i >= 0 && i < cols.length; i += dir) {
+    if (cols[i].status !== "agree") return selectCol(i);
+  }
+}
+
+function choose(value) {
+  const i = rv.sel;
+  rv.choices[i] = value;
+  // move on to the next close call still open, else the next disputed word
+  const cols = all.pageRes.columns;
+  let next = cols.findIndex((c, k) => k > i && isOpen(c, k));
+  if (next < 0) next = cols.findIndex((c, k) => k > i && c.status !== "agree" && !(k in rv.choices));
+  selectCol(next >= 0 ? next : i);
+  renderSaveBar();
+}
+
+async function saveCorrected() {
+  const res = all.pageRes;
+  const text = buildText();
+  const r = await fetch(`/api/documents/${DOC_ID}/pages/${res.page}/corrected`, {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, based_on: res.sources }),
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+  const saved = await r.json();
+  res.corrected = { updated_at: saved.updated_at, based_on: saved.based_on };
+  renderSaveBar();
+  toast(`Saved page ${res.page + 1} as corrected text`);
+}
+
+async function deleteCorrected() {
+  const res = all.pageRes;
+  if (!confirm(`Delete the corrected text of page ${res.page + 1}?`)) return;
+  const r = await fetch(`/api/documents/${DOC_ID}/pages/${res.page}/corrected`, { method: "DELETE" });
+  if (!r.ok && r.status !== 404) throw new Error(r.statusText);
+  res.corrected = null;
+  renderSaveBar();
+  toast("Corrected text deleted");
+}
+
 function stepCons(dir) {
   const scored = all.doc.pages.filter((p) => p.scored).map((p) => p.page);
   const i = scored.indexOf(all.page) + dir;
@@ -423,7 +603,27 @@ $("#all-run").addEventListener("click", guard(runAll));
 $("#cp-only").addEventListener("change", renderConsText);
 $("#cp-prev").addEventListener("click", guard(() => stepCons(-1)));
 $("#cp-next").addEventListener("click", guard(() => stepCons(1)));
-$("#cp-copy").addEventListener("click", () => all.pageRes && copyText(all.pageRes.text));
+$("#cp-copy").addEventListener("click", () => all.pageRes && copyText(buildText()));
+$("#cp-review").addEventListener("click", () => all.pageRes && setReview(!rv.on));
+$("#cp-text").addEventListener("click", (e) => {
+  const el = e.target.closest("[data-col]");
+  if (el && rv.on) selectCol(+el.dataset.col);
+});
+$("#rv-panel").addEventListener("click", (e) => {
+  const opt = e.target.closest(".rv-opt");
+  if (opt) return choose(opt.dataset.val);
+  if (e.target.closest("#rv-prev")) return stepDisputed(-1);
+  if (e.target.closest("#rv-next")) return stepDisputed(1);
+});
+$("#rv-panel").addEventListener("submit", (e) => {
+  e.preventDefault();
+  choose($("#rv-input").value.trim());
+});
+$("#rv-save").addEventListener("click", guard(async (e) => {
+  if (e.target.closest("#rv-saveb")) await saveCorrected();
+  if (e.target.closest("#rv-delete")) await deleteCorrected();
+}));
+$("#rv-img").addEventListener("load", placeHighlight);
 $$('input[name="cmp-mode"]').forEach((r) => r.addEventListener("change", () => setMode(currentMode())));
 $$("#opt-case, #opt-punct").forEach((i) => i.addEventListener("change", () => {
   if (currentMode() === "all") { if (all.doc) guard(runAll)(); } else if (cmp.a) guard(run)();

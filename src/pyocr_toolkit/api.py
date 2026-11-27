@@ -53,7 +53,7 @@ class LLMRunBody(BaseModel):
 
 
 class TextRef(BaseModel):
-    source: Literal["native", "ocr", "llm"]
+    source: Literal["native", "ocr", "llm", "corrected"]
     #: for ``llm``: cache key of a stored result (``None`` -> most recent one)
     key: str | None = None
     #: for ``ocr``: engine id (``None`` -> Tesseract)
@@ -68,6 +68,11 @@ class TextRef(BaseModel):
         if self.source == "ocr":
             return ocr_source_id(self.engine or DEFAULT_OCR_ENGINE)
         return f"llm:{self.key}" if self.source == "llm" and self.key else self.source
+
+
+class CorrectedBody(BaseModel):
+    text: str = Field(..., description="the page's text as a person confirmed it")
+    based_on: list[str] = Field(default_factory=list, description="source ids it was reviewed from")
 
 
 class CompareBody(BaseModel):
@@ -607,7 +612,58 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
                                 "a consensus needs two or more. Extract the missing ones first.")
         res = compare.consensus(texts, compare.NormalizeOptions(ignore_case, ignore_punctuation))
         labels = {sid: services.source_label(doc, sid) for sid in ids}
-        return {"page": page, "labels": labels, "missing": missing, **res}
+        _add_boxes(doc, page, res, texts)
+        info = doc.page_info(page)
+        corrected = doc.load_corrected(page)
+        return {"page": page, "labels": labels, "missing": missing,
+                "page_size": [info["width"], info["height"]],
+                "corrected": {"updated_at": corrected["updated_at"], "based_on": corrected.get("based_on", [])}
+                if corrected else None, **res}
+
+    def _add_boxes(doc: OpenDocument, page: int, res: dict, texts: dict[str, str]) -> None:
+        """Give each consensus column a word box (PDF points) to highlight on the page image.
+
+        Boxes come from the voting sources that have them (native text, OCR), preferring one
+        that voted for the winner. LLM text has no boxes; a word only an LLM read borrows the
+        box of the word before it (``box_approx``).
+        """
+        boxed: dict[str, list] = {}
+        for sid in res["sources"]:
+            layer = services.word_layer(doc, page, sid)
+            if layer and layer.words:
+                boxed[sid] = compare.map_word_boxes(texts[sid], [(w.text, w.rect) for w in layer.words])
+        prev = None
+        for col in res["columns"]:
+            order = [i for i in range(len(res["sources"])) if i not in col["dissent"]] + col["dissent"]
+            box = next((boxed[res["sources"][i]][col["pos"][i]] for i in order
+                        if res["sources"][i] in boxed and col["pos"][i] >= 0
+                        and boxed[res["sources"][i]][col["pos"][i]]), None)
+            col["box"], col["box_approx"] = (box, False) if box else (prev, prev is not None)
+            prev = box or prev
+
+    @api.get("/documents/{doc_id}/pages/{page}/corrected", tags=["compare"])
+    def get_corrected(doc_id: str, page: int):
+        """The page's corrected text (saved from the Review panel), with when and from which sources."""
+        record = get_doc(doc_id).load_corrected(page)
+        if not record:
+            raise HTTPException(404, f"page {page + 1} has no corrected text yet")
+        return record
+
+    @api.put("/documents/{doc_id}/pages/{page}/corrected", tags=["compare"])
+    def put_corrected(doc_id: str, page: int, body: CorrectedBody, request: Request):
+        """Save a person's verdict on what the page says. It becomes the ``corrected`` source."""
+        _require_same_origin(request)
+        doc = get_doc(doc_id)
+        if not 0 <= page < doc.meta.page_count:
+            raise DocumentError(f"page {page + 1} is out of range")
+        if not body.text.strip():
+            raise DocumentError("the corrected text is empty; to remove it, delete it instead")
+        return doc.save_corrected(page, body.text, body.based_on)
+
+    @api.delete("/documents/{doc_id}/pages/{page}/corrected", status_code=204, tags=["compare"])
+    def delete_corrected(doc_id: str, page: int):
+        if not get_doc(doc_id).delete_corrected(page):
+            raise HTTPException(404, f"page {page + 1} has no corrected text")
 
     @api.get("/documents/{doc_id}/consensus", tags=["compare"])
     def consensus_document(doc_id: str,

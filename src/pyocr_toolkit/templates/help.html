@@ -244,6 +244,21 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
     follows whichever source gave the word slots. The page warns you when that happens.</li>
   <li>A source with no text on a page (the native layer of a scan, say) doesn't vote on that page.</li>
 </ul>
+<h3 id="review">Review &amp; correct: make your own ground truth</h3>
+<p>A consensus is a good guess, not the truth. To get the truth for a page, press <b>Review &amp; correct</b> on the
+  consensus page view. The page image appears next to the text; click any word (disputed ones are marked) to see it
+  highlighted on the image and every reading of it, with the sources behind each. Pick the right one, or type what the
+  page really says (leave the box empty for "no word here"). After each choice the next close call is selected.
+  <b>Save corrected text</b> stores the page as the <b>Corrected</b> source.</p>
+<ul>
+  <li>Corrected text is a source like the others: export it, read it on <i>Full text</i>, and in <b>Two sources</b>
+    mode it becomes the default reference, so every engine is scored against the truth instead of against another
+    engine.</li>
+  <li>It is saved per page in <code>corrected/&lt;page&gt;.json</code> in the document's folder. Saving again replaces
+    it; <i>Delete</i> removes it.</li>
+  <li>The highlight comes from word boxes, which native text and OCR have and LLMs don't. A word only an LLM read is
+    shown with a dashed box on the word before it.</li>
+</ul>
 <p class="callout"><b>Disagreement is not the same as error.</b> "OCR vs LLM" tells you how much two engines disagree,
   not which one is right. For real ground truth, use a born-digital PDF: its native text is exact, so comparing OCR and
   each LLM against it shows how every engine performs on your kind of documents.</p>
@@ -334,12 +349,13 @@ GET  /api/documents/{id}/sources                 what has been extracted
 GET  /api/documents/{id}/export?source=llm&amp;fmt=jsonl
 GET  /api/documents/{id}/compare?a=llm&amp;b=ocr      per-page CER/WER, misread/missed/added, numbers
 GET  /api/documents/{id}/consensus?sources=native,ocr,llm:KEY   vote sources into a consensus, score each
-GET  /api/documents/{id}/pages/{n}/consensus?sources=…          one page, with the word-by-word alignment
+GET  /api/documents/{id}/pages/{n}/consensus?sources=…          one page, with the word-by-word alignment and word boxes
+PUT  /api/documents/{id}/pages/{n}/corrected     {"text": "…"} save a page's corrected text (GET reads it, DELETE removes it)
 POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)</pre>
 
 <h2 id="data">Data and privacy</h2>
 <ul>
-  <li>Everything is stored under <code>DATA_DIR</code> (default <code>./data</code>): the original file, OCR results and LLM results as plain JSON. Workspaces are small JSON files in <code>workspaces/</code> that list document ids.</li>
+  <li>Everything is stored under <code>DATA_DIR</code> (default <code>./data</code>): the original file, OCR results, LLM results and corrected text as plain JSON. Workspaces are small JSON files in <code>workspaces/</code> that list document ids.</li>
   <li>A page image goes to an LLM provider <b>only</b> when you start a transcription for that page, and only to the provider you chose. The same goes for cloud OCR engines (Google Vision, Azure, Textract, Mistral). Native text, Tesseract and the local OCR engines never leave your machine.</li>
   <li>API keys are read on the server and are never sent to the browser.</li>
   <li>There is no login. Keep it on <code>127.0.0.1</code> (the default) or put it behind your own authentication before sharing it on a network.</li>

@@ -327,6 +327,39 @@ class OpenDocument:
             results.append(data)
         return sorted(results, key=lambda r: r.get("created_at", 0), reverse=True)
 
+    # -- corrected text (reviewed by a person) --------------------------------
+    # A person's verdict on what the page says, built on the Compare page's
+    # Review panel. It is the only source that is ground truth rather than a
+    # reading, so it is stored apart from the engine caches: corrected/<page>.json.
+    def _corrected_path(self, number: int) -> Path:
+        return self.folder / "corrected" / f"{int(number)}.json"
+
+    def load_corrected(self, number: int) -> dict[str, Any] | None:
+        path = self._corrected_path(number)
+        return json.loads(path.read_text()) if path.exists() else None
+
+    def save_corrected(self, number: int, text: str, based_on: list[str] | None = None) -> dict[str, Any]:
+        record = {"text": text, "updated_at": time.time(), "based_on": list(based_on or [])}
+        path = self._corrected_path(number)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(record, ensure_ascii=False, indent=1))
+        tmp.replace(path)  # a half-written file would lose the user's work
+        return record
+
+    def delete_corrected(self, number: int) -> bool:
+        path = self._corrected_path(number)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
+    def corrected_pages(self) -> list[int]:
+        folder = self.folder / "corrected"
+        if not folder.is_dir():
+            return []
+        return sorted(int(p.stem) for p in folder.glob("*.json") if p.stem.isdigit())
+
     def iter_pages(self) -> Iterator[int]:
         return iter(range(self.meta.page_count))
 

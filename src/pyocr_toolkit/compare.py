@@ -481,7 +481,8 @@ def consensus(texts: dict[str, str], opts: NormalizeOptions | None = None) -> di
        cell is a vote for "no word here". Ties go to the spine.
 
     Returns the consensus ``text``, the aligned ``columns`` (each with every
-    source's token, the ``winner``, its ``votes``, the ``dissent`` (indexes of
+    source's token and its word index in that source (``pos``, -1 = none;
+    see :func:`split_words`), the ``winner``, its ``votes``, the ``dissent`` (indexes of
     sources that voted otherwise) and a ``status``: ``agree``
     = all sources, ``majority`` = more than half, ``tie`` = no majority, a
     close call for a person), ``counts`` of each status, and per source its
@@ -502,30 +503,35 @@ def consensus(texts: dict[str, str], opts: NormalizeOptions | None = None) -> di
     pivot = min(ids, key=total_distance)
     pw, pk = words[pivot], keys[pivot]
     n = len(pw)
-    at: dict[str, list[str]] = {}
-    ins: dict[str, dict[int, list[str]]] = {}
+    # per source: the word index (-1 = none) at each spine slot, and words inserted after a slot
+    at: dict[str, list[int]] = {}
+    ins: dict[str, dict[int, list[int]]] = {}
     for sid in ids:
         if sid == pivot:
-            at[sid], ins[sid] = list(pw), {}
+            at[sid], ins[sid] = list(range(n)), {}
             continue
-        sw, sk = words[sid], keys[sid]
-        cells, extra = [""] * n, {}
+        sk = keys[sid]
+        cells, extra = [-1] * n, {}
         for op in Levenshtein.opcodes(pk, sk):
             if op.tag == "equal":
                 for k in range(op.src_end - op.src_start):
-                    cells[op.src_start + k] = sw[op.dest_start + k]
+                    cells[op.src_start + k] = op.dest_start + k
         for ops, rk, hk in _blocks(pk, sk):
             a0, b0 = ops[0].src_start, ops[0].dest_start
             last = a0 - 1  # spine slot that inserted words follow
             for tag, i, j in _align_block_idx(rk, hk):
                 if tag == "insert":
-                    extra.setdefault(last, []).append(sw[b0 + j])
+                    extra.setdefault(last, []).append(b0 + j)
                     continue
                 last = a0 + i
-                cells[a0 + i] = sw[b0 + j] if tag != "delete" else ""
+                cells[a0 + i] = b0 + j if tag != "delete" else -1
         at[sid], ins[sid] = cells, extra
 
-    def column(tokens: list[str], spine_token: str, br: int) -> dict:
+    def word(sid: str, idx: int) -> str:
+        return words[sid][idx] if idx >= 0 else ""
+
+    def column(pos: list[int], spine_token: str, br: int) -> dict:
+        tokens = [word(sid, i) for sid, i in zip(ids, pos)]
         tally: dict[str, list[int]] = {}
         for idx, tok in enumerate(tokens):
             tally.setdefault(_key(tok, opts) if tok else "", []).append(idx)
@@ -538,7 +544,8 @@ def consensus(texts: dict[str, str], opts: NormalizeOptions | None = None) -> di
         winner = tokens[pidx] if pidx in voters else tokens[voters[0]]
         status = "agree" if best == len(ids) else "majority" if best * 2 > len(ids) else "tie"
         dissent = [i for i in range(len(tokens)) if i not in voters]
-        return {"tokens": tokens, "winner": winner, "votes": best, "status": status, "dissent": dissent, "br": br}
+        return {"tokens": tokens, "pos": pos, "winner": winner, "votes": best, "status": status, "dissent": dissent,
+                "br": br}
 
     breaks = parsed[pivot][1]
     columns: list[dict] = []
@@ -548,8 +555,8 @@ def consensus(texts: dict[str, str], opts: NormalizeOptions | None = None) -> di
             group.append(column([at[sid][i] for sid in ids], pw[i], 0))
         width = max((len(ins[sid].get(i, [])) for sid in ids), default=0)
         for k in range(width):
-            toks = [(ins[sid].get(i, [])[k] if k < len(ins[sid].get(i, [])) else "") for sid in ids]
-            group.append(column(toks, "", 0))
+            pos = [(ins[sid].get(i, [])[k] if k < len(ins[sid].get(i, [])) else -1) for sid in ids]
+            group.append(column(pos, "", 0))
         if group and i >= 0:
             group[-1]["br"] = breaks.get(i, 0)
         columns.extend(group)
@@ -578,3 +585,37 @@ def consensus(texts: dict[str, str], opts: NormalizeOptions | None = None) -> di
                   for b in ids} for a in ids}
     return {"sources": ids, "pivot": pivot, "text": text, "columns": columns, "counts": counts,
             "per_source": per_source, "matrix": matrix}
+
+
+def split_words(text: str) -> list[str]:
+    """The words of ``text`` as :func:`consensus` numbers them (its columns' ``pos``)."""
+    return _words_with_breaks(text)[0]
+
+
+def map_word_boxes(text: str, boxed_words: list[tuple[str, list[float]]]) -> list[list[float] | None]:
+    """A box for each word of ``text`` (as :func:`split_words` splits it), or ``None``.
+
+    ``boxed_words`` is the engine's own word list with its boxes (native text or
+    OCR). The two lists mostly match one to one, but not always: a word
+    hyphenated across a line is one word in the text and two boxes. Aligning
+    them keeps the boxes right after such a spot; a word joined from two boxes
+    gets their union.
+    """
+    tokens = split_words(text)
+    keys = [unicodedata.normalize("NFKC", w) for w, _ in boxed_words]
+    boxes: list[list[float] | None] = [None] * len(tokens)
+    for op in Levenshtein.opcodes(tokens, keys):
+        if op.tag == "equal":
+            for k in range(op.src_end - op.src_start):
+                boxes[op.src_start + k] = boxed_words[op.dest_start + k][1]
+    for ops, rt, rk in _blocks(tokens, keys):
+        a0, b0 = ops[0].src_start, ops[0].dest_start
+        if not rt or not rk:
+            continue
+        # pair by position; the last word takes the union of any boxes left over (a word joined across a line)
+        for k in range(min(len(rt), len(rk))):
+            last = len(rk) if k == len(rt) - 1 else k + 1
+            rects = [boxed_words[b0 + m][1] for m in range(k, last)]
+            boxes[a0 + k] = [min(r[0] for r in rects), min(r[1] for r in rects),
+                             max(r[2] for r in rects), max(r[3] for r in rects)]
+    return boxes

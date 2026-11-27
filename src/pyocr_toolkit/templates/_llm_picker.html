@@ -14,6 +14,19 @@
       <label>Fields to extract <select data-schema-preset></select></label>
       <span class="small muted" data-schema-hint></span>
     </div>
+    <details class="schema-draft" data-draft-box>
+      <summary>✨ Describe what you want in plain words, and let the model draft the fields</summary>
+      <textarea data-draft rows="3" maxlength="4000" aria-label="What to extract, in plain words"
+        placeholder="e.g. the invoice number, date and supplier, and every line item with its quantity, unit price and amount"></textarea>
+      <div class="schema-draft-bar small">
+        <label class="check"><input type="checkbox" data-draft-page checked> Show the model this page</label>
+        <label class="check" title="Send the current fields too, so the model changes them instead of starting over">
+          <input type="checkbox" data-draft-keep> Change my current fields</label>
+        <span class="grow"></span>
+        <button type="button" class="btn small primary" data-draft-go>✨ Draft fields</button>
+      </div>
+      <div class="small" data-draft-status></div>
+    </details>
     <div class="schema-summary small" data-schema-status></div>
     <details data-schema-edit class="schema-edit">
       <summary>Edit fields &amp; see an example <span class="muted">(editing makes it your own schema)</span></summary>

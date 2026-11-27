@@ -31,7 +31,7 @@ import difflib
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -117,6 +117,90 @@ PRESETS: dict[str, Preset] = {p.id: p for p in [
 
 def presets_json() -> list[dict[str, Any]]:
     return [{"id": p.id, "label": p.label, "description": p.description, "schema": p.schema} for p in PRESETS.values()]
+
+
+# ------------------------------------------------------------------ drafting from plain words
+# The model fills this fixed shape (enforced like any extraction schema), and
+# draft_to_schema() turns it into JSON Schema. Asking for JSON Schema directly
+# would need a recursive meta-schema, which strict modes reject; two levels
+# (fields, and columns of a table / fields of a group) cover what the editor shows.
+_ColumnType = Literal["string", "number", "integer", "boolean", "enum", "list"]
+
+
+class _DraftColumn(BaseModel):
+    name: str = Field(description="snake_case, e.g. unit_price")
+    type: _ColumnType
+    description: str = Field(description="short hint for the extractor; empty when the name says it all")
+    required: bool = Field(description="true only if the value is always present")
+    options: list[str] = Field(description="allowed values when type is enum; otherwise empty")
+
+
+class _DraftField(_DraftColumn):
+    type: Literal["string", "number", "integer", "boolean", "enum", "list", "table", "object"]  # type: ignore[assignment]
+    children: list[_DraftColumn] = Field(description="columns of a table or fields of an object; otherwise empty")
+
+
+class SchemaDraft(BaseModel):
+    title: str = Field(description="short name for the schema, e.g. Purchase order")
+    fields: list[_DraftField]
+    notes: str = Field(description="one sentence on assumptions or limits; empty if none")
+
+
+def draft_schema() -> dict[str, Any]:
+    """The normalized schema a drafting reply must follow."""
+    return normalize(SchemaDraft.model_json_schema())
+
+
+def draft_to_schema(draft: Any) -> dict[str, Any]:
+    """A :class:`SchemaDraft` reply -> a plain JSON Schema the field editor can show.
+
+    Lenient on purpose (a model on a prompt-only provider may bend the shape):
+    unknown types become text, an ``enum`` without options becomes text, a table
+    without columns becomes a list, duplicate names keep the first.
+    """
+    if not isinstance(draft, dict) or not isinstance(draft.get("fields"), list):
+        raise SchemaError("the draft has no list of fields")
+
+    def name_of(f: dict) -> str:
+        return re.sub(r"\s+", "_", str(f.get("name") or "").strip())
+
+    def field(f: dict, nested: bool) -> dict[str, Any]:
+        desc = str(f.get("description") or "").strip()
+        d = {"description": desc} if desc else {}
+        t = f.get("type")
+        if t == "enum":
+            options = [str(o).strip() for o in f.get("options") or [] if str(o).strip()]
+            if options:
+                return {**d, "enum": list(dict.fromkeys(options))}
+            t = "string"
+        if t in ("table", "object") and not nested:
+            inner = obj(f.get("children") or [], True)
+            if inner["properties"]:
+                return {**d, **inner} if t == "object" else {**d, "type": "array", "items": inner}
+            t = "list" if t == "table" else "string"
+        if t == "list":
+            return {**d, "type": "array", "items": {"type": "string"}}
+        return {**d, "type": t if t in ("string", "number", "integer", "boolean") else "string"}
+
+    def obj(fields: list, nested: bool) -> dict[str, Any]:
+        properties: dict[str, Any] = {}
+        required: list[str] = []
+        for f in fields:
+            if not isinstance(f, dict):
+                continue
+            name = name_of(f)
+            if not name or name in properties:
+                continue
+            properties[name] = field(f, nested)
+            if f.get("required") is True:
+                required.append(name)
+        return {"type": "object", "properties": properties, **({"required": required} if required else {})}
+
+    schema = obj(draft["fields"], False)
+    if not schema["properties"]:
+        raise SchemaError("the model didn't propose any fields; describe what to extract in more detail")
+    title = str(draft.get("title") or "").strip()
+    return {**({"title": title} if title else {}), **schema}
 
 
 # ------------------------------------------------------------------ normalizing
@@ -801,6 +885,8 @@ def check(spec: str | dict) -> dict[str, Any]:
     return out
 
 
-__all__ = ["KEYWORDS", "PRESETS", "Preset", "SchemaError", "canonical", "check", "count_fields", "example", "lint",
-           "normalize", "parse_reply", "presets_json", "provider_schema", "repair_json", "resolve", "schema_notes",
-           "validate"]
+__all__ = [
+    "KEYWORDS", "PRESETS", "Preset", "SchemaDraft", "SchemaError", "canonical", "check", "count_fields",
+    "draft_schema", "draft_to_schema", "example", "lint", "normalize", "parse_reply", "presets_json",
+    "provider_schema", "repair_json", "resolve", "schema_notes", "validate",
+]

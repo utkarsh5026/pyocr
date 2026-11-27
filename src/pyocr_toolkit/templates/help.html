@@ -110,6 +110,12 @@
 <p>Pick <b>Structured data (fields → JSON)</b> as the prompt, then choose what to extract: <b>Invoice</b>,
   <b>Receipt</b>, <b>Form fields</b> (every label and its value), or <b>My own fields</b>. Open
   <i>Edit fields &amp; see an example</i> to change them; any edit turns a preset into your own schema.</p>
+<p><b>Describe it in plain words.</b> Under <i>Fields to extract</i>, write what you want (“the invoice number, date
+  and supplier, and every line item with quantity and amount”) and click <b>Draft fields</b> (or Ctrl+Enter). The
+  provider and model chosen above draft the fields, looking at the current page unless you untick <i>Show the model
+  this page</i>. The draft lands in the field editor for you to review; nothing is extracted until you run it. With
+  <i>Change my current fields</i> on, the model edits what you have (“also add the due date”) instead of starting
+  over. Each draft is one model call, paid like any other; its tokens and cost are shown.</p>
 <ul>
   <li><b>Fields</b> tab: add fields one per row with a name, a type (Text, Number, Whole number, Yes / no, One of a
     list, List of text, Table, Group of fields), an optional hint for the model, and <i>Required</i>. Tables and groups

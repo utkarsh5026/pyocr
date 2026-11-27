@@ -17,6 +17,11 @@
   suggestions ("did you mean 'properties'?"), and a note says whether the chosen provider and model enforce the
   schema or only get it in the prompt. An example output, as the field table or as JSON, shows what a result will
   look like before you pay for a run.
+- **Draft fields from plain words**: describe what to extract ("invoice number, date, every line item with its
+  amount") and the chosen model drafts the fields, optionally looking at the current page. The draft opens in the
+  field editor for review, and *Change my current fields* refines it step by step ("also add the due date"). One
+  paid call per draft (tokens and cost shown), through `LLM_CONCURRENCY`. API: `POST /api/extract/draft-schema`
+  (`description`, `provider`, `model`, optional `current_schema`, `doc_id` and `page`; same-origin only).
 - The schema is part of the LLM cache key, so each schema is its own source. Plain transcriptions keep their
   existing keys, so cached results are unaffected.
 - API: `prompt_mode: "extract"` with `extract_schema` (a preset id or a JSON Schema) on

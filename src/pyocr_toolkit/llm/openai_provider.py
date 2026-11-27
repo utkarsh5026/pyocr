@@ -62,7 +62,7 @@ class _OpenAIChatBase(Provider):
                         "role": "user",
                         "content": [
                             {"type": "text", "text": req.user_prompt},
-                            {"type": "image_url", "image_url": {"url": data_url, "detail": "high"}},
+                            *([{"type": "image_url", "image_url": {"url": data_url, "detail": "high"}}] if req.image else []),
                         ],
                     },
                 ],

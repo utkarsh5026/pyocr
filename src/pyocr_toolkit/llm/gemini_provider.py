@@ -63,7 +63,7 @@ class GeminiProvider(Provider):
             response = await self.client.aio.models.generate_content(
                 model=model,
                 contents=[
-                    types.Part.from_bytes(data=req.image, mime_type=req.mime_type),
+                    *([types.Part.from_bytes(data=req.image, mime_type=req.mime_type)] if req.image else []),
                     req.user_prompt,
                 ],
                 config=types.GenerateContentConfig(

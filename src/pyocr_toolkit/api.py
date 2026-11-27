@@ -51,6 +51,15 @@ class LLMRunBody(BaseModel):
                        schema or "")
 
 
+class DraftSchemaBody(BaseModel):
+    description: str = Field(..., max_length=4000, description="what to extract, in plain words")
+    provider: str
+    model: str | None = None
+    current_schema: str | None = Field(None, max_length=50_000, description="change this schema instead of starting over")
+    doc_id: str | None = Field(None, description="show the model a page of this document")
+    page: int = Field(0, ge=0, description="0-based page of doc_id")
+
+
 class SchemaCheckBody(BaseModel):
     extract_schema: str | dict
     provider: str | None = Field(None, description="add a note on how this provider/model handles the schema")
@@ -317,12 +326,35 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         (mistakes with suggestions, what the chosen provider does with the schema),
         and for broken JSON the ``line``/``column`` plus a ``repaired`` version.
         """
-        result = extract.check(body.extract_schema)
-        provider = providers.get(body.provider or "")
+        return checked_schema(body.extract_schema, body.provider, body.model)
+
+    def checked_schema(spec: str | dict, provider_id: str | None, model: str | None) -> dict:
+        result = extract.check(spec)
+        provider = providers.get(provider_id or "")
         if provider is not None and result["ok"]:
-            level, message = provider.schema_support((body.model or provider.default_model or "").strip() or None)
+            level, message = provider.schema_support((model or provider.default_model or "").strip() or None)
             result["notes"].insert(0, {"level": level, "path": "(provider)", "message": message})
         return result
+
+    @api.post("/extract/draft-schema", tags=["llm"])
+    async def draft_schema(body: DraftSchemaBody, request: Request):
+        """Draft extraction fields from a plain-words description (a paid model call; not cached).
+
+        Returns the drafted JSON Schema, the model's ``notes``, tokens and cost, and
+        the same ``check`` the schema editor shows. Nothing is extracted until the
+        user runs the schema on pages.
+        """
+        _require_same_origin(request)  # it spends money: no cross-site triggering
+        doc = get_doc(body.doc_id) if body.doc_id else None
+        if doc is not None and body.page >= doc.meta.page_count:
+            raise DocumentError(f"page {body.page} out of range")
+        try:
+            draft = await services.draft_schema(body.provider, body.model, body.description, body.current_schema,
+                                                doc, body.page)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        draft["check"] = checked_schema(draft["schema"], body.provider, body.model)
+        return draft
 
     @api.get("/documents/{doc_id}/sources", tags=["text"])
     def sources(doc_id: str):

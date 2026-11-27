@@ -101,14 +101,14 @@ class _ClaudeBase(Provider):
             "messages": [{
                 "role": "user",
                 "content": [
-                    {
+                    *([{
                         "type": "image",
                         "source": {
                             "type": "base64",
                             "media_type": req.mime_type,
                             "data": base64.standard_b64encode(req.image).decode("ascii"),
                         },
-                    },
+                    }] if req.image else []),
                     {"type": "text", "text": req.user_prompt},
                 ],
             }],

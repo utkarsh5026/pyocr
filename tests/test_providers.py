@@ -265,3 +265,21 @@ def test_gemini_structured_output_config():
     assert result.text == '{"total": "$5"}'
     asyncio.run(provider.transcribe(REQ))
     assert seen["config"].response_json_schema is None
+
+
+def test_text_only_requests_send_no_image():
+    import httpx
+
+    text_only = TranscriptionRequest(image=b"", mime_type="", system_prompt="SYS", user_prompt="Draft fields.")
+    seen, provider = _claude_capture("claude-opus-5-5")
+    asyncio.run(provider.transcribe(text_only))
+    assert seen["body"]["messages"][0]["content"] == [{"type": "text", "text": "Draft fields."}]
+
+    def handler(request: httpx.Request):
+        seen["openai"] = json.loads(request.content)
+        return httpx.Response(200, json=_chat_completion("{}", "gpt-5"))
+
+    openai_provider = OpenAIProvider(Settings(_env_file=None, openai_api_key="test", openai_model="gpt-5"))
+    openai_provider._client = openai.AsyncOpenAI(api_key="test", http_client=_openai_http(handler))
+    asyncio.run(openai_provider.transcribe(text_only))
+    assert seen["openai"]["messages"][1]["content"] == [{"type": "text", "text": "Draft fields."}]

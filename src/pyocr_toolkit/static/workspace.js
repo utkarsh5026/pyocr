@@ -747,7 +747,7 @@ function wire() {
     const dpis = [100, 150, 300, 400].filter((d) => d !== state.config.llm_dpi);
     $('[data-adj="dpi"]').innerHTML = `<option value="">Default (${state.config.llm_dpi} dpi)</option>` +
       dpis.map((d) => `<option value="${d}">${d} dpi</option>`).join("");
-    state.picker = await initLlmPicker($("[data-llm-picker]"));
+    state.picker = await initLlmPicker($("[data-llm-picker]"), { page: () => ({ doc_id: DOC_ID, page: state.page }) });
     $("[data-llm-picker] [data-prompt]").addEventListener("change", syncLlmVerb);
     syncLlmVerb();
     state.pages = await api(docUrl("/pages"));

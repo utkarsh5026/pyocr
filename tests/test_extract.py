@@ -345,3 +345,89 @@ def test_check_reports_without_raising():
     r = extract.check('{"type": "object", "properties": {"x": {"type": "string"}}, "titel": "T"}')
     assert r["ok"] and r["fields"] == 1 and r["example"] == {"x": "text as printed"}
     assert any("did you mean 'title'" in n["message"] for n in r["notes"])
+
+
+# ------------------------------------------------------------------ drafting from plain words
+DRAFT = {
+    "title": "Purchase order",
+    "fields": [
+        {"name": "po number", "type": "string", "description": "", "required": True, "options": [], "children": []},
+        {"name": "status", "type": "enum", "description": "", "required": False, "options": ["open", "open", "closed"],
+         "children": []},
+        {"name": "vague", "type": "enum", "description": "", "required": False, "options": [], "children": []},
+        {"name": "lines", "type": "table", "description": "one per row", "required": False, "options": [],
+         "children": [{"name": "qty", "type": "integer", "description": "", "required": False, "options": []}]},
+        {"name": "empty_table", "type": "table", "description": "", "required": False, "options": [], "children": []},
+        {"name": "address", "type": "object", "description": "", "required": False, "options": [],
+         "children": [{"name": "city", "type": "string", "description": "", "required": False, "options": []}]},
+        {"name": "status", "type": "string", "description": "duplicate", "required": False, "options": [],
+         "children": []},
+    ],
+    "notes": "Assumed amounts are kept as printed.",
+}
+
+
+def test_draft_to_schema():
+    schema = extract.draft_to_schema(DRAFT)
+    assert schema == {
+        "title": "Purchase order", "type": "object", "required": ["po_number"],
+        "properties": {
+            "po_number": {"type": "string"},
+            "status": {"enum": ["open", "closed"]},
+            "vague": {"type": "string"},
+            "lines": {"description": "one per row", "type": "array",
+                      "items": {"type": "object", "properties": {"qty": {"type": "integer"}}}},
+            "empty_table": {"type": "array", "items": {"type": "string"}},
+            "address": {"type": "object", "properties": {"city": {"type": "string"}}},
+        },
+    }
+    assert extract.check(schema)["ok"]
+    # the draft shape itself is a valid strict schema the providers can enforce
+    assert extract.draft_schema()["properties"]["fields"]["items"]["required"][:2] == ["name", "type"]
+    with pytest.raises(extract.SchemaError, match="didn't propose any fields"):
+        extract.draft_to_schema({"title": "x", "fields": []})
+    with pytest.raises(extract.SchemaError, match="no list of fields"):
+        extract.draft_to_schema(["nope"])
+
+
+def _draft(client, **body):
+    return client.post("/api/extract/draft-schema", json={"provider": "fakejson", "description": "po number etc",
+                                                           **body})
+
+
+def test_draft_schema_endpoint(client, doc_id):
+    from pyocr_toolkit.llm import DRAFT_SYSTEM
+
+    client.fake.reply = json.dumps(DRAFT)
+    r = _draft(client, doc_id=doc_id, page=1)
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res["schema"]["properties"]["po_number"] == {"type": "string"}
+    assert res["notes"] == "Assumed amounts are kept as printed." and res["used_page"] is True
+    assert res["check"]["ok"] and res["check"]["fields"] == 6 and res["input_tokens"] == 10
+    req = client.fake.calls[-1]
+    assert req.system_prompt == DRAFT_SYSTEM and req.image and req.max_output_tokens == 4000
+    assert "po number etc" in req.user_prompt and "sample page" in req.user_prompt
+    assert req.output_schema["properties"]["fields"]["type"] == "array"
+
+    # no page, refining the current schema
+    res = _draft(client, current_schema='{"type": "object", "properties": {"a": {"type": "string"}}}').json()
+    req = client.fake.calls[-1]
+    assert req.image == b"" and res["used_page"] is False
+    assert "Current schema" in req.user_prompt and '"a"' in req.user_prompt and "sample page" not in req.user_prompt
+
+
+def test_draft_schema_errors(client, doc_id):
+    assert _draft(client, description="   ").json()["detail"].startswith("describe what to extract")
+    assert _draft(client, provider="nope").status_code == 400
+    assert "not configured" in _draft(client, provider="anthropic").json()["detail"]
+    assert _draft(client, doc_id=doc_id, page=9).status_code == 400
+    client.fake.reply = "I think you want an invoice number."
+    r = _draft(client)
+    assert r.status_code == 502 and "couldn't use the draft" in r.json()["detail"]
+    client.fake.reply = json.dumps({"title": "x", "fields": [], "notes": ""})
+    assert "didn't propose any fields" in _draft(client).json()["detail"]
+    # it spends money, so another site can't trigger it
+    r = client.post("/api/extract/draft-schema", json={"provider": "fakejson", "description": "x"},
+                    headers={"origin": "https://evil.example"})
+    assert r.status_code == 403

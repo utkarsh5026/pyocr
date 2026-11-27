@@ -36,6 +36,7 @@ from .config import Settings
 from .credentials import CredentialStore
 from .documents import DocumentError, OpenDocument
 from .llm import (
+    DRAFT_SYSTEM,
     EXTRACT_MODE,
     EXTRACT_USER_PROMPT,
     PROMPT_MODES,
@@ -44,6 +45,7 @@ from .llm import (
     ProviderError,
     TranscriptionRequest,
     catalog,
+    draft_user_prompt,
     resolve_prompt,
 )
 from .preprocess import MAX_PNG_BYTES, Preprocess, process_bytes
@@ -211,6 +213,53 @@ class Services:
         }
         doc.save_llm_result(page, key, record)
         return {**record, "key": key, "cached": False}
+
+    async def draft_schema(self, provider_id: str, model: str | None, description: str,
+                           current_schema: str | None = None, doc: OpenDocument | None = None,
+                           page: int = 0) -> dict[str, Any]:
+        """Ask a model to draft extraction fields from a plain-words description.
+
+        With ``doc`` the model also sees that page (as an LLM would during
+        extraction), which grounds the field names. With ``current_schema`` it
+        changes that schema instead of starting over. Not cached: it's interactive
+        and the user decides whether to keep the result. Respects ``llm_semaphore``.
+        """
+        provider = self.providers.get(provider_id)
+        if provider is None:
+            raise ValueError(f"unknown provider '{provider_id}'")
+        if not provider.configured:
+            raise ValueError(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}")
+        if not description.strip():
+            raise ValueError("describe what to extract, e.g. “invoice number, date, and each line item with its amount”")
+        model = (model or provider.default_model or "").strip()
+        image, mime = (await asyncio.to_thread(self.llm_image, doc, page)) if doc is not None else (b"", "")
+        async with self.llm_semaphore:
+            result = await provider.transcribe(TranscriptionRequest(
+                image=image, mime_type=mime, system_prompt=DRAFT_SYSTEM,
+                user_prompt=draft_user_prompt(description, current_schema, with_page=bool(image)),
+                model=model, max_output_tokens=4000,
+                output_schema=extract.provider_schema(extract.draft_schema()),
+            ))
+        data, error = extract.parse_reply(result.text)
+        try:
+            if error:
+                raise extract.SchemaError(error)
+            schema = extract.draft_to_schema(data)
+        except extract.SchemaError as exc:
+            raise ProviderError(f"{provider.label}: couldn't use the draft ({exc}). Try again, describe the fields "
+                                "more concretely, or pick a model that enforces schemas") from exc
+        return {
+            "schema": schema,
+            "notes": str(data.get("notes") or "").strip(),
+            "provider": provider.id,
+            "model": result.model,
+            "used_page": bool(image),
+            "latency_ms": result.latency_ms,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "cost": self.cost(provider.id, result.model or model, result.input_tokens, result.output_tokens),
+            "warnings": result.warnings,
+        }
 
     async def test_provider(self, provider_id: str, model: str | None) -> dict[str, Any]:
         """Send a tiny generated image and report what came back."""

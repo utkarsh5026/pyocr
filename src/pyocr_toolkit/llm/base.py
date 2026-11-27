@@ -20,7 +20,7 @@ class ProviderNotConfigured(ProviderError):
 
 @dataclass
 class TranscriptionRequest:
-    image: bytes
+    image: bytes  # empty = text only (e.g. drafting a schema without a sample page)
     mime_type: str  # "image/png" or "image/jpeg"
     system_prompt: str
     user_prompt: str

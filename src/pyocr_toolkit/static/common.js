@@ -332,7 +332,7 @@ function fillModelDatalist(datalist, options) {
  * Turn a `[data-llm-picker]` block into a working provider/model/prompt picker.
  * The choice is remembered in localStorage and shared between pages.
  */
-async function initLlmPicker(root) {
+async function initLlmPicker(root, opts = {}) {
   const cfg = await getConfig();
   const provSel = $("[data-provider]", root), modelIn = $("[data-model]", root), promptSel = $("[data-prompt]", root);
   const customBox = $("[data-custom-box]", root), customTa = $("[data-custom]", root), status = $("[data-status]", root);
@@ -345,7 +345,7 @@ async function initLlmPicker(root) {
     '<option value="extract">Structured data (fields → JSON)…</option>' +
     '<option value="custom">Custom prompt…</option>';
   const schema = initSchemaPicker(root, cfg.extract_presets || [],
-    () => ({ provider: provSel.value, model: modelIn.value.trim() || null }));
+    () => ({ provider: provSel.value, model: modelIn.value.trim() || null }), opts.page);
 
   const saved = localStorage.getItem("pyocr.provider");
   if (saved && providers.some((p) => p.id === saved)) provSel.value = saved;
@@ -713,9 +713,10 @@ function initSchemaBuilder(host, onChange) {
  * The "Fields to extract" part of the picker: a preset, or your own schema built field by field
  * or written as JSON. Every change is checked by the server (mistakes with suggestions, what the
  * chosen provider does with the schema) and previewed as the table you'll get back.
- * ``context()`` gives the current {provider, model}.
+ * ``context()`` gives the current {provider, model}; ``pageContext()`` (optional) the {doc_id, page}
+ * the "describe it" drafter may show the model.
  */
-function initSchemaPicker(root, presets, context) {
+function initSchemaPicker(root, presets, context, pageContext) {
   const box = $("[data-schema-box]", root), sel = $("[data-schema-preset]", root), hint = $("[data-schema-hint]", root);
   const details = $("[data-schema-edit]", root), ta = $("[data-schema]", root), summary = $("[data-schema-status]", root);
   const notesEl = $("[data-schema-notes]", root), syntax = $("[data-schema-syntax]", root);
@@ -825,6 +826,17 @@ function initSchemaPicker(root, presets, context) {
 
   ta.addEventListener("input", () => { makeCustom(); check(); });
   sel.addEventListener("change", sync);
+  initSchemaDrafter(root, {
+    context, pageContext,
+    current: () => ta.value,
+    apply(schema) {
+      editor.set(_pretty(schema));
+      makeCustom();
+      details.open = true;
+      showTab("fields", true);
+      check(true);
+    },
+  });
   $$("[data-schema-tab]", root).forEach((b) => b.addEventListener("click", () => showTab(b.dataset.schemaTab)));
   $$("[data-preview]", root).forEach((b) => b.addEventListener("click", () => showPreview(b.dataset.preview)));
   details.addEventListener("toggle", () => last && show(last));
@@ -858,6 +870,54 @@ function initSchemaPicker(root, presets, context) {
     value,
     label: () => (last?.ok ? last.label : sel.options[sel.selectedIndex]?.text) || "schema",
   };
+}
+
+/**
+ * "Describe what you want in plain words": a model drafts the fields (a paid call), which land in
+ * the field editor for review. "Change my current fields" sends the current schema along, so a
+ * draft can be refined step by step ("also add the due date").
+ */
+function initSchemaDrafter(root, { context, pageContext, current, apply }) {
+  const box = $("[data-draft-box]", root), ta = $("[data-draft]", root), go = $("[data-draft-go]", root);
+  const usePage = $("[data-draft-page]", root), keep = $("[data-draft-keep]", root), status = $("[data-draft-status]", root);
+  ta.value = _store.get("pyocr.draftText") || "";
+  usePage.closest("label").hidden = !pageContext;
+  ta.addEventListener("input", () => _store.set("pyocr.draftText", ta.value));
+  ta.addEventListener("keydown", (e) => {  // Ctrl/Cmd+Enter drafts; plain Enter must not submit a surrounding form
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); go.click(); }
+  });
+  go.addEventListener("click", async () => {
+    const description = ta.value.trim();
+    if (!description) {
+      status.innerHTML = '<span class="err">Describe what to extract first, e.g. “invoice number, date, and each line item with its amount”.</span>';
+      ta.focus();
+      return;
+    }
+    const body = { description, ...context(), ...(usePage.checked && pageContext ? pageContext() : {}) };
+    if (keep.checked) body.current_schema = current();
+    const done = setBusy(go, "Drafting…");
+    const t0 = Date.now();
+    const tick = setInterval(() => { go.textContent = `Drafting… ${fmtDuration((Date.now() - t0) / 1000)}`; }, 1000);
+    status.innerHTML = '<span class="muted">Asking the model for fields…</span>';
+    try {
+      const r = await postJSON("/api/extract/draft-schema", body);
+      apply(r.schema);
+      keep.checked = true;  // the next description most likely refines this draft
+      const n = Object.keys(r.schema.properties || {}).length;
+      const tokens = r.input_tokens != null ? ` · ${fmtInt(r.input_tokens)} in / ${fmtInt(r.output_tokens)} out tokens` : "";
+      status.innerHTML = `<span class="good">✓</span> Drafted ${n} field${n === 1 ? "" : "s"} with <b>${esc(r.model)}</b>` +
+        `${r.used_page ? " (with this page)" : ""} in ${(r.latency_ms / 1000).toFixed(1)}s${tokens}` +
+        (r.cost ? ` · ${costHtml(r.cost)}` : "") + ". Review them below, then extract." +
+        (r.notes ? `<div class="muted">Model's note: ${esc(r.notes)}</div>` : "") +
+        (r.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
+    } catch (e) {
+      status.innerHTML = `<span class="err">${esc(e.message)}</span>`;
+    } finally {
+      clearInterval(tick);
+      done();
+    }
+  });
+  return { open: () => { box.open = true; ta.focus(); } };
 }
 
 // ------------------------------------------------------------------ structured data

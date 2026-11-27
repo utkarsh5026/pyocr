@@ -75,7 +75,7 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
 
 (async function main() {
   try {
-    picker = await initLlmPicker($("#llm-options [data-llm-picker]"));
+    picker = await initLlmPicker($("#llm-options [data-llm-picker]"), { page: () => ({ doc_id: DOC_ID, page: 0 }) });
     $("#llm-options").addEventListener("change", updateForm);
     updateForm();
     const cfg = await getConfig();

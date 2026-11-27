@@ -14,19 +14,21 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
+import pymupdf
 from fastapi import APIRouter, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, compare, search
+from . import __version__, compare, export, extract, search
 from .brands import brands_json
 from .config import Settings, get_settings
 from .documents import DEFAULT_OCR_ENGINE, DocumentError, DocumentStore, OCRUnavailableError, OpenDocument
 from .jobs import JobManager
 from .llm import MAX_PAGES_PER_REQUEST, PROMPT_MODES, ProviderError, build_providers, catalog
 from .ocr import build_ocr_engines
+from .pdftext import DEFAULT_TEXT_LIBRARY, native_source_id
 from .preprocess import Preprocess, presets_json, process_bytes
 from .service import LLMSpec, Services, ocr_source_id, parse_pages
 from .workspaces import WorkspaceStore, ingest, suggest_names
@@ -43,11 +45,32 @@ class LLMRunBody(BaseModel):
     preprocess: str | None = Field(None, description="image preprocessing, e.g. 'gray;contrast=1.5' or a preset id")
     pages_per_request: int = Field(1, ge=1, le=MAX_PAGES_PER_REQUEST,
                                    description="pages sent together in one LLM request (1 = one page per request)")
+    extract_schema: str | dict | None = Field(
+        None, description="for prompt_mode 'extract': a preset id ('invoice', 'receipt', 'form') or a JSON Schema")
     force: bool = False
 
     def spec(self) -> LLMSpec:
+        schema = self.extract_schema
+        if isinstance(schema, dict):
+            schema = json.dumps(schema, ensure_ascii=False)
         return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt,
-                       preprocess=self.preprocess or "", pages_per_request=self.pages_per_request)
+                       preprocess=self.preprocess or "", pages_per_request=self.pages_per_request,
+                       extract_schema=schema or "")
+
+
+class DraftSchemaBody(BaseModel):
+    description: str = Field(..., max_length=4000, description="what to extract, in plain words")
+    provider: str
+    model: str | None = None
+    current_schema: str | None = Field(None, max_length=50_000, description="change this schema instead of starting over")
+    doc_id: str | None = Field(None, description="show the model a page of this document")
+    page: int = Field(0, ge=0, description="0-based page of doc_id")
+
+
+class SchemaCheckBody(BaseModel):
+    extract_schema: str | dict
+    provider: str | None = Field(None, description="add a note on how this provider/model handles the schema")
+    model: str | None = None
 
 
 class TextRef(BaseModel):
@@ -56,9 +79,13 @@ class TextRef(BaseModel):
     key: str | None = None
     #: for ``ocr``: engine id (``None`` -> Tesseract)
     engine: str | None = None
+    #: for ``native``: PDF library id (``None`` -> PyMuPDF; see /api/config ``text_libraries``)
+    library: str | None = None
 
     @property
     def source_id(self) -> str:
+        if self.source == "native":
+            return native_source_id(self.library or DEFAULT_TEXT_LIBRARY)
         if self.source == "ocr":
             return ocr_source_id(self.engine or DEFAULT_OCR_ENGINE)
         return f"llm:{self.key}" if self.source == "llm" and self.key else self.source
@@ -161,6 +188,10 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "max_pages_per_request": MAX_PAGES_PER_REQUEST,
             "tesseract_available": shutil.which("tesseract") is not None,
             "ocr_engines": [e.describe() for e in engines.values()],
+            "text_libraries": [{"id": DEFAULT_TEXT_LIBRARY, "source_id": "native", "label": "PyMuPDF",
+                                "description": "The app's own PDF engine (MuPDF).", "available": True,
+                                "problem": None, "has_boxes": True, "version": pymupdf.VersionBind},
+                               *(lib.describe() for lib in services.text_libraries.values())],
             "brands": brands_json(),
             "tesseract_language": settings.tesseract_language,
             "max_upload_mb": settings.max_upload_mb,
@@ -169,6 +200,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "llm_max_edge_px": settings.llm_max_edge_px,
             "ocr_dpi": settings.ocr_dpi,
             "preprocess_presets": presets_json(),
+            "extract_presets": extract.presets_json(),
         }
 
     @api.get("/models", tags=["models"])
@@ -341,6 +373,44 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         """Validate and normalise a preprocessing spec (400 with a readable message if it's wrong)."""
         return parse_pre(spec).to_json()
 
+    @api.post("/extract/check-schema", tags=["llm"])
+    def check_schema(body: SchemaCheckBody):
+        """Check a structured-extraction schema as it's being written (always 200; see ``ok``).
+
+        Returns the normalized schema, an ``example`` of the output, ``notes``
+        (mistakes with suggestions, what the chosen provider does with the schema),
+        and for broken JSON the ``line``/``column`` plus a ``repaired`` version.
+        """
+        return checked_schema(body.extract_schema, body.provider, body.model)
+
+    def checked_schema(spec: str | dict, provider_id: str | None, model: str | None) -> dict:
+        result = extract.check(spec)
+        provider = providers.get(provider_id or "")
+        if provider is not None and result["ok"]:
+            level, message = provider.schema_support((model or provider.default_model or "").strip() or None)
+            result["notes"].insert(0, {"level": level, "path": "(provider)", "message": message})
+        return result
+
+    @api.post("/extract/draft-schema", tags=["llm"])
+    async def draft_schema(body: DraftSchemaBody, request: Request):
+        """Draft extraction fields from a plain-words description (a paid model call; not cached).
+
+        Returns the drafted JSON Schema, the model's ``notes``, tokens and cost, and
+        the same ``check`` the schema editor shows. Nothing is extracted until the
+        user runs the schema on pages.
+        """
+        _require_same_origin(request)  # it spends money: no cross-site triggering
+        doc = get_doc(body.doc_id) if body.doc_id else None
+        if doc is not None and body.page >= doc.meta.page_count:
+            raise DocumentError(f"page {body.page} out of range")
+        try:
+            draft = await services.draft_schema(body.provider, body.model, body.description, body.current_schema,
+                                                doc, body.page)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        draft["check"] = checked_schema(draft["schema"], body.provider, body.model)
+        return draft
+
     @api.get("/documents/{doc_id}/sources", tags=["text"])
     def sources(doc_id: str):
         """Text sources available for the document (native, OCR, each LLM config) with page coverage."""
@@ -348,8 +418,18 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
 
     # ------------------------------------------------------------- text layers
     @api.get("/documents/{doc_id}/pages/{page}/text/native", tags=["text"])
-    def native_text(doc_id: str, page: int):
-        return get_doc(doc_id).native_text(page).to_json()
+    def native_text(doc_id: str, page: int, force: bool = False,
+                    library: str = Query(DEFAULT_TEXT_LIBRARY, description="PDF library id (see /api/config)")):
+        """The page's embedded text layer, read by PyMuPDF (default) or another PDF library."""
+        return services.native_layer(get_doc(doc_id), page, library, force=force).to_json()
+
+    @api.get("/documents/{doc_id}/pages/{page}/text/native/libraries", tags=["text"])
+    def native_libraries(doc_id: str, page: int):
+        """Read this page with every PDF library: did each get text out, how much, how fast."""
+        doc = get_doc(doc_id)
+        if not 0 <= page < doc.meta.page_count:
+            raise DocumentError(f"page {page} out of range (document has {doc.meta.page_count} pages)")
+        return services.compare_libraries(doc, page)
 
     @api.get("/documents/{doc_id}/pages/{page}/text/ocr", tags=["text"])
     def ocr_text(doc_id: str, page: int, force: bool = False, cached_only: bool = False,
@@ -611,11 +691,12 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
 
     # ------------------------------------------------------------------ export
     @api.get("/documents/{doc_id}/export", tags=["text"])
-    def export(doc_id: str, source: str = "llm", fmt: Literal["txt", "md", "json", "jsonl"] = "txt",
-               key: str | None = None):
+    def export_source(doc_id: str, source: str = "llm", fmt: Literal["txt", "md", "json", "jsonl"] = "txt",
+                      key: str | None = None):
         """Download the whole document's text from one source.
 
-        ``source`` is ``native``, ``ocr`` (Tesseract), ``ocr:<engine>``, ``llm`` (latest per page) or ``llm:<key>``.
+        ``source`` is ``native`` (PyMuPDF), ``native:<library>`` (pypdf, pdfplumber, ...), ``ocr`` (Tesseract),
+        ``ocr:<engine>``, ``llm`` (latest per page) or ``llm:<key>``.
         ``jsonl`` writes one JSON object per page - handy for RAG / ingestion pipelines.
         Pages without a result for that source are empty (nothing is run implicitly).
         """
@@ -623,25 +704,30 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         if key and source == "llm":
             source = f"llm:{key}"
         texts = [services.page_text(doc, n, source) for n in doc.iter_pages()]
+        name = f"{_safe_stem(doc.meta.filename)}.{export.file_tag(source)}.{fmt}"
+        data = [services.page_data(doc, n, source) for n in doc.iter_pages()]  # structured extraction's fields
+        body = export.one_source(doc.meta.__dict__, source, services.source_label(doc, source), texts, fmt, data)
+        return Response(body, media_type=export.MEDIA_TYPES[fmt],
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @api.get("/documents/{doc_id}/export/all", tags=["text"])
+    def export_all(doc_id: str, fmt: Literal["json", "jsonl", "csv", "md", "zip"] = "json"):
+        """Download everything extracted for a document: every source that has at least one page.
+
+        ``json`` = ``{document, sources, pages: [{page, texts: {source_id: text|null}}]}``; ``jsonl`` = one line per
+        extracted (page, source); ``csv`` = a row per page, a column per source; ``md`` = sources under each page;
+        ``zip`` = the JSON and CSV plus a TXT and Markdown file per source. Nothing is run implicitly.
+        """
+        doc = get_doc(doc_id)
+        data = services.document_texts(doc)
         stem = _safe_stem(doc.meta.filename)
-        tag = source.replace(":", "-") if source.startswith("ocr:") else source.split(":")[0]
-        disp = lambda ext: {"Content-Disposition": f'attachment; filename="{stem}.{tag}.{ext}"'}  # noqa: E731
-        label = services.source_label(doc, source)
-        if fmt == "json":
-            return JSONResponse({"document": doc.meta.__dict__, "source": source, "source_label": label,
-                                 "pages": [{"page": i + 1, "text": t, "extracted": t is not None}
-                                           for i, t in enumerate(texts)]}, headers=disp("json"))
-        if fmt == "jsonl":
-            lines = (json.dumps({"document_id": doc.meta.id, "filename": doc.meta.filename, "page": i + 1,
-                                 "source": source, "text": t or ""}, ensure_ascii=False)
-                     for i, t in enumerate(texts))
-            return PlainTextResponse("\n".join(lines) + "\n", media_type="application/x-ndjson", headers=disp("jsonl"))
-        if fmt == "md":
-            body = f"# {doc.meta.filename}\n\n_Source: {label}_\n" + "".join(
-                f"\n\n## Page {i + 1}\n\n{(t or '_(not extracted)_').strip()}" for i, t in enumerate(texts))
-            return PlainTextResponse(body + "\n", media_type="text/markdown", headers=disp("md"))
-        body = "".join(f"\n\n===== Page {i + 1} =====\n\n{(t or '').strip()}" for i, t in enumerate(texts)).lstrip()
-        return PlainTextResponse(body, headers=disp("txt"))
+        if fmt == "zip":
+            body: str | bytes = export.all_zip(data, stem)
+        else:
+            body = {"json": export.all_json, "jsonl": export.all_jsonl, "csv": export.all_csv,
+                    "md": export.all_md}[fmt](data)
+        return Response(body, media_type=export.MEDIA_TYPES[fmt],
+                        headers={"Content-Disposition": f'attachment; filename="{stem}.all-sources.{fmt}"'})
 
     return api
 

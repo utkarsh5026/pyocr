@@ -47,6 +47,9 @@ class GeminiProvider(Provider):
     def missing_settings(self) -> list[str]:
         return [] if self.api_key else ["GEMINI_API_KEY (or GOOGLE_API_KEY)"]
 
+    def schema_support(self, model: str | None) -> tuple[str, str]:
+        return "ok", f"{model or 'Gemini'} enforces this schema (response_json_schema)"
+
     @property
     def client(self) -> genai.Client:
         if self._client is None:
@@ -76,6 +79,8 @@ class GeminiProvider(Provider):
                     # Gemini 2.5 counts thinking tokens against this limit,
                     # so leave generous head-room.
                     max_output_tokens=max(req.max_output_tokens, 32768),
+                    **({"response_mime_type": "application/json", "response_json_schema": req.output_schema}
+                       if req.output_schema is not None else {}),
                 ),
             )
         except errors.ClientError as exc:

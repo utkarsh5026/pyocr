@@ -4,7 +4,9 @@ Text *sources* are identified by a string id that is the same on every page
 of a document, so a whole document can be read, exported or compared "per
 source":
 
-* ``native``       - the file's embedded text layer
+* ``native``       - the file's embedded text layer, read by PyMuPDF
+* ``native:<lib>`` - the same text layer read by another PDF library (``native:pypdf``,
+                     ``native:pdfplumber``, ...; see :mod:`pyocr_toolkit.pdftext`)
 * ``ocr``          - Tesseract OCR (kept as the plain id so existing links,
                      exports and caches keep working)
 * ``ocr:<engine>`` - another OCR engine (``ocr:easyocr``, ``ocr:google_vision``,
@@ -23,11 +25,16 @@ the way many production pipelines batch them. The reply is split back into pages
 by marker lines, and every page is still cached on its own, so a batched run is
 just another ``llm:<key>`` source: read, export and compare it like any other,
 including against the same model run one page at a time.
+
+The ``extract`` prompt mode fills a JSON Schema instead of transcribing (see
+:mod:`pyocr_toolkit.extract`). The schema is part of the cache key too, and the
+parsed ``data`` plus its validation errors are stored next to the raw reply.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -35,11 +42,16 @@ from typing import Any
 
 import pymupdf
 
+from . import extract
 from .config import Settings
 from .credentials import CredentialStore
 from .documents import DEFAULT_OCR_ENGINE, DocumentError, OpenDocument, TextLayer
+from .export import DocumentTexts, SourceTexts
 from .llm import (
     BATCH_USER_PROMPT,
+    DRAFT_SYSTEM,
+    EXTRACT_MODE,
+    EXTRACT_USER_PROMPT,
     MAX_PAGES_PER_REQUEST,
     PROMPT_MODES,
     USER_PROMPT,
@@ -50,10 +62,12 @@ from .llm import (
     TranscriptionResult,
     batch_rules,
     catalog,
+    draft_user_prompt,
     resolve_prompt,
     split_batch,
 )
 from .ocr import OCREngine, build_ocr_engines
+from .pdftext import DEFAULT_TEXT_LIBRARY, TextLibrary, build_text_libraries, native_library_of
 from .preprocess import MAX_PNG_BYTES, Preprocess, process_bytes
 
 #: stop reasons that mean "the output limit cut the reply short" (Claude, OpenAI, Gemini)
@@ -83,14 +97,29 @@ class LLMSpec:
     preprocess: str = ""
     #: pages sent together in one request; 1 = one page per request (the default)
     pages_per_request: int = 1
+    #: for ``prompt_mode="extract"``: a preset id (``invoice``, ...) or JSON Schema text
+    extract_schema: str = ""
+
+
+@dataclass
+class ExtractSchema:
+    schema: dict[str, Any]
+    label: str
+    preset: str | None
+
+    @property
+    def canonical(self) -> str:
+        return extract.canonical(self.schema)
 
 
 class Services:
     def __init__(self, settings: Settings, providers: dict[str, Provider],
-                 ocr_engines: dict[str, OCREngine] | None = None) -> None:
+                 ocr_engines: dict[str, OCREngine] | None = None,
+                 text_libraries: dict[str, TextLibrary] | None = None) -> None:
         self.settings = settings
         self.providers = providers
         self.ocr_engines = ocr_engines if ocr_engines is not None else build_ocr_engines(settings)
+        self.text_libraries = text_libraries if text_libraries is not None else build_text_libraries()
         self.llm_semaphore = asyncio.Semaphore(settings.llm_concurrency)
         # Values saved on the Providers page override env vars; applied here so the
         # web app and the CLI see the same configuration.
@@ -104,17 +133,31 @@ class Services:
             raise ValueError(f"unknown provider '{spec.provider}'")
         if not 1 <= spec.pages_per_request <= MAX_PAGES_PER_REQUEST:
             raise ValueError(f"pages per request must be between 1 and {MAX_PAGES_PER_REQUEST}")
+        if spec.prompt_mode == EXTRACT_MODE and spec.pages_per_request > 1:
+            # a batched reply is split into pages by marker lines; an extraction reply is one JSON object per page
+            raise ValueError("structured data extraction runs one page per request; set pages per request to 1")
         system_prompt = resolve_prompt(spec.prompt_mode, spec.custom_prompt)
         if spec.pages_per_request > 1:
             # part of the prompt, so part of the cache key: a batched run is its own source
             system_prompt += batch_rules(spec.pages_per_request)
         model = (spec.model or provider.default_model or "").strip()
         Preprocess.parse(spec.preprocess)
+        self.resolve_schema(spec)
         return provider, model, system_prompt
+
+    @staticmethod
+    def resolve_schema(spec: LLMSpec) -> ExtractSchema | None:
+        """The extraction schema of an ``extract`` spec (None otherwise); ValueError if it's unusable."""
+        if spec.prompt_mode != EXTRACT_MODE:
+            return None
+        schema, label, preset = extract.resolve(spec.extract_schema)
+        return ExtractSchema(schema, label, preset)
 
     def llm_key(self, doc: OpenDocument, spec: LLMSpec) -> str:
         provider, model, system_prompt = self.resolve_spec(spec)
-        return doc.llm_cache_key(provider.id, model, system_prompt, str(Preprocess.parse(spec.preprocess)))
+        schema = self.resolve_schema(spec)
+        return doc.llm_cache_key(provider.id, model, system_prompt, str(Preprocess.parse(spec.preprocess)),
+                                 schema.canonical if schema else "")
 
     def llm_image(self, doc: OpenDocument, page: int, pre: Preprocess | None = None) -> tuple[bytes, str]:
         """The exact image (bytes, mime type) an LLM receives for this page.
@@ -178,7 +221,8 @@ class Services:
             return outcome
         provider, model, system_prompt = self.resolve_spec(spec)
         pre = Preprocess.parse(spec.preprocess)
-        key = doc.llm_cache_key(provider.id, model, system_prompt, str(pre))
+        schema = self.resolve_schema(spec)
+        key = doc.llm_cache_key(provider.id, model, system_prompt, str(pre), schema.canonical if schema else "")
         if not force:
             cached = doc.load_llm_result(page, key)
             if cached:
@@ -191,8 +235,19 @@ class Services:
                 on_start()
             result = await provider.transcribe(TranscriptionRequest(
                 image=image, mime_type=mime, system_prompt=system_prompt,
-                user_prompt=USER_PROMPT, model=model,
+                user_prompt=EXTRACT_USER_PROMPT if schema else USER_PROMPT, model=model,
+                output_schema=extract.provider_schema(schema.schema) if schema else None,
             ))
+        text = result.text
+        structured: dict[str, Any] = {}
+        if schema:
+            data, parse_error = extract.parse_reply(text)
+            errors = [{"path": "(reply)", "message": parse_error}] if parse_error else extract.validate(data, schema.schema)
+            if parse_error is None:
+                text = json.dumps(data, ensure_ascii=False, indent=2)  # readable in the text views, search & export
+            filled, total = extract.count_fields(data, schema.schema)
+            structured = {"schema": schema.schema, "schema_label": schema.label, "schema_preset": schema.preset,
+                          "data": data, "data_errors": errors, "fields_filled": filled, "fields_total": total}
         record = {
             "provider": provider.id,
             "provider_label": provider.label,
@@ -200,7 +255,7 @@ class Services:
             "requested_model": model,
             "prompt_mode": spec.prompt_mode,
             "prompt": system_prompt if spec.prompt_mode == "custom" else None,
-            "text": result.text,
+            "text": text,
             "latency_ms": result.latency_ms,
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
@@ -212,9 +267,57 @@ class Services:
             "preprocess": str(pre) or None,
             "preprocess_label": pre.describe() if not pre.is_identity else None,
             "created_at": time.time(),
+            **structured,
         }
         doc.save_llm_result(page, key, record)
         return {**record, "key": key, "cached": False}
+
+    async def draft_schema(self, provider_id: str, model: str | None, description: str,
+                           current_schema: str | None = None, doc: OpenDocument | None = None,
+                           page: int = 0) -> dict[str, Any]:
+        """Ask a model to draft extraction fields from a plain-words description.
+
+        With ``doc`` the model also sees that page (as an LLM would during
+        extraction), which grounds the field names. With ``current_schema`` it
+        changes that schema instead of starting over. Not cached: it's interactive
+        and the user decides whether to keep the result. Respects ``llm_semaphore``.
+        """
+        provider = self.providers.get(provider_id)
+        if provider is None:
+            raise ValueError(f"unknown provider '{provider_id}'")
+        if not provider.configured:
+            raise ValueError(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}")
+        if not description.strip():
+            raise ValueError("describe what to extract, e.g. “invoice number, date, and each line item with its amount”")
+        model = (model or provider.default_model or "").strip()
+        image, mime = (await asyncio.to_thread(self.llm_image, doc, page)) if doc is not None else (b"", "")
+        async with self.llm_semaphore:
+            result = await provider.transcribe(TranscriptionRequest(
+                image=image, mime_type=mime, system_prompt=DRAFT_SYSTEM,
+                user_prompt=draft_user_prompt(description, current_schema, with_page=bool(image)),
+                model=model, max_output_tokens=4000,
+                output_schema=extract.provider_schema(extract.draft_schema()),
+            ))
+        data, error = extract.parse_reply(result.text)
+        try:
+            if error:
+                raise extract.SchemaError(error)
+            schema = extract.draft_to_schema(data)
+        except extract.SchemaError as exc:
+            raise ProviderError(f"{provider.label}: couldn't use the draft ({exc}). Try again, describe the fields "
+                                "more concretely, or pick a model that enforces schemas") from exc
+        return {
+            "schema": schema,
+            "notes": str(data.get("notes") or "").strip(),
+            "provider": provider.id,
+            "model": result.model,
+            "used_page": bool(image),
+            "latency_ms": result.latency_ms,
+            "input_tokens": result.input_tokens,
+            "output_tokens": result.output_tokens,
+            "cost": self.cost(provider.id, result.model or model, result.input_tokens, result.output_tokens),
+            "warnings": result.warnings,
+        }
 
     # ------------------------------------------------------- batched LLM
     def plan_llm_chunks(self, doc: OpenDocument, pages: list[int], spec: LLMSpec,
@@ -445,6 +548,45 @@ class Services:
         engine = self.ocr_engine(engine_id)
         return await asyncio.to_thread(engine.test)
 
+    # ------------------------------------------------------ PDF libraries
+    def text_library(self, library_id: str | None) -> TextLibrary | None:
+        """The library behind ``native:<id>``; ``None`` for PyMuPDF (the plain ``native`` source)."""
+        if not library_id or library_id == DEFAULT_TEXT_LIBRARY:
+            return None
+        lib = self.text_libraries.get(library_id)
+        if lib is None:
+            known = ", ".join([DEFAULT_TEXT_LIBRARY, *self.text_libraries])
+            raise DocumentError(f"unknown PDF library '{library_id}' (known: {known})")
+        return lib
+
+    def native_layer(self, doc: OpenDocument, page: int, library: str | None = None,
+                     force: bool = False) -> TextLayer:
+        """The page's embedded text as one PDF library reads it. Blocking: use a thread from async code."""
+        lib = self.text_library(library)
+        return doc.native_text(page) if lib is None else lib.extract(doc, page, force=force)
+
+    def compare_libraries(self, doc: OpenDocument, page: int) -> list[dict[str, Any]]:
+        """Run every PDF library on one page: does each one get text out, and how much?"""
+        rows = []
+        for lib_id in [DEFAULT_TEXT_LIBRARY, *self.text_libraries]:
+            lib = self.text_library(lib_id)
+            row: dict[str, Any] = {"id": lib_id, "source_id": lib.source_id if lib else "native",
+                                   "label": lib.label if lib else "PyMuPDF",
+                                   "version": lib.version() if lib else pymupdf.VersionBind,
+                                   "available": True, "problem": None, "error": None}
+            if lib is not None and (problem := lib.problem()):
+                rows.append({**row, "available": False, "problem": problem, "install": lib.install_hint()})
+                continue
+            try:
+                layer = self.native_layer(doc, page, lib_id)
+            except DocumentError as exc:
+                rows.append({**row, "error": str(exc)})
+                continue
+            rows.append({**row, "chars": len(layer.text.strip()), "words": len(layer.text.split()),
+                         "lines": sum(1 for ln in layer.text.splitlines() if ln.strip()),
+                         "elapsed_ms": layer.elapsed_ms, "preview": layer.text.strip()[:200]})
+        return rows
+
     # ----------------------------------------------------------------- sources
     def list_sources(self, doc: OpenDocument) -> list[dict[str, Any]]:
         """All text sources available for a document, with page coverage.
@@ -457,7 +599,15 @@ class Services:
         for p in range(n):
             for engine in doc.ocr_engines_cached(p):
                 ocr_pages.setdefault(engine, []).append(p)
-        sources = [{"id": "native", "kind": "native", "label": "Native text layer", "pages": list(range(n))}]
+        sources = [{"id": "native", "kind": "native", "library": DEFAULT_TEXT_LIBRARY,
+                    "label": "Native text layer (PyMuPDF)" if doc.meta.is_pdf and any(
+                        lib.available for lib in self.text_libraries.values()) else "Native text layer",
+                    "pages": list(range(n))}]
+        if doc.meta.is_pdf:
+            # installed PDF libraries are read on demand (fast), so they cover every page
+            sources += [{"id": lib.source_id, "kind": "native", "library": lib.id,
+                         "label": f"Native text · {lib.label}", "pages": list(range(n))}
+                        for lib in self.text_libraries.values() if lib.available]
         order = list(self.ocr_engines)
         for engine in sorted(ocr_pages, key=lambda e: order.index(e) if e in order else len(order)):
             known = self.ocr_engines.get(engine)
@@ -471,9 +621,10 @@ class Services:
                     "id": f"llm:{r['key']}", "kind": "llm", "key": r["key"],
                     "brand": getattr(self.providers.get(r["provider"]), "brand", ""),
                     "provider": r["provider"], "model": r["model"], "prompt_mode": r.get("prompt_mode"),
-                    "preprocess": r.get("preprocess"),
+                    "preprocess": r.get("preprocess"), "schema_label": r.get("schema_label"),
                     "pages_per_request": r.get("pages_per_request", 1),
                     "label": f"{r.get('provider_label') or r['provider']} · {r['model']} · {r.get('prompt_mode')}"
+                             + (f" ({r['schema_label']})" if r.get("schema_label") else "")
                              + (f" · image: {r['preprocess_label']}" if r.get("preprocess_label") else "")
                              + (f" · {r['pages_per_request']} pages/request" if r.get("pages_per_request", 1) > 1
                                 else ""),
@@ -490,24 +641,50 @@ class Services:
             s["page_count"] = len(s["pages"])
         return sources
 
+    @staticmethod
+    def _llm_result(doc: OpenDocument, page: int, source: str) -> dict[str, Any] | None:
+        key = source[4:] if source.startswith("llm:") else None
+        results = doc.list_llm_results(page)
+        if key:
+            results = [r for r in results if r["key"] == key]
+        return results[0] if results else None
+
+    def page_data(self, doc: OpenDocument, page: int, source: str) -> Any:
+        """Parsed structured-extraction data of one page, or ``None`` (not an extraction, or not run)."""
+        if source != "llm" and not source.startswith("llm:"):
+            return None
+        result = self._llm_result(doc, page, source)
+        return result.get("data") if result else None
+
     def page_text(self, doc: OpenDocument, page: int, source: str, run_ocr: bool = False) -> str | None:
         """Text of one page from one source, or ``None`` if not extracted yet."""
-        if source == "native":
-            return doc.native_text(page).text
+        if (library := native_library_of(source)) is not None:
+            return self.native_layer(doc, page, library).text
         if (engine := ocr_engine_of(source)) is not None:
             layer = self.run_ocr_page(doc, page, engine=engine) if run_ocr else doc.cached_ocr_text(page, engine)
             return layer.text if layer else None
         if source == "llm" or source.startswith("llm:"):
-            key = source[4:] if source.startswith("llm:") else None
-            results = doc.list_llm_results(page)
-            if key:
-                results = [r for r in results if r["key"] == key]
-            return results[0]["text"] if results else None
+            result = self._llm_result(doc, page, source)
+            return result["text"] if result else None
         raise DocumentError(f"unknown source '{source}'")
+
+    def document_texts(self, doc: OpenDocument) -> DocumentTexts:
+        """Every source with at least one extracted page, and its text for every page (for "export everything").
+
+        Uses the concrete ``llm:<key>`` sources, not the ``llm`` alias, so no run is hidden behind a newer one.
+        Reads caches only: nothing is run.
+        """
+        pages = list(doc.iter_pages())
+        return DocumentTexts(document=doc.meta.__dict__, sources=[
+            SourceTexts(source=s, texts=[self.page_text(doc, n, s["id"]) for n in pages],
+                        data=[self.page_data(doc, n, s["id"]) for n in pages] if s.get("schema_label") else None)
+            for s in self.list_sources(doc) if s["page_count"]])
 
     def source_label(self, doc: OpenDocument, source: str) -> str:
         if (engine := ocr_engine_of(source)) is not None:
             return self.ocr_label(engine)
+        if (library := native_library_of(source)) is not None and (lib := self.text_library(library)):
+            return f"Native text · {lib.label}"
         for s in self.list_sources(doc):
             if s["id"] == source:
                 return s["label"]
@@ -537,4 +714,4 @@ def parse_pages(spec: str | None, page_count: int) -> list[int]:
     return out
 
 
-__all__ = ["LLMSpec", "ProviderError", "Services", "ocr_engine_of", "ocr_source_id", "parse_pages"]
+__all__ = ["ExtractSchema", "LLMSpec", "ProviderError", "Services", "ocr_engine_of", "ocr_source_id", "parse_pages"]

@@ -14,6 +14,7 @@ On disk, each upload lives in its own folder::
         ocr/<page>.json    # cached Tesseract result (text + word boxes)
         ocr/<engine>/<page>.json  # cached result of another OCR engine (EasyOCR, ...)
         llm/<page>/<key>.json   # cached LLM transcriptions
+        native/<library>/<page>.json  # text layer as another PDF library reads it (pypdf, ...)
 
 Page numbers are **0-based** everywhere in the Python/HTTP API; the UI adds 1
 when displaying them.
@@ -107,7 +108,7 @@ class Word:
 class TextLayer:
     """Text of one page from one engine, plus word boxes in PDF points."""
 
-    source: str  # "native" | "ocr" (Tesseract) | "ocr:<engine>"
+    source: str  # "native" | "native:<library>" | "ocr" (Tesseract) | "ocr:<engine>"
     text: str
     words: list[Word]
     elapsed_ms: float | None = None
@@ -305,7 +306,8 @@ class OpenDocument:
             t0 = time.perf_counter()
             text = page.get_text("text", sort=True)
             words = _words_from_page(page)
-            return TextLayer("native", text, words, elapsed_ms=round((time.perf_counter() - t0) * 1000, 1))
+            return TextLayer("native", text, words, elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
+                             meta={"library": "pymupdf", "label": "PyMuPDF", "version": pymupdf.VersionBind})
 
     def _ocr_cache_path(self, number: int, engine: str = DEFAULT_OCR_ENGINE) -> Path:
         if engine == DEFAULT_OCR_ENGINE:
@@ -356,19 +358,36 @@ class OpenDocument:
         cache = self._ocr_cache_path(number, engine)
         return TextLayer.from_json(json.loads(cache.read_text())) if cache.exists() else None
 
+    # -- other PDF libraries (see pdftext.py) --------------------------------
+    def _native_cache_path(self, number: int, library: str) -> Path:
+        if not _ENGINE_ID_RE.match(library):
+            raise DocumentError(f"bad PDF library id '{library}'")
+        return self.folder / "native" / library / f"{number}.json"
+
+    def cached_native_layer(self, number: int, library: str) -> TextLayer | None:
+        cache = self._native_cache_path(number, library)
+        return TextLayer.from_json(json.loads(cache.read_text())) if cache.exists() else None
+
+    def save_native_layer(self, number: int, library: str, layer: TextLayer) -> None:
+        cache = self._native_cache_path(number, library)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(layer.to_json(), ensure_ascii=False))
+
     # -- LLM result cache -----------------------------------------------------
     def _llm_dir(self, number: int) -> Path:
         return self.folder / "llm" / str(number)
 
     @staticmethod
-    def llm_cache_key(provider: str, model: str, prompt: str, preprocess: str = "") -> str:
+    def llm_cache_key(provider: str, model: str, prompt: str, preprocess: str = "", schema: str = "") -> str:
         """Stable id of one LLM configuration, identical on every page of a document.
 
-        ``preprocess`` is the canonical image-preprocessing spec. It is only mixed
-        into the digest when non-empty, so runs on the plain page image keep the
-        keys they had before preprocessing existed (no orphaned caches).
+        ``preprocess`` is the canonical image-preprocessing spec and ``schema`` the
+        canonical JSON of a structured-extraction schema. Each is only mixed into the
+        digest when non-empty, so plain transcriptions keep the keys they had before
+        those features existed (no orphaned caches).
         """
-        material = f"{provider}\0{model}\0{prompt}" + (f"\0{preprocess}" if preprocess else "")
+        material = (f"{provider}\0{model}\0{prompt}" + (f"\0{preprocess}" if preprocess else "")
+                    + (f"\0schema={schema}" if schema else ""))
         digest = hashlib.sha256(material.encode()).hexdigest()[:16]
         safe_model = re.sub(r"[^A-Za-z0-9._-]+", "_", model)[:60]
         return f"{provider}__{safe_model}__{digest}"

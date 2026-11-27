@@ -300,11 +300,30 @@ def play_search(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
     tour.click(page.locator(".tabs button[data-tab=ocr]"), hold=2.8)
 
 
+def play_libraries(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
+    """A born-digital page read by every PDF library, one library's text, then PyMuPDF and pypdf compared."""
+    page = tour.page
+    # start from PyMuPDF whatever an earlier visit picked
+    page.add_init_script("localStorage.removeItem('pyocr.nativeLibrary')")
+    tour.goto(f"/documents/{ids['report']}/pages/1", hold=1.6)
+    tour.click(page.locator("#check-libraries"), hold=2.8)
+    tour.click(page.locator("#native-libraries [data-lib=pypdf]"), hold=2.2)
+    tour.click(page.locator(".tabs button[data-tab=compare]"), hold=0.6)
+    tour.choose(page.locator("#cmp-ref"), "native", hold=0.4)
+    tour.choose(page.locator("#cmp-hyp"), "native:pypdf", hold=0.4)
+    tour.click(page.locator("#run-compare"), hold=2.8)
+
+
 def play_library(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
-    """The library, then a document's overview and its sources."""
+    """The library, then a document's overview and its sources, exported all at once."""
     page = tour.page
     tour.goto("/documents", hold=2.0)
     tour.click(page.locator("a", has_text="field-notes-scan.pdf").first, hold=2.4)
+    export_all = page.locator("summary", has_text="Export all")
+    # bring the sources table and the button into view, leaving room below it for the opened menu
+    top = page.evaluate("(el) => el.getBoundingClientRect().top", export_all.element_handle())
+    tour.scroll(max(0, int(top - (VIEWPORT["height"] - 300))), hold=1.4)
+    tour.click(export_all, hold=2.6)
 
 
 @dataclass
@@ -317,6 +336,7 @@ class TourSpec:
 TOURS = [
     TourSpec("inspector", play_inspector),
     TourSpec("compare", play_compare),
+    TourSpec("libraries", play_libraries),
     TourSpec("search", play_search),
     TourSpec("library", play_library),
     TourSpec("upload", play_upload, changes_data=True),

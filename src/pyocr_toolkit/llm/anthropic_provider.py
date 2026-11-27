@@ -38,6 +38,27 @@ def _supports_effort(model: str) -> bool:
     return version >= (4, 6)
 
 
+def _supports_structured_outputs(model: str) -> bool:
+    """``output_config.format`` (JSON outputs) exists on Fable/Mythos, Opus 5+/4.8/4.5/4.1, Sonnet 5+, Haiku 5.5/4.5.
+
+    Other models (and deployment names we can't parse) get the schema in the prompt instead.
+    """
+    m = _VERSION_RE.search(model)
+    if not m:
+        return False
+    family, version = m.group(1), (int(m.group(2)), int(m.group(3) or 0))
+    if family in ("fable", "mythos"):
+        return True
+    if family == "opus":
+        return version >= (5, 0) or version in {(4, 8), (4, 5), (4, 1)}
+    if family == "sonnet":
+        return version >= (5, 0)
+    return version >= (5, 5) or version == (4, 5)
+
+
+PROMPT_ONLY_SCHEMA = "this model can't enforce a schema; it was given in the prompt, so check the fields"
+
+
 def _image_blocks(req: TranscriptionRequest) -> list[dict]:
     """Image blocks, each preceded by its label when the request holds several pages."""
     blocks: list[dict] = []
@@ -66,6 +87,14 @@ class _ClaudeBase(Provider):
     def _make_client(self) -> anthropic.AsyncAnthropic:
         raise NotImplementedError
 
+    def schema_support(self, model: str | None) -> tuple[str, str]:
+        if model and _supports_structured_outputs(model):
+            return "ok", f"{model} enforces this schema (Claude structured outputs)"
+        return "warn", (f"{model or 'This model'} can't enforce a schema, so it's given in the prompt; check the fields. "
+                        "Fable, Opus 5+ / 4.8, Sonnet 5+ and Haiku 5.5 / 4.5 enforce it"
+                        + (" (name the deployment after the model, e.g. claude-opus-5-5)" if self.id == "azure_claude"
+                           else ""))
+
     @property
     def client(self):
         if self._client is None:
@@ -73,17 +102,28 @@ class _ClaudeBase(Provider):
         return self._client
 
     async def _transcribe(self, req: TranscriptionRequest, model: str) -> TranscriptionResult:
+        warnings: list[str] = []
+        system = req.system_prompt
+        output_config: dict = {}
+        if req.output_schema is not None:
+            if _supports_structured_outputs(model):
+                output_config["format"] = {"type": "json_schema", "schema": req.output_schema}
+            else:
+                system = req.system_with_schema()
+                warnings.append(PROMPT_ONLY_SCHEMA)
         params: dict = {
             "model": model,
             "max_tokens": req.max_output_tokens,
-            "system": req.system_prompt,
+            "system": system,
             "messages": [{
                 "role": "user",
                 "content": [*_image_blocks(req), {"type": "text", "text": req.user_prompt}],
             }],
         }
         if _supports_effort(model) and self.settings.anthropic_effort:
-            params["output_config"] = {"effort": self.settings.anthropic_effort}
+            output_config["effort"] = self.settings.anthropic_effort
+        if output_config:
+            params["output_config"] = output_config
         if self.supports_server_fallback and model in _FALLBACK_MODELS:
             params["betas"] = [_FALLBACK_BETA]
             params["fallbacks"] = "default"
@@ -104,7 +144,6 @@ class _ClaudeBase(Provider):
         except anthropic.APIConnectionError as exc:
             raise ProviderError(f"{self.label}: connection error: {exc}") from exc
 
-        warnings: list[str] = []
         if message.stop_reason == "refusal":
             details = getattr(message, "stop_details", None)
             category = getattr(details, "category", None) if details else None

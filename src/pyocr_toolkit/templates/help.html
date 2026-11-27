@@ -9,6 +9,7 @@
   <a href="#workspaces">Workspaces &amp; batch uploads</a>
   <a href="#engines">The three text sources</a>
   <a href="#prompts">LLM prompts</a>
+  <a href="#extract">Structured data</a>
   <a href="#metrics">Comparing: CER &amp; WER</a>
   <a href="#workflows">Typical workflows</a>
   <a href="#export">Export &amp; GenAI pipelines</a>
@@ -44,7 +45,7 @@
   <dt>Document → Overview</dt><dd>Start background extractions with any OCR engine or LLM: type a page range or click pages on the page map
     (Shift-click selects a range; presets pick scans only or pages with no text from that engine yet), and choose how many
     pages go in each LLM request. Also lists every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
-  <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text, OCR (pick the engine), LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
+  <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text (pick the PDF library), OCR (pick the engine), LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
   <dt>Document → Full text</dt><dd>The whole document from one source, page by page, optionally next to the page images. Find-in-text, copy and download.</dd>
   <dt>Document → Compare</dt><dd>Pick a reference (A) and a candidate (B). You get the whole-document error rates, a per-page CER chart (click a bar to open that page) and the selected page's text side by side, with words only in A and only in B highlighted. It opens on the worst page.</dd>
   <dt><a href="/search">Search</a></dt><dd>Search every document in the library at once.</dd>
@@ -82,6 +83,14 @@
   nothing is guessed, but it only exists for <i>born-digital</i> files. A scanner only records a picture of the page,
   so a scanned PDF has no glyphs and no native text. A few PDFs also have broken glyph mappings, so native text can
   be gibberish even though the page looks fine.</p>
+<h3>1b. Other PDF libraries</h3>
+<p>PyMuPDF is not the only way to read that text layer. <b>pypdf</b>, <b>pdfplumber</b>, <b>pdfminer.six</b> and
+  <b>pypdfium2</b> (PDFium, Chrome's engine) each rebuild words and lines their own way, so reading order, spacing,
+  ligatures and odd font encodings can differ. If your pipeline uses one of them, test that one. Each installed
+  library is its own source (<code>native:pypdf</code>, <code>native:pdfplumber</code>, ...). On the page inspector's
+  <i>Native</i> tab, pick a library, or press <i>Test all libraries</i> to see which libraries get text out of the
+  page and how much. Compare and Export list them too. Install them with
+  <code>pip install "pyocr-toolkit[pdf]"</code>; they read PDF files only.</p>
 <h3>2. Tesseract OCR: turning pixels back into characters</h3>
 <p>For a picture, all we have is pixels. pyocr renders the page at <code>OCR_DPI</code> (300 by default; small text
   needs enough pixels per character) and gives it to <b>Tesseract</b>, an open-source OCR engine. Tesseract finds
@@ -112,7 +121,9 @@
 <ul>
   <li><b>Verbatim</b> (default): plain text, line by line, nothing corrected, tables as <code>cell | cell</code>. Use this to judge OCR, because both outputs then have the same shape.</li>
   <li><b>Markdown</b>: keeps structure (headings, lists, GFM tables). Closest to what you would feed a RAG or LLM pipeline.</li>
-  <li><b>Custom</b>: write your own instructions, for example "extract only the line items as CSV" or "transcribe the handwritten notes only".</li>
+  <li><b>Structured data (fields → JSON)</b>: instead of transcribing, the model fills a fixed set of fields
+    (see <a href="#extract">below</a>).</li>
+  <li><b>Custom</b>: write your own instructions, for example "transcribe the handwritten notes only".</li>
 </ul>
 <p>Every provider + model + prompt combination is stored separately, so you can run several and compare them.
   Results are cached: repeating a request costs nothing unless you click <i>re-run</i>.</p>
@@ -136,6 +147,48 @@
   <li><b>With image preprocessing.</b> Batched pages get the same <i>Image preprocessing</i> as single pages, so the two
     settings combine: each combination is its own source.</li>
 </ul>
+
+<h2 id="extract">Structured data: fields instead of text</h2>
+<p>Pick <b>Structured data (fields → JSON)</b> as the prompt, then choose what to extract: <b>Invoice</b>,
+  <b>Receipt</b>, <b>Form fields</b> (every label and its value), or <b>My own fields</b>. Open
+  <i>Edit fields &amp; see an example</i> to change them; any edit turns a preset into your own schema.</p>
+<p><b>Describe it in plain words.</b> Under <i>Fields to extract</i>, write what you want (“the invoice number, date
+  and supplier, and every line item with quantity and amount”) and click <b>Draft fields</b> (or Ctrl+Enter). The
+  provider and model chosen above draft the fields, looking at the current page unless you untick <i>Show the model
+  this page</i>. The draft lands in the field editor for you to review; nothing is extracted until you run it. With
+  <i>Change my current fields</i> on, the model edits what you have (“also add the due date”) instead of starting
+  over. Each draft is one model call, paid like any other; its tokens and cost are shown.</p>
+<ul>
+  <li><b>Fields</b> tab: add fields one per row with a name, a type (Text, Number, Whole number, Yes / no, One of a
+    list, List of text, Table, Group of fields), an optional hint for the model, and <i>Required</i>. Tables and groups
+    hold their own columns or fields. You don't need to know JSON Schema.</li>
+  <li><b>JSON Schema</b> tab: the same schema as JSON, with colours, line numbers and the line of a syntax error
+    marked. <b>Fix syntax</b> repairs what people usually get wrong when typing JSON by hand: single or curly quotes,
+    unquoted keys, missing or trailing commas, missing brackets, comments, Python's <code>True</code> / <code>None</code>,
+    and type names such as <code>str</code>, <code>int</code> or <code>bool</code>. Both tabs edit one schema.</li>
+  <li>Every change is checked. You see what's wrong and how to fix it (“'propertes' isn't a JSON Schema keyword (did
+    you mean 'properties'?)”), whether the chosen provider and model enforce the schema or only get it in the prompt,
+    and hints such as “Number fields make the model convert what's printed”.</li>
+  <li><b>Example output</b> shows what a result will look like, as the field table or as JSON, before you pay for a run.</li>
+  <li>Leave <i>Required</i> off unless a field is always printed: a required field can't be <i>not on page</i>, so the
+    model may guess.</li>
+</ul>
+<ul>
+  <li>The schema is enforced by the provider where it can be (Claude structured outputs, OpenAI and Azure
+    <code>response_format</code>, Gemini <code>response_json_schema</code>). Older Claude models and
+    OpenAI-compatible servers also get it in the prompt; the result then says so, so check its fields.</li>
+  <li>Values are copied as printed (<code>$1,250.00</code>, <code>03/04/25</code>), never converted or guessed.
+    A field that isn't on the page is <i>not on page</i> (<code>null</code>).</li>
+  <li>The <b>LLM</b> tab shows the fields as a table: how many were found, line items as a sub-table, and any reply
+    that doesn't match the schema marked on its field. <i>JSON</i> shows the raw result.</li>
+  <li>Extraction sends one page per request: <i>Pages per request</i> doesn't apply, because each page gets its own
+    JSON object.</li>
+  <li>Each schema is its own source (it's part of the cache key), so you can run Invoice and a custom schema on the
+    same pages and keep both. JSON and JSONL exports add a <code>data</code> object per page.</li>
+</ul>
+<p>Optional fields in your own schema become nullable, every object is closed (<code>additionalProperties: false</code>)
+  and <code>$ref</code>s are inlined, because that is what providers' strict modes accept. Recursive schemas aren't
+  supported.</p>
 
 <h2 id="preprocess">Adjusting the image before the LLM sees it</h2>
 <p>A vision model never sees your PDF, only the pixels it is sent. So the pixels are part of the experiment: a grey
@@ -214,8 +267,18 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
 <ul>
   <li><b>TXT</b>: pages separated by <code>===== Page N =====</code>.</li>
   <li><b>Markdown</b>: a <code>## Page N</code> heading per page.</li>
-  <li><b>JSON</b>: <code>{document, source, pages: [{page, text, extracted}]}</code>.</li>
+  <li><b>JSON</b>: <code>{document, source, pages: [{page, text, extracted}]}</code>, plus <code>data</code> per page for structured data.</li>
   <li><b>JSONL</b>: one JSON object per page (<code>document_id, filename, page, source, text</code>), ready for chunking, embedding or loading into a vector store.</li>
+</ul>
+<p>To take <b>everything</b> away at once, use Overview → <i>Export all</i> (or the bottom of the
+  <i>Download</i> menu in Full text). It includes every source with at least one extracted page, each LLM run separately:</p>
+<ul>
+  <li><b>JSON</b>: <code>{document, sources: [{id, label, ...}], pages: [{page, texts: {source_id: text}}]}</code>;
+    <code>null</code> where a source has no result for a page.</li>
+  <li><b>CSV</b>: a row per page and a column per source, to read sources side by side in a spreadsheet.</li>
+  <li><b>Markdown</b>: each page, with every source's text under its own heading.</li>
+  <li><b>JSONL</b>: one line per extracted page and source (<code>page, source, source_label, text</code>).</li>
+  <li><b>ZIP</b>: the JSON and CSV, plus a TXT and a Markdown file for each source.</li>
 </ul>
 <p>Pages that have not been extracted for that source are left empty. An export never starts a paid LLM call.</p>
 
@@ -260,6 +323,8 @@ pyocr extract FILE --engine llm --pages-per-request 5  # 5 pages in each LLM req
 pyocr extract FILE --engine ocr                       # Tesseract, all pages, text to stdout
 pyocr extract FILE --engine ocr:paddleocr             # another OCR engine (`pyocr engines` lists them)
 pyocr extract FILE --engine native --format md        # embedded text layer only
+pyocr extract FILE --engine native:pdfplumber         # the text layer as another PDF library reads it
+pyocr libraries                                       # which PDF libraries are installed
 pyocr compare FILE -p openai -m gpt-6.2-sol                 # per-page OCR/native error rate vs an LLM
 pyocr extract FILE --preprocess clean                 # adjust the image first (a preset or e.g. 'gray;auto;contrast=1.5')
 pyocr import a.pdf b.pdf scans.zip folder/ -w "Q3"    # add many files as one workspace (zips unpacked)
@@ -277,6 +342,7 @@ POST /api/documents/{id}/jobs                    {"kind":"llm","pages":"1-5","ll
 GET  /api/jobs/{job_id}                          progress
 GET  /api/documents/{id}/sources                 what has been extracted
 GET  /api/documents/{id}/export?source=llm&amp;fmt=jsonl
+GET  /api/documents/{id}/export/all?fmt=json      (json, jsonl, csv, md, zip)
 GET  /api/documents/{id}/compare?a=llm&amp;b=ocr      per-page CER/WER
 POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)</pre>
 

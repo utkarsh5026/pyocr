@@ -129,8 +129,8 @@ $("#page-presets").addEventListener("click", (e) => {
 // The preset buttons and the "Other" box both set one value; "Other" stays empty while a preset is chosen.
 const perRequestIn = $("#extract-form input[name=per_request]");
 let perRequestN = 1;
-/** Pages per LLM request (1 = one page per request). */
-const perRequest = () => perRequestN;
+/** Pages per LLM request (1 = one page per request). Structured extraction is always 1: one JSON object per page. */
+const perRequest = () => (picker?.isExtract() ? 1 : perRequestN);
 
 function setPerRequest(value, typed = false) {
   perRequestN = Math.max(1, Math.min(+perRequestIn.max || 20, Math.floor(+value) || 1));
@@ -173,6 +173,7 @@ function updateForm() {
   renderPageMap();
   renderPresets();
 
+  $(".field.per-request").hidden = kind() === "llm" && !!picker?.isExtract();
   const count = sel.error ? 0 : sel.pages.length;
   const n = perRequest();
   const requests = Math.ceil(count / n);
@@ -274,7 +275,7 @@ $("#extract-form").addEventListener("submit", guard(async (e) => {
     body.llm = { ...picker.spec(), pages_per_request: perRequest() };
     body.llm.preprocess = form.preprocess.value.trim() || null;
     preprocessStore.set(DOC_ID, body.llm.preprocess);
-    localStorage.setItem("pyocr.perRequest", String(body.llm.pages_per_request));
+    if (!picker.isExtract()) localStorage.setItem("pyocr.perRequest", String(body.llm.pages_per_request));
     const n = sel.all ? `all ${plural(PAGE_COUNT, "page")}` : `${plural(sel.pages.length, "page")} (${body.pages})`;
     const batch = body.llm.pages_per_request > 1 ? `, ${body.llm.pages_per_request} pages per request` : "";
     const img = body.llm.preprocess ? `\nImage preprocessing: ${body.llm.preprocess}\n` : "";
@@ -297,7 +298,7 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
 
 (async function main() {
   try {
-    picker = await initLlmPicker($("#llm-options [data-llm-picker]"));
+    picker = await initLlmPicker($("#llm-options [data-llm-picker]"), { page: () => ({ doc_id: DOC_ID, page: 0 }) });
     const cfg = await getConfig();
     ocrSelect.innerHTML = ocrEngineOptions(cfg);
     ocrSelect.value = preferredOcrEngine(cfg);

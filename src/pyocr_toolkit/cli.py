@@ -5,8 +5,10 @@
     pyocr doctor                     check OCR engines, providers and the data directory
     pyocr providers                  list LLM providers and whether they are configured
     pyocr engines                    list OCR engines and whether they are ready
+    pyocr libraries                  list PDF text libraries (pypdf, pdfplumber, ...) and whether they're installed
     pyocr extract FILE --engine llm -p anthropic --pages 1-3 --format jsonl -o out.jsonl
     pyocr extract FILE --engine ocr --ocr-engine easyocr      (or --engine ocr:easyocr)
+    pyocr extract FILE --engine native:pypdf                  text layer as pypdf reads it
     pyocr compare FILE -p openai     per-page OCR/native error rate against an LLM
     pyocr import a.pdf b.pdf scans.zip [--workspace NAME]
                                      add files (zips unpacked, folders walked) to the library as one workspace
@@ -89,6 +91,17 @@ def cmd_engines(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_libraries(_args: argparse.Namespace) -> int:
+    import pymupdf
+
+    _, services = _services()
+    print(f"{'pymupdf':12} {'native':20} ready (PyMuPDF {pymupdf.VersionBind})")
+    for lib in services.text_libraries.values():
+        status = f"ready ({lib.label} {lib.version()})" if lib.available else lib.problem()
+        print(f"{lib.id:12} {lib.source_id:20} {status}")
+    return 0
+
+
 def _ocr_engine_arg(args: argparse.Namespace) -> str:
     """``--engine ocr:easyocr`` and ``--engine ocr --ocr-engine easyocr`` mean the same."""
     engine = args.engine[4:] if args.engine.startswith("ocr:") else args.ocr_engine
@@ -119,6 +132,11 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     for e in engines:
         problem = e.problem()
         print(f"     {'·' if problem else '✓'} {e.label} [{e.kind}]" + (f"  ({problem})" if problem else ""))
+    libs = services.text_libraries.values()
+    print(f"  PDF libraries  {sum(lib.available for lib in libs)} of {len(libs)} installed (optional; besides PyMuPDF)")
+    for lib in libs:
+        print(f"     {'✓' if lib.available else '·'} {lib.label}" + (f" {lib.version()}" if lib.available
+                                                                   else f"  ({lib.install_hint()})"))
     data = settings.data_dir.resolve()
     try:
         data.mkdir(parents=True, exist_ok=True)
@@ -199,8 +217,14 @@ async def _extract(args: argparse.Namespace) -> int:
     doc = _load_document(args.file)
     pages = parse_pages(args.pages, doc.meta.page_count)
     texts: dict[int, str] = {}
-    if args.engine == "native":
-        texts = {n: doc.native_text(n).text for n in pages}
+    data: dict[int, object] = {}  # structured extraction (--mode extract): parsed fields per page
+    if args.engine == "native" or args.engine.startswith("native:"):
+        library = args.engine[7:] or None if args.engine.startswith("native:") else None
+        lib = services.text_library(library)
+        if lib is not None and (problem := lib.problem()):
+            print(problem, file=sys.stderr)
+            return 2
+        texts = {n: services.native_layer(doc, n, library).text for n in pages}
     elif args.engine == "ocr" or args.engine.startswith("ocr:"):
         engine = services.ocr_engine(_ocr_engine_arg(args))
         if problem := engine.problem():
@@ -212,11 +236,17 @@ async def _extract(args: argparse.Namespace) -> int:
             print(f"  {engine.label} page {n + 1}/{doc.meta.page_count}: {(layer.elapsed_ms or 0) / 1000:.1f}s",
                   file=sys.stderr)
     else:
+        schema = args.schema or ""
+        if args.mode == "extract" and schema and not schema.lstrip().startswith("{") and Path(schema).is_file():
+            schema = Path(schema).read_text(encoding="utf-8")
+        elif args.mode != "extract" and schema:
+            print("--schema only applies with --mode extract", file=sys.stderr)
+            return 2
         spec = LLMSpec(args.provider, args.model, args.mode, preprocess=args.preprocess or "",
-                       pages_per_request=args.pages_per_request)
+                       pages_per_request=args.pages_per_request, extract_schema=schema)
         try:
             provider, model, _ = services.resolve_spec(spec)
-        except ValueError as exc:  # bad --pages-per-request or --preprocess
+        except ValueError as exc:  # bad --pages-per-request, --preprocess or --schema
             print(str(exc), file=sys.stderr)
             return 2
         if not provider.configured:
@@ -229,19 +259,26 @@ async def _extract(args: argparse.Namespace) -> int:
                 continue
             note = "cached" if res["cached"] else f"{res['latency_ms'] / 1000:.1f}s"
             print(f"  LLM page {n + 1}: {note}" + "".join(f"  ⚠ {w}" for w in res["warnings"]), file=sys.stderr)
+            for e in res.get("data_errors") or []:
+                print(f"    ⚠ {e['path']}: {e['message']}", file=sys.stderr)
             texts[n] = res["text"]
+            if "data" in res:
+                data[n] = res["data"]
 
     ordered = [(n, texts.get(n, "")) for n in pages]
     from .service import ocr_source_id
 
     source = (f"llm:{args.provider}" if args.engine == "llm" else
               ocr_source_id(_ocr_engine_arg(args)) if args.engine.startswith("ocr") else args.engine)
+    extra = (lambda n: {"data": data.get(n)}) if data else (lambda n: {})
     if args.format == "jsonl":
         out = "".join(json.dumps({"document_id": doc.meta.id, "filename": doc.meta.filename, "page": n + 1,
-                                  "source": source, "text": t}, ensure_ascii=False) + "\n" for n, t in ordered)
+                                  "source": source, "text": t, **extra(n)}, ensure_ascii=False) + "\n"
+                      for n, t in ordered)
     elif args.format == "json":
         out = json.dumps({"document": doc.meta.__dict__, "source": source,
-                          "pages": [{"page": n + 1, "text": t} for n, t in ordered]}, ensure_ascii=False, indent=1)
+                          "pages": [{"page": n + 1, "text": t, **extra(n)} for n, t in ordered]},
+                         ensure_ascii=False, indent=1)
     elif args.format == "md":
         out = f"# {doc.meta.filename}\n" + "".join(f"\n## Page {n + 1}\n\n{t.strip()}\n" for n, t in ordered)
     else:
@@ -313,15 +350,21 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("doctor", help="check the installation").set_defaults(func=cmd_doctor)
     sub.add_parser("providers", help="list LLM providers").set_defaults(func=cmd_providers)
     sub.add_parser("engines", help="list OCR engines").set_defaults(func=cmd_engines)
+    sub.add_parser("libraries", help="list PDF text libraries (native:<library> sources)").set_defaults(
+        func=cmd_libraries)
 
     e = sub.add_parser("extract", help="extract text from a PDF/image (whole document or pages)")
     e.add_argument("file", type=Path)
-    e.add_argument("--engine", default="llm", metavar="{native,ocr,ocr:<engine>,llm}",
-                   help="text source (default: llm)")
+    e.add_argument("--engine", default="llm", metavar="{native,native:<library>,ocr,ocr:<engine>,llm}",
+                   help="text source (default: llm); native:pypdf etc. read the text layer with another PDF "
+                        "library, see `pyocr libraries`")
     e.add_argument("--ocr-engine", default="tesseract", help="for --engine ocr; see `pyocr engines`")
     e.add_argument("-p", "--provider", default="anthropic", help="for --engine llm")
     e.add_argument("-m", "--model", default=None)
-    e.add_argument("--mode", default="verbatim", choices=["verbatim", "markdown"], help="LLM prompt")
+    e.add_argument("--mode", default="verbatim", choices=["verbatim", "markdown", "extract"],
+                   help="LLM prompt; 'extract' fills --schema with structured data (JSON) instead of transcribing")
+    e.add_argument("--schema", default=None, metavar="SCHEMA",
+                   help="for --mode extract: a preset (invoice, receipt, form), a JSON Schema file, or JSON text")
     e.add_argument("--pages-per-request", type=int, default=1, metavar="N",
                    help="send N pages to the LLM in one request (default 1); a separate source from N=1")
     e.add_argument("--pages", default=None, help="1-based ranges, e.g. 1-3,7 (default: all)")
@@ -361,8 +404,8 @@ def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     engine = getattr(args, "engine", None)
-    if engine and engine not in ("native", "ocr", "llm") and not engine.startswith("ocr:"):
-        parser.error(f"--engine must be native, ocr, ocr:<engine> or llm (got '{engine}')")
+    if engine and engine not in ("native", "ocr", "llm") and not engine.startswith(("ocr:", "native:")):
+        parser.error(f"--engine must be native, native:<library>, ocr, ocr:<engine> or llm (got '{engine}')")
     try:
         sys.exit(args.func(args))
     except (ValueError, FileNotFoundError, DocumentError, ProviderError) as exc:

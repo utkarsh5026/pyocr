@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import time
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -133,6 +136,46 @@ def test_llm_job_sources_compare_export(client, doc_id):
     lines = client.get(f"/api/documents/{doc_id}/export", params={"source": src, "fmt": "jsonl"}).text.splitlines()
     assert [json.loads(line)["page"] for line in lines] == [1, 2]
     assert "## Page 2" in client.get(f"/api/documents/{doc_id}/export", params={"source": src, "fmt": "md"}).text
+
+
+
+def test_export_all_sources(client, doc_id):
+    url = f"/api/documents/{doc_id}/export/all"
+    # before any extraction only the text layer (PyMuPDF + any installed PDF library) has pages
+    before = [s["id"] for s in client.get(url).json()["sources"]]
+    assert before[0] == "native" and all(s.startswith("native") for s in before)
+
+    wait_for_job(client, client.post(f"/api/documents/{doc_id}/jobs",
+                                     json={"kind": "llm", "llm": {"provider": "fake"}}).json()["id"])
+    r = client.get(url, params={"fmt": "json"})
+    assert r.status_code == 200 and 'filename="sample.all-sources.json"' in r.headers["content-disposition"]
+    data = r.json()
+    ids = [s["id"] for s in data["sources"]]
+    assert ids[:len(before)] == before and len(ids) == len(before) + 1 and ids[-1].startswith("llm:")
+    assert "ocr" not in ids  # nothing extracted with Tesseract, so it's left out
+    assert [p["page"] for p in data["pages"]] == [1, 2]
+    assert "lazzy" in data["pages"][0]["texts"][ids[-1]]
+    assert all("text" not in s and "pages" not in s for s in data["sources"])  # no UI bookkeeping
+
+    lines = [json.loads(line) for line in client.get(url, params={"fmt": "jsonl"}).text.splitlines()]
+    assert {(row["page"], row["source"]) for row in lines} == {(p, s) for p in (1, 2) for s in ids}
+
+    csv_text = client.get(url, params={"fmt": "csv"}).text
+    rows = list(csv.reader(io.StringIO(csv_text.lstrip("\ufeff"))))
+    assert rows[0][0] == "page" and len(rows[0]) == len(ids) + 1 and len(rows) == 3
+    assert "lazzy" in rows[1][-1]
+
+    md = client.get(url, params={"fmt": "md"}).text
+    assert "## Page 2" in md and "### Native text layer" in md
+
+    z = zipfile.ZipFile(io.BytesIO(client.get(url, params={"fmt": "zip"}).content))
+    names = set(z.namelist())
+    assert {"sample/all-sources.json", "sample/all-sources.csv", "sample/sources/native.txt",
+            "sample/sources/llm.md"} <= names
+    assert "lazzy" in z.read("sample/sources/llm.txt").decode()
+
+    assert client.get(url, params={"fmt": "pdf"}).status_code == 422
+    assert client.get("/api/documents/" + "0" * 32 + "/export/all").status_code == 404
 
 
 def test_job_validation(client, doc_id):
@@ -264,3 +307,17 @@ def test_llm_results_carry_cost(client, doc_id):
     r = client.post(f"/api/documents/{doc_id}/pages/0/llm", json={"provider": "fake"}).json()
     assert "cost" in r and r["cost"] is None  # the fake model has no catalog price
     assert client.get(f"/api/documents/{doc_id}/pages/0/llm").json()[0]["cost"] is None
+
+
+def test_upload_pickers_match_supported_extensions():
+    """Every file picker offers exactly what the server accepts (plus .zip), so no supported type is hidden."""
+    import re
+
+    from pyocr_toolkit.documents import SUPPORTED_EXTENSIONS
+
+    templates = Path(__file__).resolve().parent.parent / "src" / "pyocr_toolkit" / "templates"
+    for name in ("base.html", "home.html", "workspace_detail.html"):
+        lists = re.findall(r'accept="([^"]+)"', (templates / name).read_text(encoding="utf-8"))
+        assert lists, name
+        for accept in lists:
+            assert set(accept.split(",")) == SUPPORTED_EXTENSIONS | {".zip"}, name

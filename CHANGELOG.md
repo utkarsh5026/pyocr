@@ -30,6 +30,8 @@
   `/api/config`, and a per-page `data` object in JSON / JSONL exports of an extraction (one source, and
   *Export all* as `data: {source_id: fields}`). CLI:
   `pyocr extract --mode extract --schema invoice|receipt|form|<file.json>`.
+- The README and website now install from PyPI (`pipx install pyocr-toolkit`) instead of from GitHub.
+
 ## 0.5.0 - 2026-11-27
 
 - **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as

@@ -96,19 +96,20 @@ choco install tesseract                                 # Windows (or the UB Man
 **Option A: pipx** (recommended, installs it as an isolated command):
 
 ```bash
-pipx install git+https://github.com/utkarsh5026/pyocr
+pipx install pyocr-toolkit
 ```
 
 **Option B: pip** in a virtual environment:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install git+https://github.com/utkarsh5026/pyocr
+pip install pyocr-toolkit
 ```
 
 > [!NOTE]
-> The PyPI name is `pyocr-toolkit` (plain `pyocr` is a different, unrelated library). Once it's published to
-> PyPI, `pipx install pyocr-toolkit` will also work.
+> The PyPI name is `pyocr-toolkit` (plain `pyocr` is a different, unrelated library). Optional extras add more
+> engines, e.g. `pipx install "pyocr-toolkit[pdf,rapidocr]"`. To run the latest unreleased code, install from
+> GitHub instead: `pipx install git+https://github.com/utkarsh5026/pyocr`.
 
 **Option C: Docker** (Tesseract and several language packs included):
 

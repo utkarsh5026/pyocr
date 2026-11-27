@@ -301,10 +301,15 @@ def play_search(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
 
 
 def play_library(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
-    """The library, then a document's overview and its sources."""
+    """The library, then a document's overview and its sources, exported all at once."""
     page = tour.page
     tour.goto("/documents", hold=2.0)
     tour.click(page.locator("a", has_text="field-notes-scan.pdf").first, hold=2.4)
+    export_all = page.locator("summary", has_text="Export all")
+    # bring the sources table and the button into view, leaving room below it for the opened menu
+    top = page.evaluate("(el) => el.getBoundingClientRect().top", export_all.element_handle())
+    tour.scroll(max(0, int(top - (VIEWPORT["height"] - 300))), hold=1.4)
+    tour.click(export_all, hold=2.6)
 
 
 @dataclass

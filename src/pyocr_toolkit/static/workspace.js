@@ -494,16 +494,25 @@ async function runCompare() {
     reference: textRef(refV), hypothesis: textRef(hypV),
     ignore_case: $("#cmp-case").checked, ignore_punctuation: $("#cmp-punct").checked,
   });
-  renderMetrics($("#cmp-metrics"), res.metrics);
+  renderMetrics($("#cmp-metrics"), res.metrics, res);
   $("#cmp-legend").hidden = false;
   $("#cmp-diff").innerHTML = renderDiff(res.diff);
 }
 
-function renderMetrics(el, m) {
-  const metric = (k, v, cls = "") => `<div class="metric"><div class="v ${cls}">${v}</div><div class="k">${k}</div></div>`;
+function renderMetrics(el, m, extra = null) {
+  const metric = (k, v, cls = "", title = "") =>
+    `<div class="metric"${title ? ` title="${esc(title)}"` : ""}><div class="v ${cls}">${v}</div><div class="k">${k}</div></div>`;
+  const e = extra?.errors, n = extra?.numbers;
   el.innerHTML =
     metric("Char error rate", pct(m.cer), errorRateClass(m.cer)) +
     metric("Word error rate", pct(m.wer), errorRateClass(m.wer)) +
+    (m.wer_order_free != null ? metric("WER, any order", pct(m.wer_order_free), errorRateClass(m.wer_order_free),
+      "Words compared as a bag, so words read in a different order don't count") : "") +
+    (e ? metric("Misread / missed / added", `${fmtInt(e.misread)} / ${fmtInt(e.missed)} / ${fmtInt(e.added)}`, "",
+      "Words the candidate got wrong / left out / has that the reference doesn't") : "") +
+    (n?.total ? metric("Numbers exact", `${fmtInt(n.correct)} / ${fmtInt(n.total)}`,
+      n.correct === n.total ? "good" : "bad",
+      n.wrong.map((w) => `${w.ref} → ${w.hyp || "missing"}`).join("\n") || "Every amount, date and ID matches") : "") +
     metric("Char accuracy", pct(m.accuracy)) +
     metric("Ref / cand chars", `${fmtInt(m.reference_chars)} / ${fmtInt(m.hypothesis_chars)}`) +
     metric("Ref / cand words", `${fmtInt(m.reference_words)} / ${fmtInt(m.hypothesis_words)}`);

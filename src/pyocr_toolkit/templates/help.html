@@ -47,7 +47,8 @@
     pages go in each LLM request. Also lists every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
   <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text (pick the PDF library), OCR (pick the engine), LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
   <dt>Document → Full text</dt><dd>The whole document from one source, page by page, optionally next to the page images. Find-in-text, copy and download.</dd>
-  <dt>Document → Compare</dt><dd>Pick a reference (A) and a candidate (B). You get the whole-document error rates, a per-page CER chart (click a bar to open that page) and the selected page's text side by side, with words only in A and only in B highlighted. It opens on the worst page.</dd>
+  <dt>Document → Compare</dt><dd>Pick a reference (A) and a candidate (B). You get the whole-document error rates, the word errors split into misread / missed / added, how many numbers were read exactly, a per-page CER chart (click a bar to open that page) and the selected page's text side by side, with words only in A and only in B highlighted. Above the diff, a <a href="#error-kinds">breakdown</a> says what kind of mistakes the page has. It opens on the worst page.
+    Switch to <b>All sources</b> to vote three or more sources into a <a href="#consensus">consensus</a> instead.</dd>
   <dt><a href="/search">Search</a></dt><dd>Search every document in the library at once.</dd>
   <dt><a href="/jobs">Jobs</a></dt><dd>All background extractions with their progress, errors and token usage.</dd>
   <dt><a href="/providers">Providers</a></dt><dd>Which LLMs are configured, which settings are missing, a form to set keys and endpoints in the browser, and a <i>Test connection</i> button.</dd>
@@ -238,12 +239,94 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
   <li><b>WER</b> (word error rate) is harsher, because one wrong letter makes the whole word wrong. It is closer to what
     matters for search and for exact values such as invoice numbers or amounts.</li>
   <li>Both can be <b>over 100 %</b> when the candidate contains a lot of extra text.</li>
+  <li><b>WER in any order</b> (order-free WER) compares the two texts as bags of words, ignoring where each word is.
+    It counts <i>missing</i> words (the reference has more of them) and <i>extra</i> words (the candidate has more); a
+    misread word is one of each, so the fewest edits is the larger of the two counts, divided by the reference words.
+    It is never above WER. The gap between them is the cost of <b>reading order</b> alone: an engine that reads a
+    two-column page across the columns gets every word right and can still have a WER near 100 %, because WER
+    compares words in sequence. When most of a page's word error is reading order, the Compare page says so, and the
+    number check also counts the numbers that are present but at another position.</li>
   <li>The whole-document CER on the Compare page is <b>micro-averaged</b>: total edits divided by total reference
     characters. Long pages count more than short ones, which matches how much text is actually affected.</li>
 </ul>
 <p>Before scoring, whitespace is collapsed, because engines break lines differently and that is not a reading error.
   Ligatures such as <code>ﬁ</code> are normalised to <code>fi</code>, and words hyphenated across a line break are joined.
   Case and punctuation can optionally be ignored as well.</p>
+<h3 id="error-kinds">What kind of error? The breakdown</h3>
+<p>Two texts can have the same CER for very different reasons: one engine drops every umlaut, another misreads the
+  invoice total, a third adds a sentence that isn't on the page. So the Compare page also splits the errors up.</p>
+<ul>
+  <li><b>Misread / missed / added</b>: the word edits split into substitutions (B has a different word), deletions (B
+    left a word of A out) and insertions (B has words A doesn't). The three add up to the word edit distance behind
+    WER. Many <i>added</i> words and few misread ones points to invented text or scan noise, not to bad reading.</li>
+  <li><b>Kinds</b>: each wrong word is sorted into numbers, misread words, accents / ß, case, punctuation, split or
+    joined words (<code>recog nition</code>), missed, added, and <i>stray marks</i> (added or missed tokens with no
+    letter or digit, like <code>|</code> or <code>_</code>, which are specks on a scan). Hover a kind for examples.</li>
+  <li><b>Most common confusions</b>: the character mix-ups inside misread words, such as <code>0→O</code> or
+    <code>m→rn</code>. Over a whole document this is a fingerprint of the engine.</li>
+  <li><b>Numbers read exactly</b>: every token with a digit in it (amounts, dates, IDs, phone numbers) is checked on its
+    own, with case and punctuation never ignored, because <code>2.530,54</code> for <code>2,530.54</code> is a wrong
+    total even though only punctuation moved. A text can have a low CER and still get the one number that matters
+    wrong.</li>
+  <li><b>CER as differences are forgiven</b>: the page's CER recomputed with case, then punctuation, then accents
+    ignored, then with added text dropped. A big drop at one step tells you where most of the "errors" came from;
+    what's left at the end is real misreading. A step never goes up.</li>
+</ul>
+<h3 id="consensus">All sources: a consensus instead of a reference</h3>
+<p>Comparing two sources needs one of them to be right, and usually you don't know which. With three or more you don't
+  need to: different engines make different mistakes (Tesseract reads <code>0</code> as <code>O</code>, an LLM "fixes"
+  spelling), so where most of them agree on a word, that word is very likely what the page says.
+  On the Compare page, choose <b>All sources</b>, tick the sources that vote and press <i>Build consensus</i>.</p>
+<ol>
+  <li><b>Spine.</b> The source closest to all the others gives the word slots.</li>
+  <li><b>Align.</b> Every other source is lined up with it word by word (the same alignment as the diff). Words that
+    only some sources have get slots of their own; the others count as voting "no word here".</li>
+  <li><b>Vote.</b> Each slot takes the word most sources read. With <i>Ignore case</i> on, <code>Invoice</code> and
+    <code>INVOICE</code> are the same vote. A slot where no reading has more than half the votes is a <b>close
+    call</b>, marked in amber: that's where a person should look.</li>
+</ol>
+<p>You get each source's error rate against the consensus (with the misread / missed / added split and the number
+  check), a grid of every source on every page (click a cell to read it), the consensus text with each disputed word
+  showing its vote count and what the other sources read, and a matrix of how much each pair of sources agrees.</p>
+<ul>
+  <li><b>Pick independent readings.</b> Several PDF libraries reading the same text layer, or one model run twice with
+    different prompts, tend to make the <i>same</i> mistakes, and outvote the others for the wrong reason. By default
+    only the PyMuPDF text layer, OCR engines and LLM runs are ticked.</li>
+  <li><b>Three or more.</b> Two readings can't outvote each other: every difference is a tie, and the consensus simply
+    follows whichever source gave the word slots. The page warns you when that happens.</li>
+  <li>A source with no text on a page (the native layer of a scan, say) doesn't vote on that page.</li>
+</ul>
+<h3 id="review">Review &amp; correct: make your own ground truth</h3>
+<p>A consensus is a good guess, not the truth. To get the truth for a page, press <b>Review &amp; correct</b> on the
+  consensus page view. The page image appears next to the text; click any word (disputed ones are marked) to see it
+  highlighted on the image and every reading of it, with the sources behind each. Pick the right one, or type what the
+  page really says (leave the box empty for "no word here"). After each choice the next close call is selected.
+  <b>Save corrected text</b> stores the page as the <b>Corrected</b> source.</p>
+<ul>
+  <li>Corrected text is a source like the others: export it, read it on <i>Full text</i>, and in <b>Two sources</b>
+    mode it becomes the default reference, so every engine is scored against the truth instead of against another
+    engine.</li>
+  <li>It is saved per page in <code>corrected/&lt;page&gt;.json</code> in the document's folder. Saving again replaces
+    it; <i>Delete</i> removes it.</li>
+  <li>The highlight comes from word boxes, which native text and OCR have and LLMs don't. A word only an LLM read is
+    shown with a dashed box on the word before it.</li>
+</ul>
+<h3 id="leaderboard">Leaderboard: which source reads your documents best?</h3>
+<p>The <a href="/leaderboard">Leaderboard</a> ranks every source (each OCR engine, each LLM run, each PDF library)
+  across the whole library or one workspace (the workspace page links to its own). Each page is scored against the
+  best reference it has:</p>
+<ul>
+  <li><b>Corrected text</b>, where you reviewed the page: real accuracy.</li>
+  <li>Otherwise the <b>consensus</b> of three or more independent sources: agreement, not proof. A source the others
+    outvote scores badly even when it is right, so the page says when no reviewed page was available. Reviewing even a
+    few pages turns the ranking into a measure of accuracy.</li>
+  <li>Pages with neither are skipped. <i>Score against</i> can force one kind of reference.</li>
+</ul>
+<p>Each row shows CER and WER (micro-averaged: long pages count more), the misread / missed / added split, numbers read
+  exactly, how many pages it was scored on, and for LLM runs the cost per page at catalog list price and the model time
+  per page. Click a column to sort. A source scored on fewer pages than the others is marked: it may have run only on
+  easy pages. <i>Only pages every source has read</i> makes the comparison like for like. Structured-extraction runs
+  (JSON output) and corrected text itself are not ranked.</p>
 <p class="callout"><b>Disagreement is not the same as error.</b> "OCR vs LLM" tells you how much two engines disagree,
   not which one is right. For real ground truth, use a born-digital PDF: its native text is exact, so comparing OCR and
   each LLM against it shows how every engine performs on your kind of documents.</p>
@@ -343,12 +426,16 @@ GET  /api/jobs/{job_id}                          progress
 GET  /api/documents/{id}/sources                 what has been extracted
 GET  /api/documents/{id}/export?source=llm&amp;fmt=jsonl
 GET  /api/documents/{id}/export/all?fmt=json      (json, jsonl, csv, md, zip)
-GET  /api/documents/{id}/compare?a=llm&amp;b=ocr      per-page CER/WER
+GET  /api/documents/{id}/compare?a=llm&amp;b=ocr      per-page CER/WER, misread/missed/added, numbers
+GET  /api/documents/{id}/consensus?sources=native,ocr,llm:KEY   vote sources into a consensus, score each
+GET  /api/documents/{id}/pages/{n}/consensus?sources=…          one page, with the word-by-word alignment and word boxes
+PUT  /api/documents/{id}/pages/{n}/corrected     {"text": "…"} save a page's corrected text (GET reads it, DELETE removes it)
+GET  /api/leaderboard?workspace=ID&amp;reference=auto   rank every source across documents
 POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)</pre>
 
 <h2 id="data">Data and privacy</h2>
 <ul>
-  <li>Everything is stored under <code>DATA_DIR</code> (default <code>./data</code>): the original file, OCR results and LLM results as plain JSON. Workspaces are small JSON files in <code>workspaces/</code> that list document ids.</li>
+  <li>Everything is stored under <code>DATA_DIR</code> (default <code>./data</code>): the original file, OCR results, LLM results and corrected text as plain JSON. Workspaces are small JSON files in <code>workspaces/</code> that list document ids.</li>
   <li>A page image goes to an LLM provider <b>only</b> when you start a transcription for that page, and only to the provider you chose. The same goes for cloud OCR engines (Google Vision, Azure, Textract, Mistral). Native text, Tesseract and the local OCR engines never leave your machine.</li>
   <li>API keys are read on the server and are never sent to the browser.</li>
   <li>There is no login. Keep it on <code>127.0.0.1</code> (the default) or put it behind your own authentication before sharing it on a network.</li>

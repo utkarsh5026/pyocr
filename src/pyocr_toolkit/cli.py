@@ -307,16 +307,20 @@ async def _compare(args: argparse.Namespace) -> int:
     if problem:
         print(f"OCR columns skipped: {problem}", file=sys.stderr)
     print(f"OCR engine: {engine.label}", file=sys.stderr)
-    print(f"{'page':>5}  {'OCR CER':>8}  {'OCR WER':>8}  {'native CER':>10}")
+    print(f"{'page':>5}  {'OCR CER':>8}  {'OCR WER':>8}  {'OCR numbers':>11}  {'native CER':>10}")
     for n, res in zip(pages, llm):
         native = doc.native_text(n).text
-        ocr_cer = ocr_wer = "–"
+        ocr_cer = ocr_wer = ocr_num = "–"
         if not problem:
             layer = await asyncio.to_thread(services.run_ocr_page, doc, n, False, engine.id)
-            s = compare.score(res["text"], layer.text, opts)
+            ocr_text = layer.text
+            s = compare.score(res["text"], ocr_text, opts)
             ocr_cer, ocr_wer = f"{s['cer']:.1%}", f"{s['wer']:.1%}"
+            num = compare.check_numbers(res["text"], ocr_text, max_wrong=0)
+            if num["total"]:
+                ocr_num = f"{num['correct']}/{num['total']}"
         nat = f"{compare.score(res['text'], native, opts)['cer']:.1%}" if native.strip() else "no text"
-        print(f"{n + 1:>5}  {ocr_cer:>8}  {ocr_wer:>8}  {nat:>10}")
+        print(f"{n + 1:>5}  {ocr_cer:>8}  {ocr_wer:>8}  {ocr_num:>11}  {nat:>10}")
     print(f"\ndocument {doc.meta.id}: open http://127.0.0.1:8000/documents/{doc.meta.id}/compare for diffs",
           file=sys.stderr)
     return 0

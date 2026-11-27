@@ -66,11 +66,14 @@ Shared logic goes in `service.py`, not duplicated across API, web and CLI.
 - **Page numbers are 0-based** in Python and in `/api`. The UI and the CLI `--pages` (`"1-3,7"`, via
   `parse_pages`) are 1-based. Convert at the edge only.
 - **Source ids**: `native` (PyMuPDF), `native:<library>` (other PDF libraries, `pdftext.py`), `ocr`, `ocr:<engine>`,
-  `llm:<key>`, and `llm` (= latest LLM result per page). The LLM key comes from
+  `llm:<key>`, `llm` (= latest LLM result per page), and `corrected` (text a person confirmed on the Compare
+  page's Review panel: ground truth, not a reading, so it never votes in a consensus by default). The LLM key comes from
   `OpenDocument.llm_cache_key(provider_id, model, system_prompt)`, so it is the same on every page. Don't change
   how keys are derived without a migration story: it orphans every user's cached results.
 - **On-disk layout** (`data/documents/<32-hex id>/meta.json`, `source.<ext>`, `ocr/<page>.json`,
-  `llm/<page>/<key>.json`, `native/<library>/<page>.json`, plus `data/credentials.json` for settings saved on the Providers page) is user data.
+  `llm/<page>/<key>.json`, `native/<library>/<page>.json`, `corrected/<page>.json`, plus `data/credentials.json` for
+  settings saved on the Providers page) is user data. `corrected/` holds a person's work and can't be re-extracted:
+  write it atomically and never delete it as a side effect.
   Changes must stay readable for existing folders. `pages.json` (per-page facts) is derived: it is rebuilt when
   missing, damaged or from an older `_PAGE_STATS_VERSION`, so bump that constant when its fields change.
 - **PyMuPDF is not thread-safe.** Every access to an open `pymupdf.Document` goes through the per-document lock

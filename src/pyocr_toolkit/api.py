@@ -74,7 +74,7 @@ class SchemaCheckBody(BaseModel):
 
 
 class TextRef(BaseModel):
-    source: Literal["native", "ocr", "llm"]
+    source: Literal["native", "ocr", "llm", "corrected"]
     #: for ``llm``: cache key of a stored result (``None`` -> most recent one)
     key: str | None = None
     #: for ``ocr``: engine id (``None`` -> Tesseract)
@@ -89,6 +89,11 @@ class TextRef(BaseModel):
         if self.source == "ocr":
             return ocr_source_id(self.engine or DEFAULT_OCR_ENGINE)
         return f"llm:{self.key}" if self.source == "llm" and self.key else self.source
+
+
+class CorrectedBody(BaseModel):
+    text: str = Field(..., description="the page's text as a person confirmed it")
+    based_on: list[str] = Field(default_factory=list, description="source ids it was reviewed from")
 
 
 class CompareBody(BaseModel):
@@ -573,6 +578,9 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "reference": {"label": services.source_label(doc, body.reference.source_id), **body.reference.model_dump()},
             "hypothesis": {"label": services.source_label(doc, body.hypothesis.source_id), **body.hypothesis.model_dump()},
             "metrics": compare.score(ref_text, hyp_text, opts),
+            "errors": compare.error_breakdown(ref_text, hyp_text, opts),
+            "numbers": compare.check_numbers(ref_text, hyp_text),
+            "ladder": compare.cer_ladder(ref_text, hyp_text),
             "diff": compare.word_diff(ref_text, hyp_text, opts) if body.diff else None,
         }
 
@@ -584,10 +592,15 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
 
         ``overall`` is micro-averaged (total edits / total reference chars), so
         long pages weigh more than short ones - the honest whole-document number.
+        Each scored page also carries ``errors`` (misread / missed / added word
+        counts) and ``numbers`` (digit-bearing tokens read exactly); ``overall``
+        sums both.
         """
         doc = get_doc(doc_id)
         opts = compare.NormalizeOptions(ignore_case, ignore_punctuation)
-        rows, tot_cd, tot_rc, tot_wd, tot_rw = [], 0, 0, 0, 0
+        rows, tot_cd, tot_rc, tot_wd, tot_rw, tot_wf = [], 0, 0, 0, 0, 0
+        errors = {"misread": 0, "missed": 0, "added": 0}
+        numbers = {"total": 0, "correct": 0}
         for n in doc.iter_pages():
             ta, tb = services.page_text(doc, n, a), services.page_text(doc, n, b)
             if ta is None or tb is None:
@@ -596,7 +609,16 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             m = compare.score(ta, tb, opts)
             tot_cd += m["char_distance"]; tot_rc += m["reference_chars"]
             tot_wd += m["word_distance"]; tot_rw += m["reference_words"]
-            rows.append({"page": n, "metrics": m, "missing": []})
+            tot_wf += m["word_distance_order_free"]
+            br = compare.error_breakdown(ta, tb, opts, max_examples=0, max_confusions=0)
+            err = {k: br[k] for k in errors}
+            nums = compare.check_numbers(ta, tb, max_wrong=0)
+            num = {"total": nums["total"], "correct": nums["correct"]}
+            for k in errors:
+                errors[k] += err[k]
+            for k in numbers:
+                numbers[k] += num[k]
+            rows.append({"page": n, "metrics": m, "missing": [], "errors": err, "numbers": num})
         scored = [r for r in rows if r["metrics"]]
         overall = None
         if scored:
@@ -604,12 +626,192 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
                 "pages_scored": len(scored),
                 "cer": round(tot_cd / tot_rc, 4) if tot_rc else None,
                 "wer": round(tot_wd / tot_rw, 4) if tot_rw else None,
+                "wer_order_free": round(tot_wf / tot_rw, 4) if tot_rw else None,
                 "worst_page": max(scored, key=lambda r: r["metrics"]["cer"])["page"],
                 "pages_over_10pct": sum(r["metrics"]["cer"] > 0.10 for r in scored),
+                "pages_under_2pct": sum(r["metrics"]["cer"] <= 0.02 for r in scored),
+                "errors": errors,
+                "numbers": numbers,
             }
         return {"a": {"id": a, "label": services.source_label(doc, a)},
                 "b": {"id": b, "label": services.source_label(doc, b)},
                 "overall": overall, "pages": rows}
+
+    MAX_CONSENSUS_SOURCES = 8
+
+    def _consensus_sources(sources: str) -> list[str]:
+        ids = list(dict.fromkeys(x.strip() for x in sources.split(",") if x.strip()))
+        if len(ids) < 2:
+            raise DocumentError("pick at least two sources (three or more for a meaningful vote)")
+        if len(ids) > MAX_CONSENSUS_SOURCES:
+            raise DocumentError(f"pick at most {MAX_CONSENSUS_SOURCES} sources")
+        return ids
+
+    def _page_texts(doc: OpenDocument, page: int, ids: list[str]) -> dict[str, str]:
+        """Texts of the chosen sources on one page; a source with no text there doesn't vote."""
+        out = {}
+        for sid in ids:
+            text = services.page_text(doc, page, sid)
+            if text and text.strip():
+                out[sid] = text
+        return out
+
+    @api.get("/documents/{doc_id}/pages/{page}/consensus", tags=["compare"])
+    def consensus_page(doc_id: str, page: int,
+                       sources: str = Query(..., description="comma-separated source ids, 2-8"),
+                       ignore_case: bool = True, ignore_punctuation: bool = False):
+        """Vote the chosen sources into a consensus for one page and score each against it.
+
+        Sources with no text on the page are listed in ``missing`` and don't vote.
+        ``columns`` is the word-by-word alignment (one token per voting source,
+        in ``sources`` order).
+        """
+        doc = get_doc(doc_id)
+        if not 0 <= page < doc.meta.page_count:
+            raise DocumentError(f"page {page + 1} is out of range")
+        ids = _consensus_sources(sources)
+        texts = _page_texts(doc, page, ids)
+        missing = [sid for sid in ids if sid not in texts]
+        if len(texts) < 2:
+            raise DocumentError(f"page {page + 1} has text from {len(texts)} of the chosen sources; "
+                                "a consensus needs two or more. Extract the missing ones first.")
+        res = compare.consensus(texts, compare.NormalizeOptions(ignore_case, ignore_punctuation))
+        labels = {sid: services.source_label(doc, sid) for sid in ids}
+        _add_boxes(doc, page, res, texts)
+        info = doc.page_info(page)
+        corrected = doc.load_corrected(page)
+        return {"page": page, "labels": labels, "missing": missing,
+                "page_size": [info["width"], info["height"]],
+                "corrected": {"updated_at": corrected["updated_at"], "based_on": corrected.get("based_on", [])}
+                if corrected else None, **res}
+
+    def _add_boxes(doc: OpenDocument, page: int, res: dict, texts: dict[str, str]) -> None:
+        """Give each consensus column a word box (PDF points) to highlight on the page image.
+
+        Boxes come from the voting sources that have them (native text, OCR), preferring one
+        that voted for the winner. LLM text has no boxes; a word only an LLM read borrows the
+        box of the word before it (``box_approx``).
+        """
+        boxed: dict[str, list] = {}
+        for sid in res["sources"]:
+            layer = services.word_layer(doc, page, sid)
+            if layer and layer.words:
+                boxed[sid] = compare.map_word_boxes(texts[sid], [(w.text, w.rect) for w in layer.words])
+        prev = None
+        for col in res["columns"]:
+            order = [i for i in range(len(res["sources"])) if i not in col["dissent"]] + col["dissent"]
+            box = next((boxed[res["sources"][i]][col["pos"][i]] for i in order
+                        if res["sources"][i] in boxed and col["pos"][i] >= 0
+                        and boxed[res["sources"][i]][col["pos"][i]]), None)
+            col["box"], col["box_approx"] = (box, False) if box else (prev, prev is not None)
+            prev = box or prev
+
+    @api.get("/documents/{doc_id}/pages/{page}/corrected", tags=["compare"])
+    def get_corrected(doc_id: str, page: int):
+        """The page's corrected text (saved from the Review panel), with when and from which sources."""
+        record = get_doc(doc_id).load_corrected(page)
+        if not record:
+            raise HTTPException(404, f"page {page + 1} has no corrected text yet")
+        return record
+
+    @api.put("/documents/{doc_id}/pages/{page}/corrected", tags=["compare"])
+    def put_corrected(doc_id: str, page: int, body: CorrectedBody, request: Request):
+        """Save a person's verdict on what the page says. It becomes the ``corrected`` source."""
+        _require_same_origin(request)
+        doc = get_doc(doc_id)
+        if not 0 <= page < doc.meta.page_count:
+            raise DocumentError(f"page {page + 1} is out of range")
+        if not body.text.strip():
+            raise DocumentError("the corrected text is empty; to remove it, delete it instead")
+        return doc.save_corrected(page, body.text, body.based_on)
+
+    @api.delete("/documents/{doc_id}/pages/{page}/corrected", status_code=204, tags=["compare"])
+    def delete_corrected(doc_id: str, page: int):
+        if not get_doc(doc_id).delete_corrected(page):
+            raise HTTPException(404, f"page {page + 1} has no corrected text")
+
+    @api.get("/documents/{doc_id}/consensus", tags=["compare"])
+    def consensus_document(doc_id: str,
+                           sources: str = Query(..., description="comma-separated source ids, 2-8"),
+                           ignore_case: bool = True, ignore_punctuation: bool = False):
+        """Every page's consensus of the chosen sources, summed up per source.
+
+        ``overall[source]`` is micro-averaged over the pages that source voted on
+        (total edits / total consensus characters). ``matrix[a][b]`` is source
+        ``b`` scored against source ``a`` over pages where both have text.
+        Pages where fewer than two sources have text are not scored.
+        """
+        doc = get_doc(doc_id)
+        ids = _consensus_sources(sources)
+        opts = compare.NormalizeOptions(ignore_case, ignore_punctuation)
+        zero = {"char_distance": 0, "reference_chars": 0, "word_distance": 0, "reference_words": 0,
+                "word_distance_order_free": 0,
+                "misread": 0, "missed": 0, "added": 0, "numbers_total": 0, "numbers_correct": 0, "pages": 0}
+        tot = {sid: dict(zero) for sid in ids}
+        pair = {a: {b: [0, 0] for b in ids if b != a} for a in ids}
+        rows, counts = [], {"words": 0, "agree": 0, "majority": 0, "tie": 0}
+        for n in doc.iter_pages():
+            texts = _page_texts(doc, n, ids)
+            if len(texts) < 2:
+                rows.append({"page": n, "scored": False, "missing": [sid for sid in ids if sid not in texts]})
+                continue
+            res = compare.consensus(texts, opts)
+            for k in counts:
+                counts[k] += res["counts"][k]
+            cer = {}
+            for sid, v in res["per_source"].items():
+                t, sc = tot[sid], v["score"]
+                for k in ("char_distance", "reference_chars", "word_distance", "reference_words",
+                          "word_distance_order_free"):
+                    t[k] += sc[k]
+                for k in ("misread", "missed", "added"):
+                    t[k] += v["errors"][k]
+                t["numbers_total"] += v["numbers"]["total"]
+                t["numbers_correct"] += v["numbers"]["correct"]
+                t["pages"] += 1
+                cer[sid] = sc["cer"]
+            for a, row in res["matrix"].items():
+                for b, m in row.items():
+                    if m:
+                        pair[a][b][0] += m["char_distance"]
+                        pair[a][b][1] += m["reference_chars"]
+            rows.append({"page": n, "scored": True, "missing": [sid for sid in ids if sid not in texts],
+                         "pivot": res["pivot"], "counts": res["counts"], "cer": cer})
+
+        def rate(num: int, den: int) -> float | None:
+            return round(num / den, 4) if den else None
+
+        overall = {sid: {"pages": t["pages"], "cer": rate(t["char_distance"], t["reference_chars"]),
+                         "wer": rate(t["word_distance"], t["reference_words"]),
+                         "wer_order_free": rate(t["word_distance_order_free"], t["reference_words"]),
+                         "errors": {k: t[k] for k in ("misread", "missed", "added")},
+                         "numbers": {"total": t["numbers_total"], "correct": t["numbers_correct"]}}
+                   for sid, t in tot.items()}
+        matrix = {a: {b: (rate(*pair[a][b]) if b != a else None) for b in ids} for a in ids}
+        return {"sources": ids, "labels": {sid: services.source_label(doc, sid) for sid in ids},
+                "pages_scored": sum(r["scored"] for r in rows), "counts": counts,
+                "overall": overall, "matrix": matrix, "pages": rows}
+
+    @api.get("/leaderboard", tags=["compare"])
+    def leaderboard(workspace: str | None = Query(None, description="workspace id; empty = every document"),
+                    reference: Literal["auto", "corrected", "consensus"] = "auto", shared: bool = False,
+                    ignore_case: bool = True, ignore_punctuation: bool = False):
+        """Rank every source (OCR engines, LLM runs, PDF libraries) across documents.
+
+        Each page is scored against corrected text where a person reviewed it, else the
+        consensus of three or more independent sources (``reference`` picks). See
+        ``Services.leaderboard``.
+        """
+        ids = workspaces.get(workspace).doc_ids if workspace else [m.id for m in store.list()]
+        docs = []
+        for i in ids:
+            try:
+                docs.append(store.get(i))
+            except DocumentError:  # deleted since it was added to the workspace
+                continue
+        opts = compare.NormalizeOptions(ignore_case, ignore_punctuation)
+        res = services.leaderboard(docs, reference, shared, opts)
+        return {"workspace": workspace, **res}
 
     @api.get("/documents/{doc_id}/report", tags=["compare"])
     def report(doc_id: str, ignore_case: bool = True, ignore_punctuation: bool = False):

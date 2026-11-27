@@ -2,6 +2,50 @@
 
 ## Unreleased
 
+- **Compare explains its numbers.** A single CER can't tell a dropped umlaut from a wrong invoice total or an invented
+  sentence, so the Compare page now also shows:
+  - word errors split into **misread / missed / added** (they add up to the word edit distance behind WER), for the
+    whole document and per page;
+  - **numbers read exactly**: every token with a digit (amounts, dates, IDs) checked on its own, with the wrong ones
+    listed (`2,530.54 → 2.530,54`);
+  - each page's errors **by kind** (numbers, misread words, accents / ß, case, punctuation, split or joined words,
+    missed, added, stray scan marks) and the most common **character confusions** (`0→O`, `m→rn`);
+  - **CER as differences are forgiven**: the page's CER with case, punctuation and accents ignored and added text
+    dropped, step by step, so you can see how much of it is real misreading.
+  The page inspector's compare tab shows the misread / missed / added split and the number check too, and
+  `pyocr compare` prints an *OCR numbers* column. API: `errors`, `numbers` and `ladder` on
+  `POST /api/documents/{id}/pages/{n}/compare`; `errors` and `numbers` per page and in `overall` on
+  `GET /api/documents/{id}/compare`. Existing fields are unchanged.
+- **Compare all sources at once.** The Compare page has a new *All sources* mode: tick three or more sources and
+  they are voted word by word into a **consensus**, so no source has to be assumed right. Each source is scored
+  against the consensus (CER, WER, misread / missed / added, numbers), with a sources × pages grid, the consensus
+  text showing every disputed word with its vote count and what the other sources read (close calls, where no
+  reading has a majority, in amber; "only lines that disagree" hides the rest), a copy button, and a matrix of how
+  much each pair of sources agrees. Sources with no text on a page don't vote there, and pages with only two voters
+  are flagged, since two readings can't outvote each other. API: `GET /api/documents/{id}/consensus` and
+  `GET /api/documents/{id}/pages/{n}/consensus` (`?sources=` 2–8 ids).
+- **Review & correct.** On the consensus page view, *Review & correct* puts the page image next to the text: click a
+  word to see it highlighted on the image and every source's reading of it, pick the right one or type your own, and
+  the next close call is selected. *Save corrected text* stores the page as a new **Corrected** source (ground
+  truth): it can be exported, read on *Full text*, and becomes the default reference in two-source mode. Stored in
+  `corrected/<page>.json` in the document's folder; existing folders are unaffected. API:
+  `GET/PUT/DELETE /api/documents/{id}/pages/{n}/corrected`; the page consensus adds a word `box` per column (from
+  native text or OCR), `page_size` and the page's `corrected` state.
+- **WER in any order** (order-free WER): the texts compared as bags of words, so words read in a different order
+  (columns read across, table rows or side notes in another sequence) aren't counted as errors. The gap to WER is
+  the cost of reading order alone. Shown next to WER on the Compare page (whole document, per page, in the table),
+  in the inspector, on consensus source cards and as a Leaderboard column. When most of a page's word error is
+  reading order, the page's breakdown says so, and the number check reports how many numbers are present at another
+  position. API: `wer_order_free`, `word_distance_order_free`, `words_missing` and `words_extra` in every `metrics`
+  (`score()`); `wer_order_free` in document `overall`, consensus `overall` and leaderboard entries; `present` in
+  `numbers`.
+- **Leaderboard** (new page, `/leaderboard`, also linked from each workspace): every OCR engine, LLM run and PDF
+  library ranked across the whole library or one workspace, with CER and WER, misread / missed / added, numbers read
+  exactly, pages scored, and for LLM runs cost per page at catalog list price and model time per page; sortable, with
+  a sources × documents grid. Each page is scored against corrected text where it has it (real accuracy), otherwise
+  the consensus of three or more independent sources (agreement: the page says so); *Score against* can force either.
+  *Only pages every source has read* compares like for like. Extraction runs and corrected text aren't ranked.
+  API: `GET /api/leaderboard?workspace=&reference=auto|corrected|consensus&shared=`.
 - Faster Overview for large documents: per-page facts (size, text-layer characters, images) are computed once and
   saved to `pages.json` in the document folder, so later visits to a 2,000-page PDF's Overview drop from ~2.5 s
   to ~40 ms. Uploads build `pages.json` in the background right away, so the first visit is fast too, and page

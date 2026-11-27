@@ -177,6 +177,10 @@ def build_web(settings: Settings, store: DocumentStore, services: Services, jobs
         return page(request, "models.html", "models", providers=provs, provider=provider, q=q,
                     ratings=catalog.RATINGS, sources=catalog.SOURCES, updated=catalog.CATALOG_UPDATED)
 
+    @web.get("/leaderboard", response_class=HTMLResponse)
+    def leaderboard_view(request: Request, workspace: str = ""):
+        return page(request, "leaderboard.html", "leaderboard", spaces=workspaces.list(), workspace=workspace)
+
     @web.get("/help", response_class=HTMLResponse)
     def help_view(request: Request):
         return page(request, "help.html", "help")

@@ -6,15 +6,22 @@
 <div id="compare-root" data-doc-id="{{ doc.id }}" data-page-count="{{ doc.page_count }}">
   <div class="page-head">
     <div>
-      <h1>Compare two sources across the whole document</h1>
-      <p>The <b>reference</b> is the text you trust more; the <b>candidate</b> is the one being judged.</p>
+      <h1>Compare sources across the whole document</h1>
+      <p data-mode-only="pair">The <b>reference</b> is the text you trust more; the <b>candidate</b> is the one being judged.</p>
+      <p data-mode-only="all" hidden>No source is assumed to be right: the ones you pick are voted word by word into a
+        <b>consensus</b>, and each is scored against it.</p>
     </div>
-    <div class="row" style="margin:0">
+    <div class="row cmp-controls" style="margin:0">
+      <div class="seg" role="radiogroup" aria-label="Comparison mode">
+        <label><input type="radio" name="cmp-mode" value="pair" checked> Two sources</label>
+        <label><input type="radio" name="cmp-mode" value="all"> All sources</label>
+      </div>
       <label class="check"><input type="checkbox" id="opt-case" checked> Ignore case</label>
       <label class="check"><input type="checkbox" id="opt-punct"> Ignore punctuation</label>
     </div>
   </div>
 
+  <div id="pair-view">
   <div class="src-pick">
     <label class="src-card">
       <span class="src-letter a">A</span>
@@ -65,6 +72,7 @@
       </div>
       <a id="pg-open" class="btn small ghost" href="#">{{ icon('eye') }}Open in inspector</a>
     </div>
+    <div class="err-strip" id="pg-errors"></div>
     <div class="diff-cols">
       <div><div class="src-k">A · <span id="pg-a-label"></span></div><pre class="text" id="pg-a"></pre></div>
       <div><div class="src-k">B · <span id="pg-b-label"></span></div><pre class="text" id="pg-b"></pre></div>
@@ -74,11 +82,83 @@
   <details class="card table-details" id="cmp-table-wrap" hidden>
     <summary>{{ icon('text') }}All pages as a table</summary>
     <table class="table hover" id="cmp-table">
-      <thead><tr><th>Page</th><th>CER</th><th>WER</th><th>Ref chars</th><th>Cand chars</th><th></th></tr></thead>
+      <thead><tr><th>Page</th><th>CER</th><th>WER</th><th title="WER ignoring word order: reading-order differences don't count">Any order</th><th title="Words B got wrong">Misread</th><th title="Words in A that B left out">Missed</th><th title="Words B has that A doesn't">Added</th><th title="Tokens with a digit (amounts, dates, IDs) read exactly">Numbers</th><th>Ref chars</th><th>Cand chars</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </details>
   <p class="small muted" id="cmp-hint">Pages missing from either source are shown but not scored.</p>
+  </div>
+
+  <div id="all-view" hidden>
+    <section class="card all-pick">
+      <div class="section-head">
+        <h3 class="h-icon">{{ icon('layers') }}Sources that vote</h3>
+        <span class="small muted">Pick three or more that read the page independently. Several PDF libraries reading
+          the same text layer, or one model run twice, agree with each other for the wrong reason.</span>
+      </div>
+      <div class="chips" id="all-sources">
+        {% for s in sources if s.page_count %}
+        <label title="{{ s.label }}"><input type="checkbox" value="{{ s.id }}" data-kind="{{ s.kind }}"
+          {{ 'data-library' if s.id.startswith('native:') }}><span class="src-dot" data-src="{{ s.id }}"></span>{{ s.label }}
+          <span class="count">{{ s.page_count }}/{{ doc.page_count }}</span></label>
+        {% endfor %}
+      </div>
+      <div class="row all-run-row">
+        <button class="btn primary" id="all-run">{{ icon('diff') }}Build consensus</button>
+        <span class="small muted" id="all-pick-hint"></span>
+      </div>
+    </section>
+
+    <div id="all-overall" class="cons-banner" hidden></div>
+    <div id="all-cards" class="cons-cards"></div>
+
+    <section id="all-heat-card" class="card" hidden>
+      <div class="section-head">
+        <h3 class="h-icon">{{ icon('layers') }}Each source against the consensus, page by page</h3>
+        <span class="small muted">character error rate; click a cell to read that page</span>
+        <div class="spacer"></div>
+        <div class="legend-inline">
+          <span><i class="swatch good"></i>≤ 2%</span><span><i class="swatch warn"></i>≤ 10%</span>
+          <span><i class="swatch bad"></i>&gt; 10%</span><span><i class="swatch missing"></i>no text</span>
+        </div>
+      </div>
+      <div class="heat-wrap"><table class="heat" id="all-heat"></table></div>
+    </section>
+
+    <section id="all-page" class="card diff-card" hidden>
+      <div class="diff-head">
+        <button class="btn small ghost icon-only" id="cp-prev" title="Previous scored page" aria-label="Previous scored page">{{ icon('chevron-left') }}</button>
+        <b id="cp-title">Page –</b>
+        <button class="btn small ghost icon-only" id="cp-next" title="Next scored page" aria-label="Next scored page">{{ icon('chevron-right') }}</button>
+        <span id="cp-counts" class="small muted"></span>
+        <div class="spacer"></div>
+        <label class="check small"><input type="checkbox" id="cp-only"> Only lines where sources disagree</label>
+        <button class="btn small" id="cp-review" aria-pressed="false">{{ icon('pencil') }}Review &amp; correct</button>
+        <button class="btn small ghost" id="cp-copy">{{ icon('copy') }}Copy consensus</button>
+        <a id="cp-open" class="btn small ghost" href="#">{{ icon('eye') }}Open in inspector</a>
+      </div>
+      <div class="callout warn cons-warn" id="cp-warn" hidden></div>
+      <div class="cons-legend" id="cp-legend"></div>
+      <div class="cons-body" id="cp-body">
+        <div class="rv-page" id="rv-page" hidden>
+          <div class="rv-frame"><img id="rv-img" alt=""><div class="rv-hl" id="rv-hl" hidden></div></div>
+        </div>
+        <div class="cons-main">
+          <div class="rv-panel" id="rv-panel" hidden></div>
+          <div class="cons-text" id="cp-text"></div>
+          <div class="rv-save" id="rv-save" hidden></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="all-matrix-card" class="card" hidden>
+      <div class="section-head">
+        <h3 class="h-icon">{{ icon('swap') }}Who agrees with whom</h3>
+        <span class="small muted">character error rate of the column source scored against the row source, whole document</span>
+      </div>
+      <div class="heat-wrap"><table class="heat matrix" id="all-matrix"></table></div>
+    </section>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}<script src="/static/compare.js?v={{ version }}"></script>{% endblock %}

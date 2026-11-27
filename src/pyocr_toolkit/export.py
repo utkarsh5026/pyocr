@@ -30,7 +30,7 @@ MEDIA_TYPES = {"txt": "text/plain; charset=utf-8", "md": "text/markdown; charset
                "csv": "text/csv; charset=utf-8", "zip": "application/zip"}
 
 # Source fields worth keeping in an export; the rest (page lists, timestamps) is UI bookkeeping.
-_SOURCE_FIELDS = ("id", "kind", "label", "engine", "provider", "model", "prompt_mode", "preprocess",
+_SOURCE_FIELDS = ("id", "kind", "label", "engine", "provider", "model", "prompt_mode", "schema_label", "preprocess",
                   "pages_per_request", "page_count", "input_tokens", "output_tokens")
 
 
@@ -40,6 +40,8 @@ class SourceTexts:
 
     source: dict[str, Any]
     texts: list[str | None]
+    #: structured extraction: the parsed fields per page (``None`` for other sources)
+    data: list[Any] | None = None
 
     @property
     def id(self) -> str:
@@ -66,14 +68,21 @@ def file_tag(source: str) -> str:
 
 
 # --------------------------------------------------------------- one source
-def one_source(doc_meta: dict[str, Any], source: str, label: str, texts: list[str | None], fmt: str) -> str:
+def _with_data(data: list[Any] | None, i: int) -> dict[str, Any]:
+    """``{"data": ...}`` for a structured-extraction source (JSON / JSONL exports), else nothing."""
+    return {"data": data[i]} if data and any(d is not None for d in data) else {}
+
+
+def one_source(doc_meta: dict[str, Any], source: str, label: str, texts: list[str | None], fmt: str,
+               data: list[Any] | None = None) -> str:
+    """``data``: structured extraction's parsed fields per page; JSON and JSONL add them as ``data``."""
     if fmt == "json":
         return json.dumps({"document": doc_meta, "source": source, "source_label": label,
-                           "pages": [{"page": i + 1, "text": t, "extracted": t is not None}
+                           "pages": [{"page": i + 1, "text": t, "extracted": t is not None, **_with_data(data, i)}
                                      for i, t in enumerate(texts)]}, ensure_ascii=False)
     if fmt == "jsonl":
         return "".join(json.dumps({"document_id": doc_meta["id"], "filename": doc_meta["filename"], "page": i + 1,
-                                   "source": source, "text": t or ""}, ensure_ascii=False) + "\n"
+                                   "source": source, "text": t or "", **_with_data(data, i)}, ensure_ascii=False) + "\n"
                        for i, t in enumerate(texts))
     if fmt == "md":
         body = f"# {doc_meta['filename']}\n\n_Source: {label}_\n" + "".join(
@@ -88,13 +97,18 @@ def _source_info(s: SourceTexts) -> dict[str, Any]:
 
 
 def all_json(data: DocumentTexts) -> str:
-    """``{document, sources: [...], pages: [{page, texts: {source_id: text | null}}]}``."""
+    """``{document, sources: [...], pages: [{page, texts: {source_id: text | null}}]}``.
+
+    Structured-extraction sources also get ``data: {source_id: fields | null}`` per page.
+    """
+    structured = [s for s in data.sources if s.data is not None]
     return json.dumps({
         "pyocr_version": __version__,
         "exported_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "document": data.document,
         "sources": [_source_info(s) for s in data.sources],
-        "pages": [{"page": n + 1, "texts": {s.id: s.texts[n] for s in data.sources}}
+        "pages": [{"page": n + 1, "texts": {s.id: s.texts[n] for s in data.sources},
+                   **({"data": {s.id: s.data[n] for s in structured}} if structured else {})}
                   for n in range(data.page_count)],
     }, ensure_ascii=False, indent=2)
 
@@ -103,7 +117,7 @@ def all_jsonl(data: DocumentTexts) -> str:
     """One line per extracted (page, source) pair; pages a source never extracted are left out."""
     return "".join(
         json.dumps({"document_id": data.document["id"], "filename": data.document["filename"], "page": n + 1,
-                    "source": s.id, "source_label": s.label, "text": t}, ensure_ascii=False) + "\n"
+                    "source": s.id, "source_label": s.label, "text": t, **_with_data(s.data, n)}, ensure_ascii=False) + "\n"
         for n in range(data.page_count) for s in data.sources if (t := s.texts[n]) is not None)
 
 

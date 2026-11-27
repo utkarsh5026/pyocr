@@ -2,6 +2,34 @@
 
 ## Unreleased
 
+- **Structured data extraction**: a new prompt, *Structured data (fields → JSON)*, fills a JSON Schema from each page
+  instead of transcribing it. Built-in schemas for invoices, receipts and form fields, or your own JSON Schema
+  (checked as you type). Providers enforce the schema natively where they can (Claude structured outputs, OpenAI /
+  Azure strict `response_format`, Gemini `response_json_schema`); older Claude models and OpenAI-compatible servers
+  get it in the prompt, with a warning. Values are copied as printed, and fields that aren't on the page are `null`.
+  The LLM tab shows the result as a field table (fields found, line items, schema problems on their field) with the
+  raw JSON one click away. Every reply is parsed and validated against the schema; results store `data`,
+  `data_errors`, `fields_filled` and `fields_total` next to the text.
+- **Schema editor**: build your own schema field by field (name, type, hint for the model, required; tables and
+  groups nest) without writing JSON Schema, or edit it as JSON in an editor with colours, line numbers and the
+  error line marked. *Fix syntax* repairs quotes, unquoted keys, missing or trailing commas, unclosed brackets,
+  comments, Python `True`/`None` and type names such as `str` or `bool`. Each edit is checked: mistakes come with
+  suggestions ("did you mean 'properties'?"), and a note says whether the chosen provider and model enforce the
+  schema or only get it in the prompt. An example output, as the field table or as JSON, shows what a result will
+  look like before you pay for a run.
+- **Draft fields from plain words**: describe what to extract ("invoice number, date, every line item with its
+  amount") and the chosen model drafts the fields, optionally looking at the current page. The draft opens in the
+  field editor for review, and *Change my current fields* refines it step by step ("also add the due date"). One
+  paid call per draft (tokens and cost shown), through `LLM_CONCURRENCY`. API: `POST /api/extract/draft-schema`
+  (`description`, `provider`, `model`, optional `current_schema`, `doc_id` and `page`; same-origin only).
+- The schema is part of the LLM cache key, so each schema is its own source. Plain transcriptions keep their
+  existing keys, so cached results are unaffected.
+- API: `prompt_mode: "extract"` with `extract_schema` (a preset id or a JSON Schema) on
+  `POST /api/documents/{id}/pages/{n}/llm` and in job bodies, `POST /api/extract/check-schema` (validation notes,
+  example output, syntax error position and a repaired version; takes an optional `provider` and `model`), `extract_presets` in
+  `/api/config`, and a per-page `data` object in JSON / JSONL exports of an extraction (one source, and
+  *Export all* as `data: {source_id: fields}`). CLI:
+  `pyocr extract --mode extract --schema invoice|receipt|form|<file.json>`.
 ## 0.5.0 - 2026-11-27
 
 - **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as

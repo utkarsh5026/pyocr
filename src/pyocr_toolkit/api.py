@@ -6,6 +6,7 @@ http://127.0.0.1:8000. Interactive API docs live at ``/docs``.
 
 from __future__ import annotations
 
+import json
 import re
 import shutil
 from dataclasses import asdict
@@ -20,7 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import __version__, compare, export, search
+from . import __version__, compare, export, extract, search
 from .brands import brands_json
 from .config import Settings, get_settings
 from .documents import DEFAULT_OCR_ENGINE, DocumentError, DocumentStore, OCRUnavailableError, OpenDocument
@@ -44,11 +45,32 @@ class LLMRunBody(BaseModel):
     preprocess: str | None = Field(None, description="image preprocessing, e.g. 'gray;contrast=1.5' or a preset id")
     pages_per_request: int = Field(1, ge=1, le=MAX_PAGES_PER_REQUEST,
                                    description="pages sent together in one LLM request (1 = one page per request)")
+    extract_schema: str | dict | None = Field(
+        None, description="for prompt_mode 'extract': a preset id ('invoice', 'receipt', 'form') or a JSON Schema")
     force: bool = False
 
     def spec(self) -> LLMSpec:
+        schema = self.extract_schema
+        if isinstance(schema, dict):
+            schema = json.dumps(schema, ensure_ascii=False)
         return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt,
-                       preprocess=self.preprocess or "", pages_per_request=self.pages_per_request)
+                       preprocess=self.preprocess or "", pages_per_request=self.pages_per_request,
+                       extract_schema=schema or "")
+
+
+class DraftSchemaBody(BaseModel):
+    description: str = Field(..., max_length=4000, description="what to extract, in plain words")
+    provider: str
+    model: str | None = None
+    current_schema: str | None = Field(None, max_length=50_000, description="change this schema instead of starting over")
+    doc_id: str | None = Field(None, description="show the model a page of this document")
+    page: int = Field(0, ge=0, description="0-based page of doc_id")
+
+
+class SchemaCheckBody(BaseModel):
+    extract_schema: str | dict
+    provider: str | None = Field(None, description="add a note on how this provider/model handles the schema")
+    model: str | None = None
 
 
 class TextRef(BaseModel):
@@ -178,6 +200,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "llm_max_edge_px": settings.llm_max_edge_px,
             "ocr_dpi": settings.ocr_dpi,
             "preprocess_presets": presets_json(),
+            "extract_presets": extract.presets_json(),
         }
 
     @api.get("/models", tags=["models"])
@@ -346,6 +369,44 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
     def check_preprocess(spec: str = ""):
         """Validate and normalise a preprocessing spec (400 with a readable message if it's wrong)."""
         return parse_pre(spec).to_json()
+
+    @api.post("/extract/check-schema", tags=["llm"])
+    def check_schema(body: SchemaCheckBody):
+        """Check a structured-extraction schema as it's being written (always 200; see ``ok``).
+
+        Returns the normalized schema, an ``example`` of the output, ``notes``
+        (mistakes with suggestions, what the chosen provider does with the schema),
+        and for broken JSON the ``line``/``column`` plus a ``repaired`` version.
+        """
+        return checked_schema(body.extract_schema, body.provider, body.model)
+
+    def checked_schema(spec: str | dict, provider_id: str | None, model: str | None) -> dict:
+        result = extract.check(spec)
+        provider = providers.get(provider_id or "")
+        if provider is not None and result["ok"]:
+            level, message = provider.schema_support((model or provider.default_model or "").strip() or None)
+            result["notes"].insert(0, {"level": level, "path": "(provider)", "message": message})
+        return result
+
+    @api.post("/extract/draft-schema", tags=["llm"])
+    async def draft_schema(body: DraftSchemaBody, request: Request):
+        """Draft extraction fields from a plain-words description (a paid model call; not cached).
+
+        Returns the drafted JSON Schema, the model's ``notes``, tokens and cost, and
+        the same ``check`` the schema editor shows. Nothing is extracted until the
+        user runs the schema on pages.
+        """
+        _require_same_origin(request)  # it spends money: no cross-site triggering
+        doc = get_doc(body.doc_id) if body.doc_id else None
+        if doc is not None and body.page >= doc.meta.page_count:
+            raise DocumentError(f"page {body.page} out of range")
+        try:
+            draft = await services.draft_schema(body.provider, body.model, body.description, body.current_schema,
+                                                doc, body.page)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        draft["check"] = checked_schema(draft["schema"], body.provider, body.model)
+        return draft
 
     @api.get("/documents/{doc_id}/sources", tags=["text"])
     def sources(doc_id: str):
@@ -641,7 +702,8 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             source = f"llm:{key}"
         texts = [services.page_text(doc, n, source) for n in doc.iter_pages()]
         name = f"{_safe_stem(doc.meta.filename)}.{export.file_tag(source)}.{fmt}"
-        body = export.one_source(doc.meta.__dict__, source, services.source_label(doc, source), texts, fmt)
+        data = [services.page_data(doc, n, source) for n in doc.iter_pages()]  # structured extraction's fields
+        body = export.one_source(doc.meta.__dict__, source, services.source_label(doc, source), texts, fmt, data)
         return Response(body, media_type=export.MEDIA_TYPES[fmt],
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
 

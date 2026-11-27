@@ -139,6 +139,9 @@ class JobManager:
             if not provider.configured:
                 raise ValueError(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}")
             label = f"LLM · {provider.label} · {model} · {llm.prompt_mode}"
+            schema = self.services.resolve_schema(llm)
+            if schema:
+                label += f" ({schema.label})"
             pre = Preprocess.parse(llm.preprocess)
             if not pre.is_identity:
                 label += f" · image: {pre.describe()}"

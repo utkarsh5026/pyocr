@@ -15,6 +15,8 @@ class _OpenAIChatBase(Provider):
     #: OpenAI's newer models want ``max_completion_tokens``; many
     #: OpenAI-compatible servers only understand the older ``max_tokens``.
     token_param = "max_completion_tokens"
+    #: also spell the schema out in the prompt: servers that ignore ``response_format`` still get it
+    schema_in_prompt = False
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -29,6 +31,13 @@ class _OpenAIChatBase(Provider):
             self._client = self._make_client()
         return self._client
 
+    def schema_support(self, model: str | None) -> tuple[str, str]:
+        if self.schema_in_prompt:
+            return "warn", ("Depends on the server: it gets the schema as response_format and in the prompt. "
+                            "Check the fields, and pick a model that is good at JSON")
+        extra = " (the deployment's model and API version must support structured outputs)" if self.id == "azure_openai" else ""
+        return "ok", f"{model or self.label} enforces this schema (strict structured outputs){extra}"
+
     async def list_models(self) -> list[str] | None:
         try:
             return sorted([m.id async for m in self.client.models.list()])
@@ -42,14 +51,22 @@ class _OpenAIChatBase(Provider):
                 parts.append({"type": "text", "text": page.label})
             data_url = f"data:{page.mime_type};base64,{base64.b64encode(page.image).decode('ascii')}"
             parts.append({"type": "image_url", "image_url": {"url": data_url, "detail": "high"}})
+        extra: dict = {}
+        system = req.system_prompt
+        if req.output_schema is not None:
+            extra["response_format"] = {"type": "json_schema", "json_schema": {
+                "name": "page_data", "schema": req.output_schema, "strict": True}}
+            if self.schema_in_prompt:
+                system = req.system_with_schema()
         try:
             response = await self.client.chat.completions.create(
                 model=model,
                 messages=[
-                    {"role": "system", "content": req.system_prompt},
+                    {"role": "system", "content": system},
                     {"role": "user", "content": parts},
                 ],
                 **{self.token_param: req.max_output_tokens},
+                **extra,
             )
         except openai.AuthenticationError as exc:
             raise ProviderError(f"{self.label}: authentication failed - check the API key") from exc
@@ -164,6 +181,7 @@ class OpenAICompatibleProvider(_OpenAIChatBase):
         ("OPENAI_COMPATIBLE_API_KEY", False, "only if the server needs one (OpenRouter does)"),
     ]
     token_param = "max_tokens"
+    schema_in_prompt = True
 
     @property
     def default_model(self) -> str | None:

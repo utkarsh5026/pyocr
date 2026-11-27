@@ -218,8 +218,8 @@ def classify_substitution(ref: str, hyp: str) -> str:
 _MAX_BLOCK_CELLS = 10_000
 
 
-def _align_block(ref: list[str], hyp: list[str]) -> list[tuple[str, str, str]]:
-    """Re-align one run of differing words as ``(tag, ref_word, hyp_word)`` steps.
+def _align_block_idx(ref: list[str], hyp: list[str]) -> list[tuple[str, int, int]]:
+    """Re-align one run of differing words as ``(tag, ref_index, hyp_index)`` steps (-1 = none).
 
     Plain Levenshtein only counts edits, so when every word in a run differs
     many alignments tie and it may pair "INVOICE" with "Muller". This one still
@@ -231,8 +231,8 @@ def _align_block(ref: list[str], hyp: list[str]) -> list[tuple[str, str, str]]:
     n, m = len(ref), len(hyp)
     if n * m > _MAX_BLOCK_CELLS:
         k = min(n, m)
-        return ([("replace", ref[i], hyp[i]) for i in range(k)] + [("delete", r, "") for r in ref[k:]]
-                + [("insert", "", h) for h in hyp[k:]])
+        return ([("replace", i, i) for i in range(k)] + [("delete", i, -1) for i in range(k, n)]
+                + [("insert", -1, j) for j in range(k, m)])
     inf = (float("inf"), float("inf"))
     cost = [[inf] * (m + 1) for _ in range(n + 1)]
     cost[0] = [(j, float(j)) for j in range(m + 1)]
@@ -244,7 +244,7 @@ def _align_block(ref: list[str], hyp: list[str]) -> list[tuple[str, str, str]]:
             diag = (e, w) if r == h else (e + 1, w + 1 + Levenshtein.normalized_distance(r, h))
             up, left = cost[i - 1][j], cost[i][j - 1]
             cost[i][j] = min(diag, (up[0] + 1, up[1] + 1), (left[0] + 1, left[1] + 1))
-    steps: list[tuple[str, str, str]] = []
+    steps: list[tuple[str, int, int]] = []
     i, j = n, m
     while i or j:
         if i and j:
@@ -252,16 +252,21 @@ def _align_block(ref: list[str], hyp: list[str]) -> list[tuple[str, str, str]]:
             e, w = cost[i - 1][j - 1]
             diag = (e, w) if r == h else (e + 1, w + 1 + Levenshtein.normalized_distance(r, h))
             if cost[i][j] == diag:
-                steps.append(("equal" if r == h else "replace", r, h))
+                steps.append(("equal" if r == h else "replace", i - 1, j - 1))
                 i, j = i - 1, j - 1
                 continue
         if i and cost[i][j] == (cost[i - 1][j][0] + 1, cost[i - 1][j][1] + 1):
-            steps.append(("delete", ref[i - 1], ""))
+            steps.append(("delete", i - 1, -1))
             i -= 1
         else:
-            steps.append(("insert", "", hyp[j - 1]))
+            steps.append(("insert", -1, j - 1))
             j -= 1
     return steps[::-1]
+
+
+def _align_block(ref: list[str], hyp: list[str]) -> list[tuple[str, str, str]]:
+    """:func:`_align_block_idx` with the words themselves (``""`` for the missing side)."""
+    return [(tag, ref[i] if i >= 0 else "", hyp[j] if j >= 0 else "") for tag, i, j in _align_block_idx(ref, hyp)]
 
 
 def _merge_spacing(steps: list[tuple[str, str, str]]) -> list[tuple[str, str, str]]:
@@ -430,3 +435,146 @@ def cer_ladder(reference: str, hypothesis: str) -> list[dict]:
     dropped = score(ref, _drop_added(ref, hyp))["cer"]
     out.append({"step": "added", "label": "Drop added text", "cer": min(dropped, out[-1]["cer"])})
     return out
+
+
+# ---------------------------------------------------------------- consensus
+def _words_with_breaks(text: str) -> tuple[list[str], dict[int, int]]:
+    """Words as :func:`normalize` would split them, plus where lines end.
+
+    ``breaks[i]`` is 1 when word ``i`` ends a line and 2 when it ends a
+    paragraph, so a consensus can be laid out like the page it came from.
+    """
+    text = unicodedata.normalize("NFKC", text)
+    text = re.sub(r"(\w)-\n(\w)", r"\1\2", text)
+    words: list[str] = []
+    breaks: dict[int, int] = {}
+    blank = False
+    for line in text.splitlines():
+        tokens = line.split()
+        if not tokens:
+            blank = True
+            continue
+        if blank and words:
+            breaks[len(words) - 1] = 2
+        blank = False
+        words.extend(tokens)
+        breaks[len(words) - 1] = 1
+    if words:
+        breaks.pop(len(words) - 1, None)
+    return words, breaks
+
+
+def consensus(texts: dict[str, str], opts: NormalizeOptions | None = None) -> dict:
+    """Vote several transcriptions of one page into a consensus, word by word.
+
+    No source is assumed to be right. Different engines make different
+    mistakes (Tesseract reads 0 as O, an LLM "fixes" spelling), so where most
+    of them agree on a word, that word is very likely what the page says.
+
+    1. **Spine**: the source with the smallest total word distance to all the
+       others; its words give the slots.
+    2. **Align** every other source to the spine (the diff's word alignment,
+       refined so similar-looking words pair up). Words a source has that the
+       spine doesn't open extra slots after the spine word they follow.
+    3. **Vote** per slot. Words are compared with ``opts`` (so with
+       ignore-case, ``Invoice`` and ``INVOICE`` are the same vote); an empty
+       cell is a vote for "no word here". Ties go to the spine.
+
+    Returns the consensus ``text``, the aligned ``columns`` (each with every
+    source's token, the ``winner``, its ``votes``, the ``dissent`` (indexes of
+    sources that voted otherwise) and a ``status``: ``agree``
+    = all sources, ``majority`` = more than half, ``tie`` = no majority, a
+    close call for a person), ``counts`` of each status, and per source its
+    ``score``, ``errors`` and ``numbers`` against the consensus, plus a
+    ``matrix`` of every source scored against every other (row = reference).
+    """
+    opts = opts or NormalizeOptions()
+    ids = list(texts)
+    if len(ids) < 2:
+        raise ValueError("a consensus needs at least two sources")
+    parsed = {sid: _words_with_breaks(texts[sid]) for sid in ids}
+    words = {sid: parsed[sid][0] for sid in ids}
+    keys = {sid: [_key(w, opts) for w in words[sid]] for sid in ids}
+
+    def total_distance(sid: str) -> int:
+        return sum(Levenshtein.distance(keys[sid], keys[o]) for o in ids if o != sid)
+
+    pivot = min(ids, key=total_distance)
+    pw, pk = words[pivot], keys[pivot]
+    n = len(pw)
+    at: dict[str, list[str]] = {}
+    ins: dict[str, dict[int, list[str]]] = {}
+    for sid in ids:
+        if sid == pivot:
+            at[sid], ins[sid] = list(pw), {}
+            continue
+        sw, sk = words[sid], keys[sid]
+        cells, extra = [""] * n, {}
+        for op in Levenshtein.opcodes(pk, sk):
+            if op.tag == "equal":
+                for k in range(op.src_end - op.src_start):
+                    cells[op.src_start + k] = sw[op.dest_start + k]
+        for ops, rk, hk in _blocks(pk, sk):
+            a0, b0 = ops[0].src_start, ops[0].dest_start
+            last = a0 - 1  # spine slot that inserted words follow
+            for tag, i, j in _align_block_idx(rk, hk):
+                if tag == "insert":
+                    extra.setdefault(last, []).append(sw[b0 + j])
+                    continue
+                last = a0 + i
+                cells[a0 + i] = sw[b0 + j] if tag != "delete" else ""
+        at[sid], ins[sid] = cells, extra
+
+    def column(tokens: list[str], spine_token: str, br: int) -> dict:
+        tally: dict[str, list[int]] = {}
+        for idx, tok in enumerate(tokens):
+            tally.setdefault(_key(tok, opts) if tok else "", []).append(idx)
+        best = max(len(v) for v in tally.values())
+        top = [k for k, v in tally.items() if len(v) == best]
+        spine_key = _key(spine_token, opts) if spine_token else ""
+        win_key = spine_key if spine_key in top else top[0]
+        voters = tally[win_key]
+        pidx = ids.index(pivot)
+        winner = tokens[pidx] if pidx in voters else tokens[voters[0]]
+        status = "agree" if best == len(ids) else "majority" if best * 2 > len(ids) else "tie"
+        dissent = [i for i in range(len(tokens)) if i not in voters]
+        return {"tokens": tokens, "winner": winner, "votes": best, "status": status, "dissent": dissent, "br": br}
+
+    breaks = parsed[pivot][1]
+    columns: list[dict] = []
+    for i in range(-1, n):
+        group: list[dict] = []
+        if i >= 0:
+            group.append(column([at[sid][i] for sid in ids], pw[i], 0))
+        width = max((len(ins[sid].get(i, [])) for sid in ids), default=0)
+        for k in range(width):
+            toks = [(ins[sid].get(i, [])[k] if k < len(ins[sid].get(i, [])) else "") for sid in ids]
+            group.append(column(toks, "", 0))
+        if group and i >= 0:
+            group[-1]["br"] = breaks.get(i, 0)
+        columns.extend(group)
+
+    parts: list[str] = []
+    for col in columns:
+        if col["winner"]:
+            parts.append(col["winner"])
+            parts.append({0: " ", 1: "\n", 2: "\n\n"}[col["br"]])
+        elif col["br"] and parts:
+            parts[-1] = {1: "\n", 2: "\n\n"}[col["br"]]
+    text = "".join(parts).strip()
+
+    counts = {"words": sum(bool(c["winner"]) for c in columns), "agree": 0, "majority": 0, "tie": 0}
+    for c in columns:
+        counts[c["status"]] += 1
+    per_source = {}
+    for sid in ids:
+        sc = score(text, texts[sid], opts)
+        br = error_breakdown(text, texts[sid], opts, max_examples=0, max_confusions=0)
+        num = check_numbers(text, texts[sid], max_wrong=10)
+        per_source[sid] = {"score": sc, "errors": {k: br[k] for k in ("misread", "missed", "added")},
+                           "kinds": br["kinds"], "numbers": num}
+    matrix = {a: {b: (None if a == b else {k: v for k, v in score(texts[a], texts[b], opts).items()
+                                           if k in ("cer", "wer", "char_distance", "reference_chars")})
+                  for b in ids} for a in ids}
+    return {"sources": ids, "pivot": pivot, "text": text, "columns": columns, "counts": counts,
+            "per_source": per_source, "matrix": matrix}

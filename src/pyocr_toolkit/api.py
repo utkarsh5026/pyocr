@@ -567,6 +567,107 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
                 "b": {"id": b, "label": services.source_label(doc, b)},
                 "overall": overall, "pages": rows}
 
+    MAX_CONSENSUS_SOURCES = 8
+
+    def _consensus_sources(sources: str) -> list[str]:
+        ids = list(dict.fromkeys(x.strip() for x in sources.split(",") if x.strip()))
+        if len(ids) < 2:
+            raise DocumentError("pick at least two sources (three or more for a meaningful vote)")
+        if len(ids) > MAX_CONSENSUS_SOURCES:
+            raise DocumentError(f"pick at most {MAX_CONSENSUS_SOURCES} sources")
+        return ids
+
+    def _page_texts(doc: OpenDocument, page: int, ids: list[str]) -> dict[str, str]:
+        """Texts of the chosen sources on one page; a source with no text there doesn't vote."""
+        out = {}
+        for sid in ids:
+            text = services.page_text(doc, page, sid)
+            if text and text.strip():
+                out[sid] = text
+        return out
+
+    @api.get("/documents/{doc_id}/pages/{page}/consensus", tags=["compare"])
+    def consensus_page(doc_id: str, page: int,
+                       sources: str = Query(..., description="comma-separated source ids, 2-8"),
+                       ignore_case: bool = True, ignore_punctuation: bool = False):
+        """Vote the chosen sources into a consensus for one page and score each against it.
+
+        Sources with no text on the page are listed in ``missing`` and don't vote.
+        ``columns`` is the word-by-word alignment (one token per voting source,
+        in ``sources`` order).
+        """
+        doc = get_doc(doc_id)
+        if not 0 <= page < doc.meta.page_count:
+            raise DocumentError(f"page {page + 1} is out of range")
+        ids = _consensus_sources(sources)
+        texts = _page_texts(doc, page, ids)
+        missing = [sid for sid in ids if sid not in texts]
+        if len(texts) < 2:
+            raise DocumentError(f"page {page + 1} has text from {len(texts)} of the chosen sources; "
+                                "a consensus needs two or more. Extract the missing ones first.")
+        res = compare.consensus(texts, compare.NormalizeOptions(ignore_case, ignore_punctuation))
+        labels = {sid: services.source_label(doc, sid) for sid in ids}
+        return {"page": page, "labels": labels, "missing": missing, **res}
+
+    @api.get("/documents/{doc_id}/consensus", tags=["compare"])
+    def consensus_document(doc_id: str,
+                           sources: str = Query(..., description="comma-separated source ids, 2-8"),
+                           ignore_case: bool = True, ignore_punctuation: bool = False):
+        """Every page's consensus of the chosen sources, summed up per source.
+
+        ``overall[source]`` is micro-averaged over the pages that source voted on
+        (total edits / total consensus characters). ``matrix[a][b]`` is source
+        ``b`` scored against source ``a`` over pages where both have text.
+        Pages where fewer than two sources have text are not scored.
+        """
+        doc = get_doc(doc_id)
+        ids = _consensus_sources(sources)
+        opts = compare.NormalizeOptions(ignore_case, ignore_punctuation)
+        zero = {"char_distance": 0, "reference_chars": 0, "word_distance": 0, "reference_words": 0,
+                "misread": 0, "missed": 0, "added": 0, "numbers_total": 0, "numbers_correct": 0, "pages": 0}
+        tot = {sid: dict(zero) for sid in ids}
+        pair = {a: {b: [0, 0] for b in ids if b != a} for a in ids}
+        rows, counts = [], {"words": 0, "agree": 0, "majority": 0, "tie": 0}
+        for n in doc.iter_pages():
+            texts = _page_texts(doc, n, ids)
+            if len(texts) < 2:
+                rows.append({"page": n, "scored": False, "missing": [sid for sid in ids if sid not in texts]})
+                continue
+            res = compare.consensus(texts, opts)
+            for k in counts:
+                counts[k] += res["counts"][k]
+            cer = {}
+            for sid, v in res["per_source"].items():
+                t, sc = tot[sid], v["score"]
+                for k in ("char_distance", "reference_chars", "word_distance", "reference_words"):
+                    t[k] += sc[k]
+                for k in ("misread", "missed", "added"):
+                    t[k] += v["errors"][k]
+                t["numbers_total"] += v["numbers"]["total"]
+                t["numbers_correct"] += v["numbers"]["correct"]
+                t["pages"] += 1
+                cer[sid] = sc["cer"]
+            for a, row in res["matrix"].items():
+                for b, m in row.items():
+                    if m:
+                        pair[a][b][0] += m["char_distance"]
+                        pair[a][b][1] += m["reference_chars"]
+            rows.append({"page": n, "scored": True, "missing": [sid for sid in ids if sid not in texts],
+                         "pivot": res["pivot"], "counts": res["counts"], "cer": cer})
+
+        def rate(num: int, den: int) -> float | None:
+            return round(num / den, 4) if den else None
+
+        overall = {sid: {"pages": t["pages"], "cer": rate(t["char_distance"], t["reference_chars"]),
+                         "wer": rate(t["word_distance"], t["reference_words"]),
+                         "errors": {k: t[k] for k in ("misread", "missed", "added")},
+                         "numbers": {"total": t["numbers_total"], "correct": t["numbers_correct"]}}
+                   for sid, t in tot.items()}
+        matrix = {a: {b: (rate(*pair[a][b]) if b != a else None) for b in ids} for a in ids}
+        return {"sources": ids, "labels": {sid: services.source_label(doc, sid) for sid in ids},
+                "pages_scored": sum(r["scored"] for r in rows), "counts": counts,
+                "overall": overall, "matrix": matrix, "pages": rows}
+
     @api.get("/documents/{doc_id}/report", tags=["compare"])
     def report(doc_id: str, ignore_case: bool = True, ignore_punctuation: bool = False):
         """Per-page overview against the most recent LLM transcription of each page."""

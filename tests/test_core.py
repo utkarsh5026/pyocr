@@ -115,6 +115,39 @@ def test_cer_ladder_explains_the_gap():
     assert ladder[0]["cer"] > 0.3 and ladder[-1]["cer"] == 0  # all of it was added text
 
 
+def test_consensus_votes_word_by_word():
+    texts = {
+        "ocr": "INVOICE 2O24\nBill to Muller GmbH",
+        "a": "INVOICE 2024\nBill to Müller GmbH",
+        "b": "Invoice 2024\nBill to Müller GmbH",
+        "c": "INVOICE 2024\nBill to Müller GmbH. Call us anytime!",
+    }
+    res = compare.consensus(texts, compare.NormalizeOptions())
+    assert res["text"] == "INVOICE 2024\nBill to Müller GmbH"  # each odd one out loses, lines kept
+    assert res["counts"] == {"words": 6, "agree": 2, "majority": 7, "tie": 0}
+    # words only "c" has get slots of their own, which the other three vote empty
+    added = [c for c in res["columns"] if not c["winner"]]
+    assert [c["tokens"] for c in added] == [["", "", "", w] for w in ("Call", "us", "anytime!")]
+    assert res["per_source"]["c"]["errors"]["added"] == 3
+    assert res["per_source"]["ocr"]["numbers"]["correct"] == 0
+    # with ignore-case, "Invoice" and "INVOICE" are the same vote
+    res = compare.consensus(texts, compare.NormalizeOptions(ignore_case=True))
+    assert res["columns"][0]["status"] == "agree"
+
+
+def test_consensus_tie_goes_to_the_spine():
+    res = compare.consensus({"a": "Rheinstraße 12", "b": "Rheinstrasse 12", "c": "Rheinstraße 12",
+                             "d": "Rheinstrafse 12"})
+    first = res["columns"][0]
+    assert first["status"] == "tie" and first["votes"] == 2 and first["winner"] == "Rheinstraße"
+    assert res["counts"]["tie"] == 1
+
+
+def test_consensus_needs_two_sources():
+    with pytest.raises(ValueError):
+        compare.consensus({"a": "x"})
+
+
 # ---------------------------------------------------------------- search
 def _words(*texts):
     return [Word(i * 10, 0, i * 10 + 8, 10, t, 0, 0) for i, t in enumerate(texts)]

@@ -65,7 +65,7 @@ def test_html_pages_render(client, doc_id):
         (f"/documents/{doc_id}/pages/1", 'data-page="0"'),
         (f"/documents/{doc_id}/pages/99", 'data-page="1"'),  # clamped to the last page
         (f"/documents/{doc_id}/text", "source-select"),
-        (f"/documents/{doc_id}/compare", "Compare two sources"),
+        (f"/documents/{doc_id}/compare", "Compare sources across"),
         ("/search?q=fox", "Search all documents"),
         ("/jobs", "Extraction jobs"),
         ("/providers", "ANTHROPIC_API_KEY"),

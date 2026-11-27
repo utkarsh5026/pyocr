@@ -17,6 +17,7 @@ class FakeProvider(Provider):
 
     def __init__(self):
         self.calls = []
+        self.typo = ("lazy", "lazzy")  # tests can change which word the fake misreads
 
     @property
     def default_model(self):
@@ -28,7 +29,7 @@ class FakeProvider(Provider):
     async def _transcribe(self, req, model):
         self.calls.append(req)
         # pretend the LLM read the page perfectly except for one typo
-        return TranscriptionResult(text=TEXT_PAGE.replace("lazy", "lazzy"), provider=self.id,
+        return TranscriptionResult(text=TEXT_PAGE.replace(*self.typo), provider=self.id,
                                    model=model, latency_ms=0, input_tokens=10, output_tokens=20)
 
 
@@ -133,3 +134,37 @@ def test_ocr_and_search_boxes(client, doc_id):
     res = client.get(f"/api/documents/{doc_id}/search", params={"q": "receipt", "sources": "ocr"}).json()
     assert res["pages"][0]["page"] == 1 and res["pages"][0]["hits"][0]["boxes"]
     assert res["pages_without_ocr"] == 1
+
+
+def test_consensus_outvotes_each_sources_own_mistake(client, doc_id):
+    url = f"/api/documents/{doc_id}/pages/0/llm"
+    k1 = client.post(url, json={"provider": "fake"}).json()["key"]  # reads "lazzy"
+    client.fake.typo = ("quick", "quack")
+    k2 = client.post(url, json={"provider": "fake", "prompt_mode": "custom", "custom_prompt": "Read it"}).json()["key"]
+    ids = f"native,llm:{k1},llm:{k2}"
+
+    res = client.get(f"/api/documents/{doc_id}/pages/0/consensus", params={"sources": ids}).json()
+    # every source has one typo, and each typo is outvoted 2 to 1
+    assert "lazy dog" in res["text"] and "quick brown" in res["text"]
+    assert res["text"].splitlines()[0] == "Invoice 2024-117"  # line structure kept
+    assert res["counts"]["tie"] == 0 and res["counts"]["majority"] == 2
+    assert res["per_source"]["native"]["score"]["cer"] == 0
+    assert res["per_source"][f"llm:{k1}"]["errors"] == {"misread": 1, "missed": 0, "added": 0}
+    lazy = next(c for c in res["columns"] if c["winner"] == "lazy")
+    assert lazy["votes"] == 2 and sorted(lazy["tokens"]) == ["lazy", "lazy", "lazzy"]
+    assert res["matrix"]["native"]["native"] is None and res["matrix"]["native"][f"llm:{k1}"]["cer"] > 0
+
+    doc = client.get(f"/api/documents/{doc_id}/consensus", params={"sources": ids}).json()
+    assert doc["pages_scored"] == 1  # page 2 is a scan with no LLM run: no source has text there
+    assert doc["pages"][1] == {"page": 1, "scored": False, "missing": ["native", f"llm:{k1}", f"llm:{k2}"]}
+    assert doc["overall"]["native"]["cer"] == 0 and doc["overall"][f"llm:{k2}"]["cer"] > 0
+    assert doc["matrix"][f"llm:{k1}"][f"llm:{k2}"] > 0
+
+
+def test_consensus_errors(client, doc_id):
+    url = f"/api/documents/{doc_id}/pages/0/consensus"
+    assert client.get(url, params={"sources": "native"}).status_code == 400
+    assert client.get(url, params={"sources": ",".join(f"llm:{i}" for i in range(9))}).status_code == 400
+    r = client.get(url, params={"sources": "native,llm"})  # no LLM text yet: only one source votes
+    assert r.status_code == 400 and "two or more" in r.json()["detail"]
+    assert client.get(f"/api/documents/{doc_id}/pages/99/consensus", params={"sources": "native,llm"}).status_code == 400

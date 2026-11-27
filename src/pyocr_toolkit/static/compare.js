@@ -202,12 +202,233 @@ cRoot.addEventListener("click", guard(async (e) => {
 $("#pg-prev").addEventListener("click", guard(() => step(-1)));
 $("#pg-next").addEventListener("click", guard(() => step(1)));
 $("#run").addEventListener("click", guard(run));
-$$("#opt-case, #opt-punct").forEach((i) => i.addEventListener("change", () => cmp.a && guard(run)()));
 $("#swap").addEventListener("click", () => {
   const a = $("#src-a").value;
   $("#src-a").value = $("#src-b").value;
   $("#src-b").value = a;
   if (cmp.a) guard(run)();
 });
+
+// ==================================================================== all sources
+// Several sources voted word by word into a consensus (compare.consensus on the
+// server); each source is scored against it. No source is assumed to be right.
+const PALETTE = ["#2563eb", "#d97706", "#7c3aed", "#0891b2", "#db2777", "#65a30d", "#64748b", "#dc2626"];
+const MAX_SOURCES = 8;
+const all = { ids: [], doc: null, page: null, pageRes: null };
+const chipIds = $$("#all-sources input").map((i) => i.value);
+const srcColor = (id) => PALETTE[Math.max(0, chipIds.indexOf(id)) % PALETTE.length];
+const srcLabel = (id) => all.doc?.labels[id] || all.pageRes?.labels[id] || id;
+const dot = (id) => `<i class="src-dot" style="background:${srcColor(id)}"></i>`;
+const optsQS = () => ({ ignore_case: $("#opt-case").checked, ignore_punctuation: $("#opt-punct").checked });
+const pickedIds = () => $$("#all-sources input:checked").map((i) => i.value);
+const currentMode = () => $('input[name="cmp-mode"]:checked').value;
+$$("#all-sources .src-dot").forEach((d) => (d.style.background = srcColor(d.dataset.src)));
+
+function pickAllDefaults() {
+  const fromUrl = (new URLSearchParams(location.search).get("s") || "").split(",").filter((v) => chipIds.includes(v));
+  // One vote per independent reading: the PyMuPDF text layer, every OCR engine and every LLM run.
+  // Extra PDF libraries read the same text layer, so they are left out unless picked.
+  const inputs = $$("#all-sources input");
+  const defaults = inputs.filter((i) => !("library" in i.dataset)).map((i) => i.value).slice(0, MAX_SOURCES);
+  const want = new Set(fromUrl.length ? fromUrl : defaults);
+  inputs.forEach((i) => (i.checked = want.has(i.value)));
+  updatePickHint();
+}
+
+function updatePickHint() {
+  const n = pickedIds().length;
+  $("#all-pick-hint").textContent = n > MAX_SOURCES ? `${n} picked: at most ${MAX_SOURCES}`
+    : n < 2 ? "Pick at least two."
+    : n === 2 ? "2 picked: two sources can only show where they differ, not who is right. Pick a third to vote."
+    : `${n} picked`;
+  $("#all-run").disabled = n < 2 || n > MAX_SOURCES;
+}
+
+function setMode(mode, go = true) {
+  $(`input[name="cmp-mode"][value="${mode}"]`).checked = true;
+  $("#pair-view").hidden = mode !== "pair";
+  $("#all-view").hidden = mode !== "all";
+  $$("[data-mode-only]").forEach((el) => (el.hidden = el.dataset.modeOnly !== mode));
+  if (!go) return;
+  if (mode === "all" && !all.doc && pickedIds().length >= 2) guard(runAll)();
+  if (mode === "pair") {
+    if (cmp.a) history.replaceState(null, "", `?a=${encodeURIComponent(cmp.a)}&b=${encodeURIComponent(cmp.b)}`);
+    else if ($("#src-a").value !== $("#src-b").value) guard(run)();
+  }
+}
+
+async function runAll() {
+  const ids = pickedIds();
+  if (ids.length < 2 || ids.length > MAX_SOURCES) { toast(`Pick between 2 and ${MAX_SOURCES} sources.`, true); return; }
+  all.ids = ids;
+  history.replaceState(null, "", `?mode=all&s=${encodeURIComponent(ids.join(","))}`);
+  const res = await api(`/api/documents/${DOC_ID}/consensus?${new URLSearchParams({ sources: ids.join(","), ...optsQS() })}`);
+  all.doc = res;
+  renderAllOverall(res);
+  renderCards(res);
+  renderHeat(res);
+  renderMatrix(res);
+  const scored = res.pages.filter((p) => p.scored);
+  if (!scored.length) { $("#all-page").hidden = true; return; }
+  const fromHash = +(location.hash.match(/^#p(\d+)$/)?.[1] || 0) - 1;
+  const keep = [all.page, fromHash].find((n) => scored.some((r) => r.page === n));
+  // open on the page with the most close calls, then the most disagreement
+  const busiest = scored.reduce((a, b) =>
+    (b.counts.tie * 1e6 + b.counts.majority > a.counts.tie * 1e6 + a.counts.majority ? b : a)).page;
+  await showConsPage(keep ?? busiest);
+}
+
+function renderAllOverall(res) {
+  const el = $("#all-overall");
+  el.hidden = false;
+  if (!res.pages_scored) {
+    el.innerHTML = '<div class="callout warn">No page has text from two or more of these sources yet. Extract them first on the Overview page.</div>';
+    return;
+  }
+  const c = res.counts;
+  const twoOnly = res.pages.filter((p) => p.scored && res.sources.length - p.missing.length === 2).length;
+  el.innerHTML = `
+    <div class="cons-stat"><span class="k">Consensus</span><b>${fmtInt(c.words)}</b><span class="small muted">words on ${plural(res.pages_scored, "page")}</span></div>
+    <div class="cons-stat"><b>${fmtInt(c.agree)}</b><span class="small muted">words every source agrees on</span></div>
+    <div class="cons-stat"><b>${fmtInt(c.majority)}</b><span class="small muted">differences settled by majority</span></div>
+    <div class="cons-stat"><b class="${c.tie ? "warn" : ""}">${fmtInt(c.tie)}</b><span class="small muted">close calls: no majority</span></div>` +
+    (twoOnly ? `<div class="callout warn"><span>${plural(twoOnly, "page")} had text from only two of these sources. Two
+      readings can't outvote each other: every difference there is a tie, settled by whichever source gave the word
+      slots. Add a third source on those pages for a real vote.</span></div>` : "");
+}
+
+function renderCards(res) {
+  const rows = res.sources.map((id) => ({ id, ...res.overall[id] })).filter((r) => r.pages);
+  rows.sort((a, b) => a.cer - b.cer);
+  $("#all-cards").innerHTML = rows.map((r, i) => `
+    <article class="cons-card">
+      <div class="cons-card-head">${dot(r.id)}<b title="${esc(srcLabel(r.id))}">${esc(srcLabel(r.id))}</b></div>
+      <div class="cons-card-v"><span class="v ${errorRateClass(r.cer)}">${pct(r.cer)}</span>
+        <span class="small muted">CER · WER ${pct(r.wer)}</span>
+        ${i === 0 && rows.length > 2 ? '<span class="badge ok">closest to consensus</span>' : ""}</div>
+      <div>${stackBar(r.errors)}</div>
+      <div class="cons-card-foot"><span>${errorTriple(r.errors)} <span class="muted">words</span></span>
+        <span class="${numbersClass(r.numbers)}" title="numbers read exactly">${r.numbers.total ? `${r.numbers.correct}/${r.numbers.total} numbers` : "no numbers"}</span></div>
+      <div class="small muted">voted on ${r.pages} of ${res.pages_scored} scored ${r.pages === 1 ? "page" : "pages"}</div>
+    </article>`).join("");
+}
+
+function renderHeat(res) {
+  const pages = res.pages;
+  const head = `<thead><tr><th></th>${pages.map((p) => `<th scope="col">${p.page + 1}</th>`).join("")}</tr></thead>`;
+  const body = res.sources.map((id) => `<tr><th scope="row" title="${esc(srcLabel(id))}">${dot(id)}<span>${esc(srcLabel(id))}</span></th>${
+    pages.map((p) => {
+      const cer = p.scored ? p.cer[id] : undefined;
+      if (cer === undefined) return `<td><span class="cell missing" title="Page ${p.page + 1}: no text"></span></td>`;
+      return `<td><button class="cell ${errorRateClass(cer)}" data-cgoto="${p.page}"
+        title="Page ${p.page + 1}: ${esc(srcLabel(id))}, CER ${pct(cer)}" aria-label="Page ${p.page + 1}, ${esc(srcLabel(id))}: ${pct(cer)}"></button></td>`;
+    }).join("")}</tr>`).join("");
+  $("#all-heat").innerHTML = head + `<tbody>${body}</tbody>`;
+  $("#all-heat-card").hidden = !res.pages_scored;
+}
+
+function renderMatrix(res) {
+  const ids = res.sources.filter((id) => res.overall[id].pages);
+  const head = `<thead><tr><th></th>${ids.map((id) => `<th scope="col" title="${esc(srcLabel(id))}">${dot(id)}</th>`).join("")}</tr></thead>`;
+  const body = ids.map((a) => `<tr><th scope="row" title="${esc(srcLabel(a))}">${dot(a)}<span>${esc(srcLabel(a))}</span></th>${
+    ids.map((b) => {
+      const v = res.matrix[a][b];
+      if (a === b) return '<td class="diag">·</td>';
+      return v == null ? '<td class="muted">–</td>'
+        : `<td class="m ${errorRateClass(v)}" title="${esc(srcLabel(b))} scored against ${esc(srcLabel(a))}">${pct(v)}</td>`;
+    }).join("")}</tr>`).join("");
+  $("#all-matrix").innerHTML = head + `<tbody>${body}</tbody>`;
+  $("#all-matrix-card").hidden = ids.length < 2;
+}
+
+async function showConsPage(n) {
+  const res = await api(`/api/documents/${DOC_ID}/pages/${n}/consensus?${new URLSearchParams({ sources: all.ids.join(","), ...optsQS() })}`);
+  all.page = n;
+  all.pageRes = res;
+  history.replaceState(null, "", `${location.search}#p${n + 1}`);
+  $("#cp-title").textContent = `Page ${n + 1}`;
+  const c = res.counts;
+  $("#cp-counts").innerHTML = `${c.tie ? `<b class="warn">${plural(c.tie, "close call")}</b> · ` : ""}${plural(c.majority, "difference")} settled by majority` +
+    (res.missing.length ? ` · no text here from ${res.missing.map((id) => esc(srcLabel(id))).join(", ")}` : "");
+  $("#cp-legend").innerHTML = res.sources.map((id) => {
+    const sc = res.per_source[id].score;
+    return `<span class="cons-legend-item" title="${esc(srcLabel(id))}${id === res.pivot ? " (its words gave the slots)" : ""}">
+      ${dot(id)}<span class="lbl">${esc(srcLabel(id))}</span><b class="${errorRateClass(sc.cer)}">${pct(sc.cer)}</b></span>`;
+  }).join("");
+  const warn = $("#cp-warn");
+  warn.hidden = res.sources.length > 2;
+  if (!warn.hidden) {
+    warn.innerHTML = `<span>Only two sources have text on this page, so there is no majority: wherever they differ, the
+      consensus follows <b>${esc(srcLabel(res.pivot))}</b>, and its score here says nothing. Add a third source for a real vote.</span>`;
+  }
+  $("#cp-open").href = `/documents/${DOC_ID}/pages/${n + 1}`;
+  renderConsText();
+  $$("#all-heat [data-cgoto]").forEach((b) => b.classList.toggle("selected", +b.dataset.cgoto === n));
+  const scored = all.doc.pages.filter((p) => p.scored).map((p) => p.page);
+  $("#cp-prev").disabled = scored[0] === n;
+  $("#cp-next").disabled = scored[scored.length - 1] === n;
+  $("#all-page").hidden = false;
+}
+
+/** The consensus as text, laid out in the spine's lines. Agreed words are plain;
+ *  a disputed word shows the winner with its vote count and, under it, what
+ *  each dissenting source read instead. */
+function renderConsText() {
+  const res = all.pageRes;
+  if (!res) return;
+  const only = $("#cp-only").checked;
+  const n = res.sources.length;
+  const colHtml = (c) => {
+    if (c.status === "agree") return `<span class="cw">${esc(c.winner)}</span>`;
+    const alts = c.dissent.map((i) => `<span class="cw-alt" title="${esc(srcLabel(res.sources[i]))}">${dot(res.sources[i])}${
+      c.tokens[i] ? esc(c.tokens[i]) : '<span class="muted">∅</span>'}</span>`).join("");
+    const label = c.status === "tie" ? "close call, no majority" : "settled by majority";
+    return `<span class="cw stack ${c.status}${c.winner ? "" : " dropped"}" title="${c.votes} of ${n} sources agree (${label})">
+      <span class="cw-win">${c.winner ? esc(c.winner) : "∅"}<small>${c.votes}/${n}</small></span>${alts}</span>`;
+  };
+  const lines = [];
+  let cur = [];
+  for (const c of res.columns) {
+    cur.push(c);
+    if (c.br) { lines.push({ cols: cur, br: c.br }); cur = []; }
+  }
+  if (cur.length) lines.push({ cols: cur, br: 0 });
+  const out = [];
+  let hidden = 0;
+  const flush = () => {
+    if (hidden) out.push(`<div class="cons-skip">${plural(hidden, "line")} where every source agrees</div>`);
+    hidden = 0;
+  };
+  for (const ln of lines) {
+    if (only && ln.cols.every((c) => c.status === "agree")) { hidden++; continue; }
+    flush();
+    out.push(`<div class="cons-line${ln.br === 2 ? " para" : ""}">${ln.cols.map(colHtml).join("")}</div>`);
+  }
+  flush();
+  $("#cp-text").innerHTML = out.join("") || '<p class="muted">Every source agrees on this page.</p>';
+}
+
+function stepCons(dir) {
+  const scored = all.doc.pages.filter((p) => p.scored).map((p) => p.page);
+  const i = scored.indexOf(all.page) + dir;
+  if (i >= 0 && i < scored.length) return showConsPage(scored[i]);
+}
+
+$("#all-heat").addEventListener("click", guard(async (e) => {
+  const el = e.target.closest("[data-cgoto]");
+  if (el) await showConsPage(+el.dataset.cgoto);
+}));
+$("#all-sources").addEventListener("change", updatePickHint);
+$("#all-run").addEventListener("click", guard(runAll));
+$("#cp-only").addEventListener("change", renderConsText);
+$("#cp-prev").addEventListener("click", guard(() => stepCons(-1)));
+$("#cp-next").addEventListener("click", guard(() => stepCons(1)));
+$("#cp-copy").addEventListener("click", () => all.pageRes && copyText(all.pageRes.text));
+$$('input[name="cmp-mode"]').forEach((r) => r.addEventListener("change", () => setMode(currentMode())));
+$$("#opt-case, #opt-punct").forEach((i) => i.addEventListener("change", () => {
+  if (currentMode() === "all") { if (all.doc) guard(runAll)(); } else if (cmp.a) guard(run)();
+}));
+
 pickDefaults();
-if ($("#src-a").value !== $("#src-b").value) guard(run)();
+pickAllDefaults();
+setMode(new URLSearchParams(location.search).get("mode") === "all" ? "all" : "pair");

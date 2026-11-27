@@ -16,6 +16,14 @@
   `pyocr compare` prints an *OCR numbers* column. API: `errors`, `numbers` and `ladder` on
   `POST /api/documents/{id}/pages/{n}/compare`; `errors` and `numbers` per page and in `overall` on
   `GET /api/documents/{id}/compare`. Existing fields are unchanged.
+- **Compare all sources at once.** The Compare page has a new *All sources* mode: tick three or more sources and
+  they are voted word by word into a **consensus**, so no source has to be assumed right. Each source is scored
+  against the consensus (CER, WER, misread / missed / added, numbers), with a sources × pages grid, the consensus
+  text showing every disputed word with its vote count and what the other sources read (close calls, where no
+  reading has a majority, in amber; "only lines that disagree" hides the rest), a copy button, and a matrix of how
+  much each pair of sources agrees. Sources with no text on a page don't vote there, and pages with only two voters
+  are flagged, since two readings can't outvote each other. API: `GET /api/documents/{id}/consensus` and
+  `GET /api/documents/{id}/pages/{n}/consensus` (`?sources=` 2–8 ids).
 - **Other PDF libraries.** Besides PyMuPDF, the text layer can be read with pypdf, pdfplumber, pdfminer.six and
   pypdfium2 (optional: `pip install "pyocr-toolkit[pdf]"`). Each installed library is its own source
   (`native:<library>`; `native` stays PyMuPDF) that can be compared and exported. The page inspector's Native tab

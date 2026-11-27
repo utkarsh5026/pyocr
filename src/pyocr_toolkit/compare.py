@@ -33,6 +33,17 @@ top of the rates this module also reports:
   forgiven (case, punctuation, accents, added text). What is left at the end
   is real misreading; the steps show where the rest came from.
 
+Word order is a separate question from reading. WER aligns the two word
+sequences in order, so an engine that reads a two-column page across the
+columns instead of down them gets every word right and still scores badly:
+a moved run of words can only be explained as deletions in one place and
+insertions in another. **Order-free WER** compares the texts as bags of
+words instead: ``missing`` words (the reference has more of them) and
+``extra`` words (the candidate has more). A misread word is one of each, a
+substitution, so the fewest edits with word order free is
+``max(missing, extra)``, and order-free WER = that / reference words. It is
+never above WER; the difference is the cost of reading order alone.
+
 Whitespace is collapsed before scoring because OCR engines and LLMs disagree
 wildly on line breaks and spacing, which says nothing about whether the
 characters were *read* correctly. Optional flags also ignore case and
@@ -44,6 +55,7 @@ from __future__ import annotations
 import re
 import string
 import unicodedata
+from collections import Counter
 from dataclasses import dataclass
 
 from rapidfuzz.distance import Levenshtein
@@ -87,19 +99,37 @@ def score(reference: str, hypothesis: str, opts: NormalizeOptions | None = None)
     ref_words, hyp_words = ref.split(), hyp.split()
     char_dist = Levenshtein.distance(ref, hyp)
     word_dist = Levenshtein.distance(ref_words, hyp_words)
+    free = order_free_words(ref_words, hyp_words)
     cer = char_dist / len(ref) if ref else (0.0 if not hyp else 1.0)
     wer = word_dist / len(ref_words) if ref_words else (0.0 if not hyp_words else 1.0)
+    wer_free = free["distance"] / len(ref_words) if ref_words else (0.0 if not hyp_words else 1.0)
     return {
         "cer": round(cer, 4),
         "wer": round(wer, 4),
+        "wer_order_free": round(min(wer, wer_free), 4),
         "accuracy": round(max(0.0, 1.0 - cer), 4),
         "char_distance": char_dist,
         "word_distance": word_dist,
+        "word_distance_order_free": min(word_dist, free["distance"]),
+        "words_missing": free["missing"],
+        "words_extra": free["extra"],
         "reference_chars": len(ref),
         "hypothesis_chars": len(hyp),
         "reference_words": len(ref_words),
         "hypothesis_words": len(hyp_words),
     }
+
+
+def order_free_words(ref_words: list[str], hyp_words: list[str]) -> dict:
+    """Compare two word lists as bags, ignoring order (see the module docstring).
+
+    ``missing`` = reference words the hypothesis has fewer of, ``extra`` = the
+    reverse; ``distance`` = ``max(missing, extra)``, the fewest word edits when
+    words may move freely (a substitution pairs one missing with one extra).
+    """
+    ref, hyp = Counter(ref_words), Counter(hyp_words)
+    missing, extra = sum((ref - hyp).values()), sum((hyp - ref).values())
+    return {"missing": missing, "extra": extra, "distance": max(missing, extra)}
 
 
 def _tokens(text: str) -> list[str]:
@@ -383,7 +413,10 @@ def check_numbers(reference: str, hypothesis: str, max_wrong: int = 50) -> dict:
     numbers that difference is the whole point. Only punctuation at the edges of
     a token (``(12)``, ``00.``, ``€386.50``) is dropped. ``wrong`` pairs each
     misread number with what the candidate wrote (``""`` = missing). ``extra``
-    counts numbers that appear only in the candidate.
+    counts numbers that appear only in the candidate. ``present`` counts the
+    reference's numbers found anywhere in the candidate, ignoring position: when
+    it is well above ``correct``, the numbers were read but end up elsewhere
+    (lines or table rows in another order), not misread.
     """
     ref = [_number_key(t) for t in normalize(reference).split()]
     hyp = [_number_key(t) for t in normalize(hypothesis).split()]
@@ -401,7 +434,9 @@ def check_numbers(reference: str, hypothesis: str, max_wrong: int = 50) -> dict:
                 correct += bool(_DIGIT_RE.search(r))
             elif _DIGIT_RE.search(r) and len(wrong) < max_wrong:
                 wrong.append({"ref": r, "hyp": h})
-    return {"total": total, "correct": correct, "wrong": wrong, "extra": extra}
+    nums = Counter(t for t in ref if _DIGIT_RE.search(t))
+    present = sum((nums & Counter(t for t in hyp if _DIGIT_RE.search(t))).values())
+    return {"total": total, "correct": correct, "present": present, "wrong": wrong, "extra": extra}
 
 
 def _drop_added(reference: str, hypothesis: str) -> str:

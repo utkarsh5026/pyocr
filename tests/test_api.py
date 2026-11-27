@@ -114,6 +114,7 @@ def test_llm_run_cache_compare_search_export(client, doc_id):
     assert page0["errors"] == {k: errs[k] for k in ("misread", "missed", "added")}
     assert doc_cmp["overall"]["errors"]["misread"] >= 1
     assert doc_cmp["overall"]["numbers"]["total"] >= page0["numbers"]["total"]
+    assert doc_cmp["overall"]["wer_order_free"] == page0["metrics"]["wer_order_free"] <= doc_cmp["overall"]["wer"]
 
     res = client.get(f"/api/documents/{doc_id}/search", params={"q": "lazzy"}).json()
     assert res["total"] >= 1 and res["pages"][0]["hits"][0]["source"] == "llm"
@@ -236,6 +237,7 @@ def test_leaderboard_ranks_sources_against_the_best_reference(client, doc_id):
     by_id = {e["id"]: e for e in lb["entries"]}
     assert by_id["native"]["cer"] == 0 and by_id[f"llm:{k2}"]["cer"] > by_id[f"llm:{k1}"]["cer"] > 0
     assert by_id[f"llm:{k2}"]["errors"]["missed"] == 1
+    assert all(e["wer_order_free"] <= e["wer"] for e in lb["entries"])
     assert [e["id"] for e in lb["entries"]].index(f"llm:{k1}") < [e["id"] for e in lb["entries"]].index(f"llm:{k2}")
     llm = by_id[f"llm:{k1}"]
     assert llm["pages"] == 1 and llm["docs"] == 1 and llm["seconds_per_page"] is None  # the fake reports 0 ms

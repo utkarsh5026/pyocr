@@ -31,6 +31,14 @@
   `corrected/<page>.json` in the document's folder; existing folders are unaffected. API:
   `GET/PUT/DELETE /api/documents/{id}/pages/{n}/corrected`; the page consensus adds a word `box` per column (from
   native text or OCR), `page_size` and the page's `corrected` state.
+- **WER in any order** (order-free WER): the texts compared as bags of words, so words read in a different order
+  (columns read across, table rows or side notes in another sequence) aren't counted as errors. The gap to WER is
+  the cost of reading order alone. Shown next to WER on the Compare page (whole document, per page, in the table),
+  in the inspector, on consensus source cards and as a Leaderboard column. When most of a page's word error is
+  reading order, the page's breakdown says so, and the number check reports how many numbers are present at another
+  position. API: `wer_order_free`, `word_distance_order_free`, `words_missing` and `words_extra` in every `metrics`
+  (`score()`); `wer_order_free` in document `overall`, consensus `overall` and leaderboard entries; `present` in
+  `numbers`.
 - **Leaderboard** (new page, `/leaderboard`, also linked from each workspace): every OCR engine, LLM run and PDF
   library ranked across the whole library or one workspace, with CER and WER, misread / missed / added, numbers read
   exactly, pages scored, and for LLM runs cost per page at catalog list price and model time per page; sortable, with

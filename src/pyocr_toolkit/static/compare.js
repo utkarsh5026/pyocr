@@ -43,7 +43,8 @@ async function run() {
   $("#cmp-overall").innerHTML = o
     ? stat("Character error", pct(o.cer), errorRateClass(o.cer),
         `<div class="small muted">${o.pages_under_2pct} of ${o.pages_scored} pages under 2%</div>`) +
-      stat("Word error", pct(o.wer), errorRateClass(o.wer)) +
+      stat("Word error", pct(o.wer), errorRateClass(o.wer),
+        `<div class="small muted" title="WER with the words compared as a bag, so reading order doesn't count">${pct(o.wer_order_free)} in any order</div>`) +
       stat("Word errors", errorTriple(o.errors), "", stackBar(o.errors)) +
       stat("Numbers read exactly", numbersValue(o.numbers), numbersClass(o.numbers),
         '<div class="small muted">amounts, dates, IDs</div>') +
@@ -70,13 +71,13 @@ async function run() {
     <tr data-goto="${r.page}" class="clickable">
       <td><b>${r.page + 1}</b></td>
       <td><span class="v ${errorRateClass(r.metrics.cer)}">${pct(r.metrics.cer)}</span></td>
-      <td>${pct(r.metrics.wer)}</td>
+      <td>${pct(r.metrics.wer)}</td><td>${pct(r.metrics.wer_order_free)}</td>
       <td>${fmtInt(r.errors.misread)}</td><td>${fmtInt(r.errors.missed)}</td><td>${fmtInt(r.errors.added)}</td>
       <td><span class="v ${numbersClass(r.numbers)}">${r.numbers.total ? `${r.numbers.correct}/${r.numbers.total}` : "–"}</span></td>
       <td>${fmtInt(r.metrics.reference_chars)}</td><td>${fmtInt(r.metrics.hypothesis_chars)}</td>
       <td class="actions"><a class="btn small ghost" href="/documents/${DOC_ID}/pages/${r.page + 1}#compare">Inspect</a></td>
     </tr>` : `
-    <tr class="muted"><td>${r.page + 1}</td><td colspan="8">not scored: no text from
+    <tr class="muted"><td>${r.page + 1}</td><td colspan="9">not scored: no text from
       ${r.missing.map((m) => (m === a ? "reference" : "candidate")).join(" or ")}</td>
       <td class="actions"><a class="btn small ghost" href="/documents/${DOC_ID}/pages/${r.page + 1}">Open</a></td></tr>`).join("");
   $("#cmp-table-wrap").hidden = false;
@@ -103,6 +104,20 @@ function stackBar(e) {
     <div class="stack-legend"><span><i class="misread"></i>misread</span><span><i class="missed"></i>missed</span><span><i class="added"></i>added</span></div>`;
 }
 
+/** How much of the word error is reading order alone: WER minus order-free WER. */
+function orderHtml(m) {
+  const cost = Math.max(0, m.wer - m.wer_order_free);
+  const line = `<div class="err-k">Word order <span class="muted">WER ${pct(m.wer)} · ${pct(m.wer_order_free)} ignoring word order</span></div>`;
+  if (cost >= 0.05 && cost >= 0.3 * m.wer) {
+    return `${line}<div class="callout warn order-warn"><span><b>${(cost * 100).toFixed(1)} points of the word error come from reading
+      order alone.</b> B has these words but in a different order: columns, tables or side notes were probably read in a
+      different sequence. Only ${pct(m.wer_order_free)} is misread, missing or extra words. The word errors, numbers and
+      CER above count moved words as errors too, so read them with that in mind.</span></div>`;
+  }
+  return `${line}<span class="small muted">${cost < 0.005 ? "Same reading order: the word errors are misread, missing or extra words."
+    : `${(cost * 100).toFixed(1)} points come from words in a different order.`}</span>`;
+}
+
 function renderErrors(res) {
   const e = res.errors, n = res.numbers;
   const examples = (kind) => e.examples.filter((x) => x.kind === kind).slice(0, 8)
@@ -127,8 +142,10 @@ function renderErrors(res) {
       <div class="err-k">Numbers read exactly <b class="${numbersClass(n)}">${n.total ? `${n.correct} of ${n.total}` : "none on this page"}</b></div>
       ${wrong ? `<div class="kind-chips">${wrong}${more > 0 ? `<span class="small muted">+${more} more</span>` : ""}</div>`
         : n.total ? '<span class="small muted">Every amount, date and ID matches.</span>' : ""}
+      ${n.present > n.correct ? `<span class="small muted">${n.present} of ${n.total} are in B, ${n.present - n.correct} of them at another position (word order).</span>` : ""}
       ${n.extra ? `<span class="small muted">${n.extra} number${n.extra === 1 ? "" : "s"} only in B</span>` : ""}
     </div>
+    <div class="err-block wide">${orderHtml(res.metrics)}</div>
     <div class="err-block wide">
       <div class="err-k">CER as differences are forgiven <span class="muted small">each step adds to the one before; what's left is real misreading</span></div>
       <div class="ladder">${ladder}</div>
@@ -165,7 +182,7 @@ async function showPage(n) {
   const pill = $("#pg-pill");
   pill.className = `badge ${{ good: "info", warn: "scan", bad: "bad" }[errorRateClass(row.metrics.cer)] || ""}`;
   pill.textContent = `CER ${pct(row.metrics.cer)}`;
-  $("#pg-wer").textContent = `WER ${pct(row.metrics.wer)}`;
+  $("#pg-wer").textContent = `WER ${pct(row.metrics.wer)} · ${pct(row.metrics.wer_order_free)} in any order`;
   $("#pg-open").href = `/documents/${DOC_ID}/pages/${n + 1}#compare`;
   $("#pg-a-label").textContent = optLabel($("#src-a"));
   $("#pg-b-label").textContent = optLabel($("#src-b"));
@@ -309,7 +326,7 @@ function renderCards(res) {
     <article class="cons-card">
       <div class="cons-card-head">${dot(r.id)}<b title="${esc(srcLabel(r.id))}">${esc(srcLabel(r.id))}</b></div>
       <div class="cons-card-v"><span class="v ${errorRateClass(r.cer)}">${pct(r.cer)}</span>
-        <span class="small muted">CER · WER ${pct(r.wer)}</span>
+        <span class="small muted" title="${pct(r.wer_order_free)} ignoring word order">CER · WER ${pct(r.wer)}</span>
         ${i === 0 && rows.length > 2 ? '<span class="badge ok">closest to consensus</span>' : ""}</div>
       <div>${stackBar(r.errors)}</div>
       <div class="cons-card-foot"><span>${errorTriple(r.errors)} <span class="muted">words</span></span>

@@ -673,7 +673,7 @@ class Services:
         ids = [i for i in info if any(i in p["texts"] for p in pages)]
         if shared:
             pages = [p for p in pages if all(i in p["texts"] for i in ids)]
-        keys = ("char_distance", "reference_chars", "word_distance", "reference_words",
+        keys = ("char_distance", "reference_chars", "word_distance", "reference_words", "word_distance_order_free",
                 "misread", "missed", "added", "numbers_total", "numbers_correct")
         tot = {i: dict.fromkeys(keys, 0) | {"pages": 0, "docs": set(), "by_doc": {}} for i in ids}
         for p in pages:
@@ -683,7 +683,8 @@ class Services:
                 t, sc = tot[sid], compare.score(p["ref"], text, opts)
                 br = compare.error_breakdown(p["ref"], text, opts, max_examples=0, max_confusions=0)
                 num = compare.check_numbers(p["ref"], text, max_wrong=0)
-                for k in ("char_distance", "reference_chars", "word_distance", "reference_words"):
+                for k in ("char_distance", "reference_chars", "word_distance", "reference_words",
+                          "word_distance_order_free"):
                     t[k] += sc[k]
                 for k in ("misread", "missed", "added"):
                     t[k] += br[k]
@@ -712,6 +713,7 @@ class Services:
                 "pages": t["pages"], "docs": len(t["docs"]),
                 "cer": rate(t["char_distance"], t["reference_chars"]),
                 "wer": rate(t["word_distance"], t["reference_words"]),
+                "wer_order_free": rate(t["word_distance_order_free"], t["reference_words"]),
                 "errors": {k: t[k] for k in ("misread", "missed", "added")},
                 "numbers": {"total": t["numbers_total"], "correct": t["numbers_correct"]},
                 "by_doc": {d: rate(*v) for d, v in t["by_doc"].items()},

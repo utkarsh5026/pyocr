@@ -66,6 +66,7 @@ const SORTERS = {
   label: (e) => e.label.toLowerCase(),
   cer: (e) => e.cer ?? Infinity,
   wer: (e) => e.wer ?? Infinity,
+  werfree: (e) => e.wer_order_free ?? Infinity,
   numbers: (e) => (e.numbers.total ? 1 - e.numbers.correct / e.numbers.total : Infinity),
   pages: (e) => -e.pages,
   cost: (e) => e.cost_per_page?.usd ?? Infinity,
@@ -96,6 +97,7 @@ function renderTable() {
       <td class="num"><span class="v ${errorRateClass(e.cer)}">${pct(e.cer)}</span>
         <span class="lb-bar" aria-hidden="true"><i class="${errorRateClass(e.cer)}" style="width:${bar}%"></i></span></td>
       <td class="num">${pct(e.wer)}</td>
+      <td class="num">${pct(e.wer_order_free)}</td>
       <td class="small">${fmtInt(e.errors.misread)} · ${fmtInt(e.errors.missed)} · ${fmtInt(e.errors.added)}</td>
       <td class="num"><span class="${n.total ? (n.correct === n.total ? "good" : "bad") : "muted"}">${n.total ? `${n.correct}/${n.total}` : "–"}</span></td>
       <td class="num" title="${partial ? "Scored on fewer pages than other sources: compare with care, or turn on 'Only pages every source has read'" : ""}">

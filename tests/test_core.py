@@ -50,6 +50,28 @@ def test_word_diff_keeps_line_breaks():
     assert diff == [{"op": "equal", "ref": "a b\nc d", "hyp": "a b\nc d"}]
 
 
+def test_order_free_wer_ignores_reading_order_only():
+    left = "Our harbour handled more ships this quarter than ever"
+    right = "Fuel costs fell while crane repairs ran over budget"
+    two_columns = f"{left} {right}"
+    read_across = " ".join(w for pair in zip(left.split(), right.split()) for w in pair)
+    s = compare.score(two_columns, read_across)
+    assert s["wer"] > 0.8 and s["wer_order_free"] == 0  # every word read, just in another order
+    assert compare.score(two_columns, f"{right} {left}")["wer_order_free"] == 0
+    # a misread word is one missing plus one extra: one substitution, like WER
+    s = compare.score("Payment within 30 days", "Payrnent within 30 days")
+    assert (s["words_missing"], s["words_extra"], s["word_distance_order_free"]) == (1, 1, 1)
+    assert s["wer_order_free"] == s["wer"] == 0.25
+    # a missing word and an extra word that don't pair up: the larger count wins
+    s = compare.score("a b c d", "a b x")
+    assert (s["words_missing"], s["words_extra"], s["word_distance_order_free"]) == (2, 1, 2)
+    # never above WER, and repeated words are counted, not just their presence
+    assert compare.score("the the cat", "the cat")["word_distance_order_free"] == 1
+    for ref, hyp in [("a b c", "c b a x y"), ("", "a"), ("a", "")]:
+        s = compare.score(ref, hyp)
+        assert s["wer_order_free"] <= s["wer"]
+
+
 INVOICE_REF = "Bill to Müller & Söhne, Köln. Total due €2,530.54 within 30 days."
 
 
@@ -100,6 +122,9 @@ def test_check_numbers():
     assert n["wrong"] == [{"ref": "2,530.54", "hyp": "2.530,54"}, {"ref": "30", "hyp": "3O"}]
     # edge punctuation and currency symbols don't count
     assert compare.check_numbers("(12) €5.00.", "12 5.00")["correct"] == 2
+    # numbers read right but in another order: wrong by position, all present
+    n = compare.check_numbers("Total 1,250.00\nDate 2024-11-27", "Date 2024-11-27\nTotal 1,250.00")
+    assert (n["total"], n["correct"], n["present"]) == (2, 1, 2)
     n = compare.check_numbers("pay within 30 days", "pay within days, call 555")
     assert n["wrong"] == [{"ref": "30", "hyp": ""}] and n["extra"] == 1
 

@@ -598,7 +598,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         """
         doc = get_doc(doc_id)
         opts = compare.NormalizeOptions(ignore_case, ignore_punctuation)
-        rows, tot_cd, tot_rc, tot_wd, tot_rw = [], 0, 0, 0, 0
+        rows, tot_cd, tot_rc, tot_wd, tot_rw, tot_wf = [], 0, 0, 0, 0, 0
         errors = {"misread": 0, "missed": 0, "added": 0}
         numbers = {"total": 0, "correct": 0}
         for n in doc.iter_pages():
@@ -609,6 +609,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             m = compare.score(ta, tb, opts)
             tot_cd += m["char_distance"]; tot_rc += m["reference_chars"]
             tot_wd += m["word_distance"]; tot_rw += m["reference_words"]
+            tot_wf += m["word_distance_order_free"]
             br = compare.error_breakdown(ta, tb, opts, max_examples=0, max_confusions=0)
             err = {k: br[k] for k in errors}
             nums = compare.check_numbers(ta, tb, max_wrong=0)
@@ -625,6 +626,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
                 "pages_scored": len(scored),
                 "cer": round(tot_cd / tot_rc, 4) if tot_rc else None,
                 "wer": round(tot_wd / tot_rw, 4) if tot_rw else None,
+                "wer_order_free": round(tot_wf / tot_rw, 4) if tot_rw else None,
                 "worst_page": max(scored, key=lambda r: r["metrics"]["cer"])["page"],
                 "pages_over_10pct": sum(r["metrics"]["cer"] > 0.10 for r in scored),
                 "pages_under_2pct": sum(r["metrics"]["cer"] <= 0.02 for r in scored),
@@ -743,6 +745,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         ids = _consensus_sources(sources)
         opts = compare.NormalizeOptions(ignore_case, ignore_punctuation)
         zero = {"char_distance": 0, "reference_chars": 0, "word_distance": 0, "reference_words": 0,
+                "word_distance_order_free": 0,
                 "misread": 0, "missed": 0, "added": 0, "numbers_total": 0, "numbers_correct": 0, "pages": 0}
         tot = {sid: dict(zero) for sid in ids}
         pair = {a: {b: [0, 0] for b in ids if b != a} for a in ids}
@@ -758,7 +761,8 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             cer = {}
             for sid, v in res["per_source"].items():
                 t, sc = tot[sid], v["score"]
-                for k in ("char_distance", "reference_chars", "word_distance", "reference_words"):
+                for k in ("char_distance", "reference_chars", "word_distance", "reference_words",
+                          "word_distance_order_free"):
                     t[k] += sc[k]
                 for k in ("misread", "missed", "added"):
                     t[k] += v["errors"][k]
@@ -779,6 +783,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
 
         overall = {sid: {"pages": t["pages"], "cer": rate(t["char_distance"], t["reference_chars"]),
                          "wer": rate(t["word_distance"], t["reference_words"]),
+                         "wer_order_free": rate(t["word_distance_order_free"], t["reference_words"]),
                          "errors": {k: t[k] for k in ("misread", "missed", "added")},
                          "numbers": {"total": t["numbers_total"], "correct": t["numbers_correct"]}}
                    for sid, t in tot.items()}

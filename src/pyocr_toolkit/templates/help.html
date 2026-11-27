@@ -239,6 +239,13 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
   <li><b>WER</b> (word error rate) is harsher, because one wrong letter makes the whole word wrong. It is closer to what
     matters for search and for exact values such as invoice numbers or amounts.</li>
   <li>Both can be <b>over 100 %</b> when the candidate contains a lot of extra text.</li>
+  <li><b>WER in any order</b> (order-free WER) compares the two texts as bags of words, ignoring where each word is.
+    It counts <i>missing</i> words (the reference has more of them) and <i>extra</i> words (the candidate has more); a
+    misread word is one of each, so the fewest edits is the larger of the two counts, divided by the reference words.
+    It is never above WER. The gap between them is the cost of <b>reading order</b> alone: an engine that reads a
+    two-column page across the columns gets every word right and can still have a WER near 100 %, because WER
+    compares words in sequence. When most of a page's word error is reading order, the Compare page says so, and the
+    number check also counts the numbers that are present but at another position.</li>
   <li>The whole-document CER on the Compare page is <b>micro-averaged</b>: total edits divided by total reference
     characters. Long pages count more than short ones, which matches how much text is actually affected.</li>
 </ul>

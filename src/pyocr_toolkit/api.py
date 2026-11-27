@@ -295,6 +295,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         if len(data) > settings.max_upload_mb * 1024 * 1024:
             raise HTTPException(413, f"file larger than {settings.max_upload_mb} MB")
         meta = await run_in_threadpool(store.add, file.filename or "upload.pdf", data)
+        store.warm_page_stats(meta.id)  # build pages.json now, so the first Overview visit doesn't wait for it
         return meta.__dict__
 
     @api.post("/uploads", status_code=201, tags=["documents"])
@@ -311,6 +312,8 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             data = await f.read(max_bytes + 1)
             named.append((f.filename or "upload.pdf", data))
         result = await run_in_threadpool(ingest, store, named, max_bytes=max_bytes)
+        for meta in result.documents:
+            store.warm_page_stats(meta.id)
         body = result.to_json()
         if workspace_id and result.documents:
             ws = await run_in_threadpool(workspaces.add_documents, workspace_id, [m.id for m in result.documents])
@@ -337,7 +340,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
     @api.get("/documents/{doc_id}/pages", tags=["pages"])
     def pages(doc_id: str):
         doc = get_doc(doc_id)
-        return [doc.page_info(n) for n in doc.iter_pages()]
+        return doc.page_infos()
 
     @api.get("/documents/{doc_id}/pages/{page}/image", tags=["pages"])
     def page_image(doc_id: str, page: int, dpi: int = Query(None, ge=36, le=600),

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Faster Overview for large documents: per-page facts (size, text-layer characters, images) are computed once and
+  saved to `pages.json` in the document folder, so later visits to a 2,000-page PDF's Overview drop from ~2.5 s
+  to ~40 ms. Uploads build `pages.json` in the background right away, so the first visit is fast too, and page
+  renders keep working while it runs. The page grid draws thumbnails in batches of 200 as you scroll. Existing
+  folders (and documents added with `pyocr add`) get `pages.json` on first view; it is derived data and is rebuilt
+  if missing or damaged.
+
 ## 0.6.0 - 2026-11-27
 
 - **Structured data extraction**: a new prompt, *Structured data (fields → JSON)*, fills a JSON Schema from each page

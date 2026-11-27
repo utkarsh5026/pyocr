@@ -71,7 +71,8 @@ Shared logic goes in `service.py`, not duplicated across API, web and CLI.
   how keys are derived without a migration story: it orphans every user's cached results.
 - **On-disk layout** (`data/documents/<32-hex id>/meta.json`, `source.<ext>`, `ocr/<page>.json`,
   `llm/<page>/<key>.json`, `native/<library>/<page>.json`, plus `data/credentials.json` for settings saved on the Providers page) is user data.
-  Changes must stay readable for existing folders.
+  Changes must stay readable for existing folders. `pages.json` (per-page facts) is derived: it is rebuilt when
+  missing, damaged or from an older `_PAGE_STATS_VERSION`, so bump that constant when its fields change.
 - **PyMuPDF is not thread-safe.** Every access to an open `pymupdf.Document` goes through the per-document lock
   in `documents.py`. FastAPI runs sync endpoints in a thread pool, so this matters. In async code, render with
   `asyncio.to_thread`.

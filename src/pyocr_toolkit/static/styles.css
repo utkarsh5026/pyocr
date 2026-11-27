@@ -386,7 +386,8 @@ details.meta dd { margin: 0; word-break: break-word; }
 .ce-hl { position: absolute; inset: 0; overflow: hidden; pointer-events: none; color: var(--text); background: transparent; border: 0; }
 .code-editor textarea.ce-input { position: relative; display: block; width: 100%; min-height: 200px; border: 0; border-radius: 0; background: transparent; color: transparent; caret-color: var(--text); resize: vertical; overflow: auto; box-shadow: none; outline: none; }
 .code-editor textarea.ce-input::selection { background: var(--accent-soft); color: transparent; }
-.ce-errline { position: absolute; left: 0; right: 0; height: var(--ce-lh); background: var(--bad-soft); pointer-events: none; }
+.ce-errline { position: absolute; left: 0; right: 0; height: var(--ce-lh); background: var(--bad-soft); pointer-events: none; z-index: 0; }
+.ce-hl { z-index: 1; }  /* the text stays above the error-line marker */
 .tk-key { color: var(--accent); }
 .tk-str { color: var(--good); }
 .tk-num { color: var(--info); }
@@ -420,7 +421,7 @@ details.meta dd { margin: 0; word-break: break-word; }
 .extract-table td.v { white-space: pre-wrap; overflow-wrap: anywhere; }
 .extract-table tr.has-err > td, .extract-table td.has-err { background: var(--bad-soft); }
 .extract-table .sub { font-size: 12.5px; margin: -4px 0; }
-.extract-table .sub th { font-size: 10.5px; }
+.extract-table .sub th { font-size: 10.5px; overflow-wrap: normal; word-break: normal; }
 .extract-table .sub td { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ---- badges: soft fills, no outlines ---- */

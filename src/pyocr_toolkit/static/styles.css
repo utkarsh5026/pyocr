@@ -314,6 +314,7 @@ details.menu > summary::-webkit-details-marker { display: none; }
 details.menu > div { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); padding: 5px; min-width: 200px; display: flex; flex-direction: column; text-align: left; }
 details.menu > div a { padding: 7px 10px; border-radius: 6px; color: var(--text); font-size: 13px; }
 details.menu > div a:hover { background: var(--surface-2); color: var(--text); }
+details.menu > div .menu-sep { padding: 8px 10px 4px; border-top: 1px solid var(--border); margin-top: 4px; }
 details.meta { margin-top: 16px; font-size: 12.5px; }
 details.meta summary { cursor: pointer; color: var(--muted); }
 details.meta summary:hover { color: var(--text); }

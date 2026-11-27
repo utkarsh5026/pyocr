@@ -449,3 +449,18 @@ def test_text_only_request_has_no_page_images():
     assert TranscriptionRequest(image=b"", mime_type="", system_prompt="S", user_prompt="U").page_images() == []
     assert len(TranscriptionRequest(image=b"x", mime_type="image/png", system_prompt="S",
                                     user_prompt="U").page_images()) == 1
+
+
+def test_export_all_sources_includes_extracted_fields(client, doc_id):
+    res = _run(client, doc_id, extract_schema="invoice").json()
+    client.post(f"/api/documents/{doc_id}/pages/0/llm", json={"provider": "fakejson"})  # a plain transcription too
+    all_json = client.get(f"/api/documents/{doc_id}/export/all", params={"fmt": "json"}).json()
+    source = f"llm:{res['key']}"
+    assert {s["id"]: s.get("schema_label") for s in all_json["sources"]}[source] == "Invoice"
+    page1 = all_json["pages"][0]
+    assert page1["data"] == {source: INVOICE_REPLY}  # only extraction sources get data
+    assert all_json["pages"][1]["data"] == {source: None}
+    lines = [json.loads(line) for line in
+             client.get(f"/api/documents/{doc_id}/export/all", params={"fmt": "jsonl"}).text.splitlines()]
+    assert [line["data"]["total"] for line in lines if line["source"] == source] == ["$1,250.00"]
+    assert all("data" not in line for line in lines if line["source"] != source)

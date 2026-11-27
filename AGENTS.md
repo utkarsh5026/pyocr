@@ -41,6 +41,7 @@ src/pyocr_toolkit/
   jobs.py        JobManager: in-memory background extraction jobs over page lists
   compare.py     normalize / score (CER, WER) / word_diff
   search.py      word-box and snippet search
+  pdftext.py     other PDF libraries (pypdf, pdfplumber, pdfminer.six, pypdfium2) as native:<library> sources
   api.py         JSON API under /api + create_app() (the app factory)
   web.py         server-rendered HTML pages (Jinja2, templates/)
   cli.py         `pyocr` argparse CLI
@@ -64,11 +65,12 @@ Shared logic goes in `service.py`, not duplicated across API, web and CLI.
 
 - **Page numbers are 0-based** in Python and in `/api`. The UI and the CLI `--pages` (`"1-3,7"`, via
   `parse_pages`) are 1-based. Convert at the edge only.
-- **Source ids**: `native`, `ocr`, `llm:<key>`, and `llm` (= latest LLM result per page). The LLM key comes from
+- **Source ids**: `native` (PyMuPDF), `native:<library>` (other PDF libraries, `pdftext.py`), `ocr`, `ocr:<engine>`,
+  `llm:<key>`, and `llm` (= latest LLM result per page). The LLM key comes from
   `OpenDocument.llm_cache_key(provider_id, model, system_prompt)`, so it is the same on every page. Don't change
   how keys are derived without a migration story: it orphans every user's cached results.
 - **On-disk layout** (`data/documents/<32-hex id>/meta.json`, `source.<ext>`, `ocr/<page>.json`,
-  `llm/<page>/<key>.json`, plus `data/credentials.json` for settings saved on the Providers page) is user data.
+  `llm/<page>/<key>.json`, `native/<library>/<page>.json`, plus `data/credentials.json` for settings saved on the Providers page) is user data.
   Changes must stay readable for existing folders.
 - **PyMuPDF is not thread-safe.** Every access to an open `pymupdf.Document` goes through the per-document lock
   in `documents.py`. FastAPI runs sync endpoints in a thread pool, so this matters. In async code, render with

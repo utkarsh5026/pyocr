@@ -27,19 +27,38 @@
 - API: `prompt_mode: "extract"` with `extract_schema` (a preset id or a JSON Schema) on
   `POST /api/documents/{id}/pages/{n}/llm` and in job bodies, `POST /api/extract/check-schema` (validation notes,
   example output, syntax error position and a repaired version; takes an optional `provider` and `model`), `extract_presets` in
-  `/api/config`, and a per-page `data` object in JSON / JSONL exports of an extraction. CLI:
+  `/api/config`, and a per-page `data` object in JSON / JSONL exports of an extraction (one source, and
+  *Export all* as `data: {source_id: fields}`). CLI:
   `pyocr extract --mode extract --schema invoice|receipt|form|<file.json>`.
+## 0.5.0 - 2026-11-27
+
 - **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as
   `pip install "pyocr-toolkit[easyocr]"`), and Google Cloud Vision, Azure AI Document Intelligence, AWS Textract
   and Mistral OCR (cloud, configured with environment variables). Each engine is a separate source
   (`ocr:<engine>`; `ocr` stays Tesseract) that can be searched, compared and exported.
-- Page inspector, Overview extract form, background jobs and the CLI (`--engine ocr:<engine>`, `--ocr-engine`,
-  `pyocr engines`) can pick the OCR engine. The Providers page lists every engine with its status and a Test button.
+  - The page inspector, Overview extract form, background jobs and the CLI (`--engine ocr:<engine>`,
+    `--ocr-engine`, `pyocr engines`) can pick the OCR engine. The Providers page lists every engine with its status
+    and a Test button, and cloud OCR keys and engine settings can be saved there like LLM provider credentials.
+  - New settings: `GOOGLE_VISION_API_KEY`, `GOOGLE_VISION_LANGUAGE_HINTS`, `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`,
+    `AZURE_DOCUMENT_INTELLIGENCE_KEY`, `AWS_REGION` (plus the usual AWS credentials), `MISTRAL_API_KEY`,
+    `MISTRAL_OCR_MODEL`, `EASYOCR_LANGUAGES`, `PADDLEOCR_LANGUAGE`, `OCR_GPU`, `OCR_MAX_EDGE_PX`, `OCR_TIMEOUT_S`.
+  - Existing Tesseract results (`ocr/<page>.json`) are read as before; other engines cache under `ocr/<engine>/`.
+- **Other PDF libraries.** Besides PyMuPDF, the text layer can be read with pypdf, pdfplumber, pdfminer.six and
+  pypdfium2 (optional: `pip install "pyocr-toolkit[pdf]"`). Each installed library is its own source
+  (`native:<library>`; `native` stays PyMuPDF) that can be compared and exported. The page inspector's Native tab
+  has a library picker and a **Test all libraries** button that shows which libraries get text out of the page.
+  CLI: `--engine native:<library>` and `pyocr libraries`; API: `?library=` on `/text/native`, a new
+  `/pages/{page}/text/native/libraries` endpoint, and `text_libraries` in `/api/config`. Results are cached under
+  `native/<library>/<page>.json` and re-read when the library version changes.
+- **Export all sources.** Download everything extracted for a document in one file: Overview → *Export all*,
+  the Full text *Download* menu, or `GET /api/documents/{id}/export/all?fmt=json|jsonl|csv|md|zip`.
+  JSON keeps each page's text per source, CSV puts sources side by side (a column each), and ZIP bundles the JSON
+  and CSV with a TXT and Markdown file per source. Like single-source export, it only reads cached results.
 - Logos for LLM providers and OCR engines across the UI (bundled locally, no external requests).
-- Cloud OCR keys and engine settings can be saved on the Providers page, like LLM provider credentials.
-- Existing Tesseract results (`ocr/<page>.json`) are read as before; other engines cache under `ocr/<engine>/`.
+- The upload file pickers now offer `.txt`, `.cbr` and `.pam` files, which the server already accepted.
 - Fix: running Tesseract on two documents at once (e.g. two OCR jobs) failed with "Attempt to use Leptonica from
   2 threads at once"; Tesseract calls are now serialised across the whole process.
+- LLM prompts and cache keys are unchanged, so existing results stay valid.
 
 ## 0.4.0 - 2026-11-27
 

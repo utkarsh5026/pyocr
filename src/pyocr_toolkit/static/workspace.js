@@ -18,6 +18,7 @@ const state = {
   searchHits: {},     // page -> {count, native: boxes[], ocr: boxes[]}
   llmResults: [],
   native: null,
+  nativeLibrary: "pymupdf",  // which PDF library reads the text layer (see pdftext.py)
   ocr: null,          // cached layer of the selected OCR engine on this page
   ocrEngine: "tesseract",
   // image preprocessing (see preprocess.py); "" = send the page as rendered
@@ -94,12 +95,13 @@ async function gotoPage(n) {
 
   $("#cmp-metrics").innerHTML = "";
   $("#cmp-diff").innerHTML = "";
+  if ($("#native-libraries")) $("#native-libraries").hidden = true;
   $("#cmp-legend").hidden = true;
   $("#ab-summary").hidden = true;
   $("#cmp-ref").innerHTML = $("#cmp-hyp").innerHTML = "";
 
   const [native, ocr, llm] = await Promise.all([
-    api(pageUrl(n, "/text/native")),
+    api(nativeUrl(n)),
     api(pageUrl(n, `/text/ocr?cached_only=true&engine=${encodeURIComponent(state.ocrEngine)}`)),
     api(pageUrl(n, "/llm")),
   ]);
@@ -113,14 +115,77 @@ async function gotoPage(n) {
 }
 
 // ------------------------------------------------------------------ tabs
+const nativeUrl = (n, lib = state.nativeLibrary) =>
+  pageUrl(n, lib === "pymupdf" ? "/text/native" : `/text/native?library=${encodeURIComponent(lib)}`);
+const libraryInfo = (id) => (state.config?.text_libraries || []).find((l) => l.id === id);
+const nativeSourceId = (lib) => (lib === "pymupdf" ? "native" : `native:${lib}`);
+
 function renderNative() {
   const layer = state.native, p = state.pages[state.page];
+  const lib = libraryInfo(state.nativeLibrary);
+  const by = lib ? ` · read by <b>${esc(lib.label)}</b>${lib.version ? ` ${esc(lib.version)}` : ""}` +
+    ` in ${((layer.elapsed_ms || 0) / 1000).toFixed(2)}s` : "";
+  const words = lib && !lib.has_boxes ? `${layer.text.split(/\s+/).filter(Boolean).length} words (no word boxes)`
+    : `${layer.words.length} words`;
   $("#native-meta").innerHTML = IS_PDF
-    ? `${layer.text.trim().length} characters · ${layer.words.length} words embedded in the file` +
+    ? `${layer.text.trim().length} characters · ${words} embedded in the file${by}` +
       (p.looks_scanned ? ' · <span class="warn">looks scanned: try OCR or an LLM</span>' : "")
     : '<span class="warn">Image file: there is no embedded text layer. Use OCR or an LLM.</span>';
   setText($("#native-text"), layer.text, "No embedded text on this page.");
   renderSide();
+}
+
+function renderLibraries() {
+  const sel = $("#native-library");
+  if (!sel) { state.nativeLibrary = "pymupdf"; return; }  // not a PDF: only PyMuPDF reads it
+  const libs = state.config.text_libraries || [];
+  sel.innerHTML = libs.map((l) => `<option value="${esc(l.id)}" ${l.available ? "" : "disabled"}>` +
+    `${esc(l.label)}${l.available ? "" : " (not installed)"}</option>`).join("");
+  if (!libraryInfo(state.nativeLibrary)?.available) state.nativeLibrary = "pymupdf";
+  sel.value = state.nativeLibrary;
+  const missing = libs.filter((l) => !l.available);
+  sel.title = "Which Python PDF library reads the embedded text layer" +
+    (missing.length ? `\nNot installed: ${missing.map((l) => l.label).join(", ")} (pip install "pyocr-toolkit[pdf]")` : "");
+}
+
+async function selectLibrary(id) {
+  state.nativeLibrary = id;
+  try { localStorage.setItem("pyocr.nativeLibrary", id); } catch (_) { /* private mode */ }
+  const n = state.page;
+  const layer = await api(nativeUrl(n, id));
+  if (n !== state.page || id !== state.nativeLibrary) return;
+  state.native = layer;
+  renderNative();
+}
+
+/** Read the page with every PDF library and show which ones get text out. */
+async function checkLibraries() {
+  const box = $("#native-libraries"), n = state.page;
+  box.hidden = false;
+  box.innerHTML = '<p class="muted small">Reading this page with every PDF library…</p>';
+  const rows = await api(pageUrl(n, "/text/native/libraries"));
+  if (n !== state.page) return;
+  const best = Math.max(0, ...rows.map((r) => r.chars || 0));
+  const status = (r) => {
+    if (!r.available) return `<span class="muted">not installed</span> <code>${esc(r.install || "")}</code>`;
+    if (r.error) return `<span class="err">${esc(r.error)}</span>`;
+    if (!r.chars) return '<span class="bad">no text</span>';
+    return r.chars < best * 0.9 ? '<span class="warn">less text than the others</span>' : '<span class="good">text found</span>';
+  };
+  const num = (v) => (v != null ? fmtInt(v) : "–");
+  box.innerHTML = `<table class="table compact"><thead><tr><th>Library</th><th>Result</th><th>Chars</th><th>Words</th>
+    <th>Lines</th><th>Time</th><th></th></tr></thead><tbody>${rows.map((r) => `<tr>
+    <td><b>${esc(r.label)}</b> <span class="muted small">${esc(r.version || "")}</span></td><td class="nowrap">${status(r)}</td>
+    <td>${num(r.chars)}</td><td>${num(r.words)}</td><td>${num(r.lines)}</td>
+    <td>${r.elapsed_ms != null ? `${(r.elapsed_ms / 1000).toFixed(2)}s` : "–"}</td>
+    <td class="actions">${r.available && !r.error ? `<button class="btn small ghost" data-lib="${esc(r.id)}">View</button>` : ""}</td>
+    </tr>`).join("")}</tbody></table>
+    <p class="muted small">Results are cached per page. Compare two libraries word by word in the Compare tab,
+    or across the whole document on the document's Compare page.</p>`;
+  $$("#native-libraries [data-lib]").forEach((b) => b.addEventListener("click", guard(async () => {
+    $("#native-library").value = b.dataset.lib;
+    await selectLibrary(b.dataset.lib);
+  })));
 }
 
 function renderOcrEngines() {
@@ -392,7 +457,12 @@ function rerenderTexts() {
 
 // ------------------------------------------------------------------ compare
 function renderCompareOptions() {
-  const opts = [["native", "Native text layer"]];
+  const opts = [["native", "Native text layer (PyMuPDF)"]];
+  if (IS_PDF) {
+    for (const l of state.config?.text_libraries || []) {
+      if (l.id !== "pymupdf" && l.available) opts.push([nativeSourceId(l.id), `Native text · ${l.label}`]);
+    }
+  }
   const ocrDone = state.pages[state.page]?.ocr_engines || [];
   for (const id of ocrDone) opts.push([ocrSourceId(id), ocrLabel(id)]);
   for (const r of state.llmResults) {
@@ -413,7 +483,8 @@ function renderCompareOptions() {
 
 const ocrSourceId = (engine) => (engine === "tesseract" ? "ocr" : `ocr:${engine}`);
 const textRef = (v) => (v.startsWith("llm:") ? { source: "llm", key: v.slice(4) }
-  : v.startsWith("ocr:") ? { source: "ocr", engine: v.slice(4) } : { source: v });
+  : v.startsWith("ocr:") ? { source: "ocr", engine: v.slice(4) }
+  : v.startsWith("native:") ? { source: "native", library: v.slice(7) } : { source: v });
 
 async function runCompare() {
   const refV = $("#cmp-ref").value, hypV = $("#cmp-hyp").value;
@@ -709,6 +780,8 @@ function wire() {
 
   $("#run-ocr").addEventListener("click", guard(() => runOcr(true)));
   $("#ocr-engine").addEventListener("change", guard((e) => selectOcrEngine(e.target.value)));
+  $("#native-library")?.addEventListener("change", guard((e) => selectLibrary(e.target.value)));
+  $("#check-libraries")?.addEventListener("click", guard(checkLibraries));
   $("#run-llm").addEventListener("click", guard(() => runLlm(false)));
   $("#rerun-llm").addEventListener("click", guard(() => runLlm(true)));
   $("#llm-json-toggle").addEventListener("click", () => {
@@ -787,6 +860,8 @@ function wire() {
   try {
     state.config = await getConfig();
     state.ocrEngine = preferredOcrEngine(state.config);
+    try { state.nativeLibrary = localStorage.getItem("pyocr.nativeLibrary") || "pymupdf"; } catch (_) { /* private mode */ }
+    renderLibraries();
     const dpis = [100, 150, 300, 400].filter((d) => d !== state.config.llm_dpi);
     $('[data-adj="dpi"]').innerHTML = `<option value="">Default (${state.config.llm_dpi} dpi)</option>` +
       dpis.map((d) => `<option value="${d}">${d} dpi</option>`).join("");

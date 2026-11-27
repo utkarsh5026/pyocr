@@ -4,7 +4,9 @@ Text *sources* are identified by a string id that is the same on every page
 of a document, so a whole document can be read, exported or compared "per
 source":
 
-* ``native``       - the file's embedded text layer
+* ``native``       - the file's embedded text layer, read by PyMuPDF
+* ``native:<lib>`` - the same text layer read by another PDF library (``native:pypdf``,
+                     ``native:pdfplumber``, ...; see :mod:`pyocr_toolkit.pdftext`)
 * ``ocr``          - Tesseract OCR (kept as the plain id so existing links,
                      exports and caches keep working)
 * ``ocr:<engine>`` - another OCR engine (``ocr:easyocr``, ``ocr:google_vision``,
@@ -44,6 +46,7 @@ from . import extract
 from .config import Settings
 from .credentials import CredentialStore
 from .documents import DEFAULT_OCR_ENGINE, DocumentError, OpenDocument, TextLayer
+from .export import DocumentTexts, SourceTexts
 from .llm import (
     BATCH_USER_PROMPT,
     DRAFT_SYSTEM,
@@ -64,6 +67,7 @@ from .llm import (
     split_batch,
 )
 from .ocr import OCREngine, build_ocr_engines
+from .pdftext import DEFAULT_TEXT_LIBRARY, TextLibrary, build_text_libraries, native_library_of
 from .preprocess import MAX_PNG_BYTES, Preprocess, process_bytes
 
 #: stop reasons that mean "the output limit cut the reply short" (Claude, OpenAI, Gemini)
@@ -110,10 +114,12 @@ class ExtractSchema:
 
 class Services:
     def __init__(self, settings: Settings, providers: dict[str, Provider],
-                 ocr_engines: dict[str, OCREngine] | None = None) -> None:
+                 ocr_engines: dict[str, OCREngine] | None = None,
+                 text_libraries: dict[str, TextLibrary] | None = None) -> None:
         self.settings = settings
         self.providers = providers
         self.ocr_engines = ocr_engines if ocr_engines is not None else build_ocr_engines(settings)
+        self.text_libraries = text_libraries if text_libraries is not None else build_text_libraries()
         self.llm_semaphore = asyncio.Semaphore(settings.llm_concurrency)
         # Values saved on the Providers page override env vars; applied here so the
         # web app and the CLI see the same configuration.
@@ -542,6 +548,45 @@ class Services:
         engine = self.ocr_engine(engine_id)
         return await asyncio.to_thread(engine.test)
 
+    # ------------------------------------------------------ PDF libraries
+    def text_library(self, library_id: str | None) -> TextLibrary | None:
+        """The library behind ``native:<id>``; ``None`` for PyMuPDF (the plain ``native`` source)."""
+        if not library_id or library_id == DEFAULT_TEXT_LIBRARY:
+            return None
+        lib = self.text_libraries.get(library_id)
+        if lib is None:
+            known = ", ".join([DEFAULT_TEXT_LIBRARY, *self.text_libraries])
+            raise DocumentError(f"unknown PDF library '{library_id}' (known: {known})")
+        return lib
+
+    def native_layer(self, doc: OpenDocument, page: int, library: str | None = None,
+                     force: bool = False) -> TextLayer:
+        """The page's embedded text as one PDF library reads it. Blocking: use a thread from async code."""
+        lib = self.text_library(library)
+        return doc.native_text(page) if lib is None else lib.extract(doc, page, force=force)
+
+    def compare_libraries(self, doc: OpenDocument, page: int) -> list[dict[str, Any]]:
+        """Run every PDF library on one page: does each one get text out, and how much?"""
+        rows = []
+        for lib_id in [DEFAULT_TEXT_LIBRARY, *self.text_libraries]:
+            lib = self.text_library(lib_id)
+            row: dict[str, Any] = {"id": lib_id, "source_id": lib.source_id if lib else "native",
+                                   "label": lib.label if lib else "PyMuPDF",
+                                   "version": lib.version() if lib else pymupdf.VersionBind,
+                                   "available": True, "problem": None, "error": None}
+            if lib is not None and (problem := lib.problem()):
+                rows.append({**row, "available": False, "problem": problem, "install": lib.install_hint()})
+                continue
+            try:
+                layer = self.native_layer(doc, page, lib_id)
+            except DocumentError as exc:
+                rows.append({**row, "error": str(exc)})
+                continue
+            rows.append({**row, "chars": len(layer.text.strip()), "words": len(layer.text.split()),
+                         "lines": sum(1 for ln in layer.text.splitlines() if ln.strip()),
+                         "elapsed_ms": layer.elapsed_ms, "preview": layer.text.strip()[:200]})
+        return rows
+
     # ----------------------------------------------------------------- sources
     def list_sources(self, doc: OpenDocument) -> list[dict[str, Any]]:
         """All text sources available for a document, with page coverage.
@@ -554,7 +599,15 @@ class Services:
         for p in range(n):
             for engine in doc.ocr_engines_cached(p):
                 ocr_pages.setdefault(engine, []).append(p)
-        sources = [{"id": "native", "kind": "native", "label": "Native text layer", "pages": list(range(n))}]
+        sources = [{"id": "native", "kind": "native", "library": DEFAULT_TEXT_LIBRARY,
+                    "label": "Native text layer (PyMuPDF)" if doc.meta.is_pdf and any(
+                        lib.available for lib in self.text_libraries.values()) else "Native text layer",
+                    "pages": list(range(n))}]
+        if doc.meta.is_pdf:
+            # installed PDF libraries are read on demand (fast), so they cover every page
+            sources += [{"id": lib.source_id, "kind": "native", "library": lib.id,
+                         "label": f"Native text · {lib.label}", "pages": list(range(n))}
+                        for lib in self.text_libraries.values() if lib.available]
         order = list(self.ocr_engines)
         for engine in sorted(ocr_pages, key=lambda e: order.index(e) if e in order else len(order)):
             known = self.ocr_engines.get(engine)
@@ -605,8 +658,8 @@ class Services:
 
     def page_text(self, doc: OpenDocument, page: int, source: str, run_ocr: bool = False) -> str | None:
         """Text of one page from one source, or ``None`` if not extracted yet."""
-        if source == "native":
-            return doc.native_text(page).text
+        if (library := native_library_of(source)) is not None:
+            return self.native_layer(doc, page, library).text
         if (engine := ocr_engine_of(source)) is not None:
             layer = self.run_ocr_page(doc, page, engine=engine) if run_ocr else doc.cached_ocr_text(page, engine)
             return layer.text if layer else None
@@ -615,9 +668,23 @@ class Services:
             return result["text"] if result else None
         raise DocumentError(f"unknown source '{source}'")
 
+    def document_texts(self, doc: OpenDocument) -> DocumentTexts:
+        """Every source with at least one extracted page, and its text for every page (for "export everything").
+
+        Uses the concrete ``llm:<key>`` sources, not the ``llm`` alias, so no run is hidden behind a newer one.
+        Reads caches only: nothing is run.
+        """
+        pages = list(doc.iter_pages())
+        return DocumentTexts(document=doc.meta.__dict__, sources=[
+            SourceTexts(source=s, texts=[self.page_text(doc, n, s["id"]) for n in pages],
+                        data=[self.page_data(doc, n, s["id"]) for n in pages] if s.get("schema_label") else None)
+            for s in self.list_sources(doc) if s["page_count"]])
+
     def source_label(self, doc: OpenDocument, source: str) -> str:
         if (engine := ocr_engine_of(source)) is not None:
             return self.ocr_label(engine)
+        if (library := native_library_of(source)) is not None and (lib := self.text_library(library)):
+            return f"Native text · {lib.label}"
         for s in self.list_sources(doc):
             if s["id"] == source:
                 return s["label"]

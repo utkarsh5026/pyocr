@@ -99,8 +99,14 @@
     </nav>
 
     <div class="tab-body" data-tab="native">
-      <div class="tab-meta"><span id="native-meta"></span><div class="spacer"></div>
+      <div class="tab-meta">
+        {% if doc.is_pdf %}<select id="native-library" aria-label="PDF library"
+          title="Which Python PDF library reads the embedded text layer"></select>
+        <button id="check-libraries" class="btn small" title="Read this page with every PDF library">{{ icon('diff') }}Test all libraries</button>{% endif %}
+        <div class="spacer"></div>
         <button class="btn small ghost" data-copy="#native-text" title="Copy text">{{ icon('copy') }}Copy</button></div>
+      <div id="native-meta" class="tab-meta small"></div>
+      <div id="native-libraries" class="table-wrap" hidden></div>
       <pre id="native-text" class="text"></pre>
     </div>
 

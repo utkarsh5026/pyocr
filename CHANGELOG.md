@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **Calmer interface, same features.** The top bar has three sections, *Documents* (Workspaces / All files / Leaderboard),
+  *Search* and *Settings* (Providers / Models), plus a *Jobs* pill that shows how many extractions are running.
+  **Ctrl+K / ⌘K** opens a command palette on every page: jump to any page or document by name, run the current
+  document's actions (extract, compare, every export) or search all documents' text. Inside a document, the
+  breadcrumb, the view tabs and a new **Extract** button share one row.
+  - *Overview*: sources are a simple list (coverage, Read, an export menu); only running or failed jobs are shown;
+    the original file, metadata and Delete move to the bottom. Extraction opens in a side panel (the Extract
+    button, `x`, or `#extract` in the URL) with engine, model and pages up front and image preprocessing, pages
+    per request and re-run under *More options*, whose summary line shows their current values.
+  - *Pages* (the page inspector): sources (Native / OCR / LLM) on the left of the text panel and the two views,
+    *Diff* and *Columns* (was *Side by side*), on the right; page and zoom controls float over the page image.
+    The LLM tab folds provider, model, prompt and image into one line ("Model: demo-vision · Verbatim  Change"),
+    which opens by itself when the chosen provider isn't configured; Re-run and Delete move to a ⋯ menu, and the
+    stored-result picker shows only when the page has more than one result.
+  - Fixed: re-running an LLM transcription in the inspector no longer counts it twice in the page list.
+  - *Home* and *Compare* drop the explainer text and stat tiles; Compare's case/punctuation options move to an
+    Options menu.
+
 - **Compare explains its numbers.** A single CER can't tell a dropped umlaut from a wrong invoice total or an invented
   sentence, so the Compare page now also shows:
   - word errors split into **misread / missed / added** (they add up to the word edit distance behind WER), for the

@@ -4,20 +4,19 @@
 {% block subnav %}{% include "_doctabs.html" %}{% endblock %}
 {% block content %}
 <div id="compare-root" data-doc-id="{{ doc.id }}" data-page-count="{{ doc.page_count }}">
-  <div class="page-head">
-    <div>
-      <h1>Compare sources across the whole document</h1>
-      <p data-mode-only="pair">The <b>reference</b> is the text you trust more; the <b>candidate</b> is the one being judged.</p>
-      <p data-mode-only="all" hidden>No source is assumed to be right: the ones you pick are voted word by word into a
-        <b>consensus</b>, and each is scored against it.</p>
-    </div>
+  <div class="page-head page-head-slim">
+    <h1 title="Two sources: the reference (A) is the text you trust more and the candidate (B) is judged against it. All sources: they are voted word by word into a consensus, and each is scored against it.">Compare sources across the whole document</h1>
     <div class="row cmp-controls" style="margin:0">
       <div class="seg" role="radiogroup" aria-label="Comparison mode">
         <label><input type="radio" name="cmp-mode" value="pair" checked> Two sources</label>
         <label><input type="radio" name="cmp-mode" value="all"> All sources</label>
       </div>
-      <label class="check"><input type="checkbox" id="opt-case" checked> Ignore case</label>
-      <label class="check"><input type="checkbox" id="opt-punct"> Ignore punctuation</label>
+      <details class="menu menu-right"><summary class="btn small ghost">{{ icon('sliders') }}Options {{ icon('chevron-down') }}</summary>
+        <div class="menu-form">
+          <label class="check"><input type="checkbox" id="opt-case" checked> Ignore case</label>
+          <label class="check"><input type="checkbox" id="opt-punct"> Ignore punctuation</label>
+        </div>
+      </details>
     </div>
   </div>
 
@@ -86,7 +85,6 @@
       <tbody></tbody>
     </table>
   </details>
-  <p class="small muted" id="cmp-hint">Pages missing from either source are shown but not scored.</p>
   </div>
 
   <div id="all-view" hidden>

@@ -4,51 +4,116 @@
 {% block title %}{{ doc.filename }}{% endblock %}
 {% block subnav %}{% include "_doctabs.html" %}{% endblock %}
 {% block content %}
-<div class="grid-2" data-doc-id="{{ doc.id }}" data-page-count="{{ doc.page_count }}" id="doc-root">
-  <section class="card">
-    <h2 class="h-icon">{{ icon('sparkles') }}Extract text</h2>
-    <p class="hint">Runs in the background. Pages already extracted with the same engine, model and prompt are skipped.</p>
-    <form id="extract-form" class="form">
-      <div class="seg" role="radiogroup" aria-label="Engine">
-        <label><input type="radio" name="kind" value="llm" checked> {{ icon('sparkles') }}LLM transcription</label>
-        <label><input type="radio" name="kind" value="ocr"> {{ icon('cpu') }}OCR engine</label>
+<div data-doc-id="{{ doc.id }}" data-page-count="{{ doc.page_count }}" id="doc-root" class="overview">
+
+<section class="ov-section" id="jobs-section" hidden>
+  <div id="job-list" class="job-list"></div>
+</section>
+
+<section class="ov-section">
+  <div class="ov-head">
+    <h2>Sources</h2>
+    <div class="spacer"></div>
+    <a class="btn small ghost" href="/documents/{{ doc.id }}/compare">{{ icon('diff') }}Compare</a>
+    <details class="menu"><summary class="btn small ghost" title="Every source with extracted text, in one file">{{ icon('download') }}Export all {{ icon('chevron-down') }}</summary>
+      <div>
+        {% for fmt, name in [('json','JSON'),('csv','CSV (column per source)'),('md','Markdown'),('jsonl','JSONL'),('zip','ZIP (everything)')] %}
+        <a href="/api/documents/{{ doc.id }}/export/all?fmt={{ fmt }}">{{ name }}</a>
+        {% endfor %}
       </div>
-      <div class="field">
-        <div class="field-head">
-          <label for="ex-pages">Pages</label>
-          <span class="field-note" id="pages-summary" aria-live="polite"></span>
-        </div>
-        <input id="ex-pages" name="pages" placeholder="All pages  (or e.g. 1-5, 9)" autocomplete="off" spellcheck="false">
-        <div class="chips page-presets" id="page-presets" aria-label="Quick selections">
-          <button type="button" data-preset="all">All</button>
-          <button type="button" data-preset="first">First 5</button>
-          <button type="button" data-preset="scans" hidden>Scans only</button>
-          <button type="button" data-preset="missing" hidden>Not extracted yet</button>
-        </div>
-        <div class="page-map" id="page-map" role="group" aria-label="Pages to extract (click to toggle, shift-click for a range)"></div>
-        <div class="page-map-legend">
-          <span>Click a page to toggle it, Shift-click to select a range</span>
-          <span class="legend-key"><i class="key-scan"></i>scan</span>
-          <span class="legend-key"><i class="key-done"></i><span id="legend-done">has text from this engine</span></span>
-        </div>
+    </details>
+  </div>
+  <ul class="source-list">
+    {% for s in sources %}
+    <li>
+      <span class="src-dot src-{{ s.kind }}" aria-hidden="true"></span>
+      <span class="src-name">{% if s.brand %}{{ logo(s.brand, 'sm') }}{% endif %}<b title="{{ s.id }}">{{ s.label }}</b>
+        {% if s.kind == 'llm' and s.page_count %}<span class="muted small" title="Tokens in / out">{{ "{:,}".format(s.input_tokens) }} in · {{ "{:,}".format(s.output_tokens) }} out</span>{% endif %}</span>
+      <span class="src-count {{ 'done' if s.page_count == doc.page_count }}">{% if s.page_count %}{{ s.page_count }} / {{ doc.page_count }} pages{% else %}not extracted{% endif %}</span>
+      <span class="src-actions">
+        {% if s.page_count %}
+        <a class="btn small ghost" href="/documents/{{ doc.id }}/text?source={{ s.id|urlencode }}">Read</a>
+        <details class="menu"><summary class="btn small ghost icon-only" title="Export {{ s.label }}" aria-label="Export {{ s.label }}">{{ icon('download') }}</summary>
+          <div>
+            {% for fmt, name in [('txt','Plain text'),('md','Markdown'),('json','JSON'),('jsonl','JSONL (page per line)')] %}
+            <a href="/api/documents/{{ doc.id }}/export?source={{ s.id|urlencode }}&fmt={{ fmt }}">{{ name }}</a>
+            {% endfor %}
+          </div>
+        </details>
+        {% endif %}
+      </span>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
+
+<section class="ov-section">
+  <div class="ov-head"><h2>Pages</h2></div>
+  <div id="page-grid" class="page-grid"><p class="muted small">Loading pages…</p></div>
+</section>
+
+<div class="ov-foot">
+  <a href="/api/documents/{{ doc.id }}/source">{{ icon('download') }}Download original</a>
+  {% if doc.metadata %}
+  <details class="meta"><summary>{{ icon('info') }}File metadata</summary>
+    <dl>{% for k, v in doc.metadata.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}</dl>
+  </details>
+  {% endif %}
+  <div class="spacer"></div>
+  <button class="btn small ghost danger" id="delete-doc" data-name="{{ doc.filename }}">{{ icon('trash') }}Delete document</button>
+</div>
+
+{# Opened by the Extract button in the document header (or #extract in the URL). #}
+<dialog class="sheet" id="extract-sheet" aria-labelledby="extract-title">
+  <div class="sheet-head">
+    <h2 id="extract-title">Extract text</h2>
+    <button type="button" class="btn ghost icon-only" data-close-sheet title="Close (Esc)" aria-label="Close">{{ icon('x') }}</button>
+  </div>
+  <form id="extract-form" class="form sheet-body">
+    <div class="field">
+      <span class="field-label">With</span>
+      <div class="seg seg-wide" role="radiogroup" aria-label="Engine">
+        <label><input type="radio" name="kind" value="llm" checked> {{ icon('sparkles') }}An LLM</label>
+        <label><input type="radio" name="kind" value="ocr"> {{ icon('cpu') }}An OCR engine</label>
       </div>
-      <div id="ocr-options" hidden>
-        <label>OCR engine <span class="select-logo"><span id="ocr-engine-logo"></span>
-          <select name="engine" id="ocr-engine"></select></span></label>
-        <div class="small" id="ocr-engine-note"></div>
+    </div>
+    <div id="ocr-options" hidden>
+      <label>OCR engine <span class="select-logo"><span id="ocr-engine-logo"></span>
+        <select name="engine" id="ocr-engine"></select></span></label>
+      <div class="small" id="ocr-engine-note"></div>
+    </div>
+    <div id="llm-options">{% set picker_id = 'ex' %}{% include "_llm_picker.html" %}</div>
+    <div class="field">
+      <div class="field-head">
+        <label for="ex-pages">Pages</label>
+        <span class="field-note" id="pages-summary" aria-live="polite"></span>
       </div>
-      <div id="llm-options">{% set picker_id = 'ex' %}{% include "_llm_picker.html" %}
-        <div class="field preprocess-field">
+      <div class="chips page-presets" id="page-presets" aria-label="Quick selections">
+        <button type="button" data-preset="all">All</button>
+        <button type="button" data-preset="first">First 5</button>
+        <button type="button" data-preset="scans" hidden>Scans only</button>
+        <button type="button" data-preset="missing" hidden>Not extracted yet</button>
+      </div>
+      <input id="ex-pages" name="pages" placeholder="All pages  (or e.g. 1-5, 9)" autocomplete="off" spellcheck="false">
+      <div class="page-map" id="page-map" role="group" aria-label="Pages to extract (click to toggle, shift-click for a range)"
+           title="Click a page to toggle it, Shift-click to select a range"></div>
+      <div class="page-map-legend">
+        <span class="legend-key"><i class="key-scan"></i>scan</span>
+        <span class="legend-key"><i class="key-done"></i><span id="legend-done">has text from this engine</span></span>
+      </div>
+    </div>
+    <details class="more-options" id="more-options">
+      <summary><b>More options</b><span class="more-summary" id="more-summary"></span></summary>
+      <div class="more-body">
+        <div class="field preprocess-field" data-llm-only>
           <div class="field-head"><label for="ex-preprocess">Image preprocessing</label></div>
           <input id="ex-preprocess" name="preprocess" list="pre-presets" autocomplete="off"
-            placeholder="None: send the page as rendered" title="A preset name or steps like gray;auto;contrast=1.5">
+            placeholder="None: send the page as rendered" title="A preset name or steps like gray;auto;contrast=1.5. Tune it visually with Adjust on the Pages view.">
           <datalist id="pre-presets"></datalist>
-          <p class="hint">Tune it visually with {{ icon('sliders') }}<b>Adjust image</b> on the
-            <a href="/documents/{{ doc.id }}/pages/1">Pages</a> view. Each setting becomes its own source, so you can compare runs.</p>
         </div>
-        <div class="field per-request">
+        <div class="field per-request" data-llm-only>
           <div class="field-head">
-            <span class="field-label" id="per-request-label">Pages per request</span>
+            <span class="field-label" id="per-request-label" title="Send several pages in one call, as batching pipelines do. The reply is split back into pages, and the run becomes its own source.">Pages per request</span>
             <span class="field-note" id="per-request-summary" aria-live="polite"></span>
           </div>
           <div class="row per-request-row">
@@ -61,78 +126,16 @@
               <input name="per_request" type="number" min="1" max="20" placeholder="e.g. 8" inputmode="numeric" aria-label="Pages per request, other value">
             </label>
           </div>
-          <p class="hint">Send several pages in one call, as batching pipelines do. The reply is split back into pages, and
-            the run becomes its own source, so you can compare it with one page per request.</p>
         </div>
+        <label class="check"><input type="checkbox" name="force"> Re-run pages that are already extracted</label>
       </div>
-      <label class="check"><input type="checkbox" name="force"> Re-run pages that are already extracted</label>
-      <div class="row" style="margin-top:4px">
-        <button class="btn primary" type="submit">{{ icon('play') }}Start extraction</button>
-        <span class="small muted" id="extract-hint"></span>
-      </div>
-    </form>
-    <h3 class="h-icon" style="margin-top:24px">{{ icon('clock') }}Jobs</h3>
-    <div id="job-list" class="job-list"><p class="small muted">No jobs started for this document yet.</p></div>
-  </section>
-
-  <section class="card">
-    <h2 class="h-icon">{{ icon('layers') }}Extracted text sources</h2>
-    <p class="hint">Each engine, model and prompt you run becomes a source you can read, export or compare.</p>
-    <table class="table compact">
-      <thead><tr><th>Source</th><th>Pages</th><th>Tokens in / out</th><th></th></tr></thead>
-      <tbody>
-      {% for s in sources %}
-      <tr>
-        <td><span class="with-logo">{% if s.brand %}{{ logo(s.brand, 'sm') }}{% endif %}<b title="{{ s.id }}" style="font-weight:600">{{ s.label }}</b></span></td>
-        <td><span class="badge {{ 'ok' if s.page_count == doc.page_count }}">{{ s.page_count }}/{{ doc.page_count }}</span></td>
-        <td class="small muted">{% if s.kind == 'llm' %}{{ "{:,}".format(s.input_tokens) }} / {{ "{:,}".format(s.output_tokens) }}{% else %}–{% endif %}</td>
-        <td class="actions">
-          {% if s.page_count %}
-          <a class="btn small ghost" href="/documents/{{ doc.id }}/text?source={{ s.id|urlencode }}">{{ icon('book') }}Read</a>
-          <details class="menu"><summary class="btn small ghost">{{ icon('download') }}Export {{ icon('chevron-down') }}</summary>
-            <div>
-              {% for fmt, name in [('txt','Plain text'),('md','Markdown'),('json','JSON'),('jsonl','JSONL (page per line)')] %}
-              <a href="/api/documents/{{ doc.id }}/export?source={{ s.id|urlencode }}&fmt={{ fmt }}">{{ name }}</a>
-              {% endfor %}
-            </div>
-          </details>
-          {% else %}<span class="small muted">not extracted</span>{% endif %}
-        </td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
-    <div class="row" style="margin-top:18px">
-      <a class="btn" href="/documents/{{ doc.id }}/compare">Compare sources {{ icon('arrow-right') }}</a>
-      <details class="menu"><summary class="btn ghost" title="Every source with extracted text, in one file">{{ icon('download') }}Export all {{ icon('chevron-down') }}</summary>
-        <div>
-          {% for fmt, name in [('json','JSON'),('csv','CSV (column per source)'),('md','Markdown'),('jsonl','JSONL'),('zip','ZIP (everything)')] %}
-          <a href="/api/documents/{{ doc.id }}/export/all?fmt={{ fmt }}">{{ name }}</a>
-          {% endfor %}
-        </div>
-      </details>
-      <a class="btn ghost" href="/api/documents/{{ doc.id }}/source">{{ icon('download') }}Original</a>
-      <div class="spacer"></div>
-      <button class="btn ghost danger" id="delete-doc" data-name="{{ doc.filename }}">{{ icon('trash') }}Delete</button>
-    </div>
-    {% if doc.metadata %}
-    <details class="meta"><summary>{{ icon('info') }}File metadata</summary>
-      <dl>{% for k, v in doc.metadata.items() %}<dt>{{ k }}</dt><dd>{{ v }}</dd>{% endfor %}</dl>
     </details>
-    {% endif %}
-  </section>
-</div>
-
-<section>
-  <div class="section-head">
-    <h2 class="h-icon">{{ icon('file') }}Pages</h2>
-    <div class="legend-inline">
-      <span><span class="badge scan">scan</span> no text layer</span>
-      <span><span class="badge ok">OCR</span> OCR done (×n = several engines)</span>
-      <span><span class="badge ok">LLM</span> transcribed</span>
-    </div>
+  </form>
+  <div class="sheet-foot">
+    <span class="small muted" id="extract-hint"></span>
+    <button class="btn primary" type="submit" form="extract-form">{{ icon('play') }}Start extraction</button>
   </div>
-  <div id="page-grid" class="page-grid"><p class="muted small">Loading pages…</p></div>
-</section>
+</dialog>
+</div>
 {% endblock %}
 {% block scripts %}<script src="/static/document.js?v={{ version }}"></script>{% endblock %}

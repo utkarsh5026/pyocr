@@ -90,6 +90,24 @@ def test_html_pages_render(client, doc_id):
         assert client.get(f"/static/{asset}").status_code == 200, asset
 
 
+def test_calm_layout_keeps_every_page_reachable(client, doc_id):
+    """The top bar has three sections; the other pages stay one click away (section tabs, Jobs, Help, the palette)."""
+    home = client.get("/").text
+    nav = home.split('<nav class="mainnav"', 1)[1].split("</nav>", 1)[0]
+    assert nav.count("<a ") == 3 and all(f'href="{u}"' in nav for u in ("/documents", "/search", "/providers"))
+    for needle in ('href="/jobs"', 'href="/help"', 'id="palette-open"'):
+        assert needle in home
+    assert 'href="/models"' in client.get("/providers").text  # Settings → Models
+    assert 'href="/workspaces"' in client.get("/documents").text  # Documents → Workspaces
+    assert 'href="/leaderboard"' in client.get("/documents").text  # Documents → Leaderboard
+    overview = client.get(f"/documents/{doc_id}").text
+    # inside a document the document header replaces the section tabs, and Extract lives in a side sheet
+    assert 'class="section-tabs"' not in overview
+    assert 'id="extract-sheet"' in overview and 'id="more-options"' in overview and "data-open-extract" in overview
+    assert f'data-doc-id="{doc_id}"' in overview.split("<header", 1)[0]  # the palette reads it from <body>
+    assert 'data-open-extract' in client.get(f"/documents/{doc_id}/pages/1").text
+
+
 def test_providers_page_never_shows_values(tmp_path):
     app = create_app(Settings(data_dir=tmp_path, _env_file=None, openai_api_key="sk-secret-123"))
     with TestClient(app) as c:

@@ -235,8 +235,10 @@ async function selectOcrEngine(id) {
 function renderLlm(selectKey) {
   const sel = $("#llm-result-select");
   sel.innerHTML = state.llmResults.map((r) =>
-    `<option value="${esc(r.key)}">${esc(r.provider)} · ${esc(r.model)} · ${esc(r.prompt_mode)}${r.schema_label ? ` (${esc(r.schema_label)})` : ""}${r.preprocess ? " · adjusted image" : ""} · ${new Date(r.created_at * 1000).toLocaleString()}</option>`).join("");
+    `<option value="${esc(r.key)}">${esc(r.model)} · ${esc(r.prompt_mode)}${r.schema_label ? ` (${esc(r.schema_label)})` : ""}${r.preprocess ? " · adjusted image" : ""} · ${new Date(r.created_at * 1000).toLocaleString()}</option>`).join("");
   sel.disabled = $("#delete-llm").disabled = state.llmResults.length === 0;
+  // With one stored result the meta line already says which it is; the picker only matters when there are several.
+  $("#llm-result-row").hidden = state.llmResults.length < 2;
   if (selectKey) sel.value = selectKey;
   showLlmResult(sel.value);
 }
@@ -246,15 +248,15 @@ function showLlmResult(key) {
   renderExtraction(r);
   if (!r) {
     $("#llm-meta").innerHTML = "";
-    setText($("#llm-text"), "", "No transcription yet. Pick a provider and model above and click “Transcribe this page” (or press t).");
+    setText($("#llm-text"), "", "No transcription yet. Click “Transcribe this page” (or press t).");
     renderSide();
     return;
   }
   const tokens = r.input_tokens != null ? ` · ${fmtInt(r.input_tokens)} in / ${fmtInt(r.output_tokens)} out tokens` : "";
   const warns = (r.warnings || []).map((w) => `<div class="warn">⚠ ${esc(w)}</div>`).join("");
   const image = r.preprocess_label ? ` · image: <span class="badge accent" title="${esc(r.preprocess)}">${esc(r.preprocess_label)}</span>` : "";
-  $("#llm-meta").innerHTML = `${logoHtml(providerBrand(r.provider), "sm")} ${esc(r.provider_label || r.provider)} · <b>${esc(r.model)}</b> · ` +
-    `${(r.latency_ms / 1000).toFixed(1)}s${tokens}${r.cost ? ` · ${costHtml(r.cost)}` : ""} · ${r.text.length} chars${image}${warns}`;
+  $("#llm-meta").innerHTML = `<span title="${esc(r.provider_label || r.provider)}">${logoHtml(providerBrand(r.provider), "sm")}</span> <b>${esc(r.model)}</b> · ` +
+    `${(r.latency_ms / 1000).toFixed(1)}s${tokens}${r.cost ? ` · ${costHtml(r.cost)}` : ""} · ${fmtInt(r.text.length)} chars${image}${warns}`;
   setText($("#llm-text"), r.text);
   renderSide();
 }
@@ -268,6 +270,21 @@ function renderExtraction(r) {
   // a reply that isn't JSON has no table to show, so keep the raw text visible under the message
   $("#llm-text").hidden = isExtract && !state.showJson && r.data != null;
   $(".lbl", toggle).textContent = state.showJson ? "Fields" : "JSON";
+}
+
+/** The folded model setup's one-line summary: provider logo, model, prompt, and the image when it is adjusted. */
+function renderLlmSetup() {
+  const picker = state.picker;
+  if (!picker) return;
+  const p = picker.provider();
+  const root = $("#llm-setup");
+  const model = $("[data-model]", root).value.trim() || p.default_model || "no model";
+  const promptSel = $("[data-prompt]", root);
+  const prompt = (promptSel.selectedOptions[0]?.textContent || promptSel.value).replace(/\s*\(.*$|…$/g, "");
+  $("#llm-setup-summary").innerHTML = `<span title="${esc(p.label)}">${logoHtml(p.brand, "sm")}</span>` +
+    `<b>${esc(model)}</b> · ${esc(prompt)}` + (state.pre ? ` · <span class="badge accent">${esc(state.preLabel || "adjusted image")}</span>` : "") +
+    (p.configured ? "" : ' · <span class="warn">not configured</span>');
+  if (!p.configured) root.open = true;  // nothing can run until it is set up: show why
 }
 
 /** "Transcribe" or "Extract fields", following the prompt picked in the LLM picker. */
@@ -339,14 +356,16 @@ async function runLlm(force = false) {
   }, 1000);
   try {
     const result = await postJSON(pageUrl(n, "/llm"), body);
-    if (!result.cached) state.pages[n].llm_results += 1;
+    // A re-run replaces the stored result under the same key, so count what is stored rather than adding one.
+    const stored = await api(pageUrl(n, "/llm"));
+    state.pages[n].llm_results = stored.length;
     refreshPageBadges(n);
     if (n === state.page) {
-      state.llmResults = await api(pageUrl(n, "/llm"));
+      state.llmResults = stored;
       renderLlm(result.key);
       replayAnimation(out, "reveal");
       renderCompareOptions();
-      if (result.cached) toast("Showing the cached result. Use “re-run” to call the model again.");
+      if (result.cached) toast("Showing the cached result. Use ⋯ › Re-run to call the model again.");
     }
   } finally {
     clearInterval(tick);
@@ -615,6 +634,7 @@ function renderAdjustState() {
   badge.textContent = state.peek ? "Original" : "Adjusted · what the model sees";
   badge.classList.toggle("peek", state.peek);
   $("#ab-llm").hidden = !on;
+  renderLlmSetup();
   $("#llm-image-line").innerHTML = on
     ? `Image: <span class="badge accent">${esc(state.preLabel || "adjusted")}</span> ` +
       '<a href="#" data-adjust="open">Change</a> · <a href="#" data-adjust="clear">Use the original</a>'
@@ -792,12 +812,12 @@ function wire() {
   $("#native-library")?.addEventListener("change", guard((e) => selectLibrary(e.target.value)));
   $("#check-libraries")?.addEventListener("click", guard(checkLibraries));
   $("#run-llm").addEventListener("click", guard(() => runLlm(false)));
-  $("#rerun-llm").addEventListener("click", guard(() => runLlm(true)));
+  $("#rerun-llm").addEventListener("click", guard(() => { $("#llm-more").open = false; return runLlm(true); }));
   $("#llm-json-toggle").addEventListener("click", () => {
     state.showJson = !state.showJson;
     renderExtraction(state.llmResults.find((x) => x.key === $("#llm-result-select").value));
   });
-  $("#delete-llm").addEventListener("click", guard(deleteLlm));
+  $("#delete-llm").addEventListener("click", guard(() => { $("#llm-more").open = false; return deleteLlm(); }));
   $("#llm-result-select").addEventListener("change", (e) => showLlmResult(e.target.value));
   $("#run-compare").addEventListener("click", guard(runCompare));
   $("#ab-llm").addEventListener("click", guard(runAB));
@@ -877,6 +897,9 @@ function wire() {
     state.picker = await initLlmPicker($("[data-llm-picker]"), { page: () => ({ doc_id: DOC_ID, page: state.page }) });
     $("[data-llm-picker] [data-prompt]").addEventListener("change", syncLlmVerb);
     syncLlmVerb();
+    $("#llm-setup").addEventListener("change", renderLlmSetup);
+    $("#llm-setup").addEventListener("input", renderLlmSetup);
+    renderLlmSetup();
     state.pages = await api(docUrl("/pages"));
     renderPageList();
     if (location.hash === "#llm") switchTab("llm");

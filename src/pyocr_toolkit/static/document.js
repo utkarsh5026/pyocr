@@ -183,6 +183,17 @@ function updateForm() {
     : `up to <b>${plural(requests, "request")}</b>` + (requests > 1 && last ? ` (last one ${plural(last, "page")})` : "");
   reqNote.title = n > 1 ? "Pages already transcribed with this setup are skipped first, so there may be fewer." : "";
 
+  // "More options" stays folded; its summary line says what the hidden settings are set to.
+  for (const el of $$("#extract-form [data-llm-only]")) {
+    if (kind() !== "llm") el.hidden = true;
+    else if (!el.classList.contains("per-request")) el.hidden = false;
+  }
+  const preSpec = $("#extract-form input[name=preprocess]").value.trim();
+  const force = $("#extract-form input[name=force]").checked;
+  $("#more-summary").textContent = (kind() === "llm"
+    ? [preSpec ? `image: ${preSpec}` : "original image", picker?.isExtract() ? null : `${n} page${n === 1 ? "" : "s"} per request`]
+    : []).concat(force ? "re-run on" : "skip done pages").filter(Boolean).join(" · ");
+
   const what = sel.error ? "the selected pages" : sel.all ? `all ${plural(PAGE_COUNT, "page")}` : plural(count, "page");
   const pre = $("#extract-form input[name=preprocess]").value.trim();
   $("#extract-hint").textContent = kind() === "llm" && picker
@@ -241,7 +252,10 @@ async function loadPages() {
 
 async function refreshJobs() {
   const jobs = await api(`/api/jobs?doc_id=${DOC_ID}`);
-  if (jobs.length) $("#job-list").innerHTML = jobs.map((j) => jobHtml(j)).join("");
+  // Only what needs attention: running jobs, and finished ones that had failures. The rest is on the Jobs page.
+  const shown = jobs.filter((j) => ["running", "queued"].includes(j.status) || j.failed > 0);
+  $("#job-list").innerHTML = shown.map((j) => jobHtml(j)).join("");
+  $("#jobs-section").hidden = !shown.length;
   return jobs;
 }
 
@@ -284,11 +298,35 @@ $("#extract-form").addEventListener("submit", guard(async (e) => {
       (body.force ? "RE-SENT (re-run is on)." : "skipped."))) return;
   }
   const job = await postJSON(`/api/documents/${DOC_ID}/jobs`, body);
+  closeSheet();
+  window.dispatchEvent(new Event("pyocr:jobs-changed"));
   await refreshJobs();
   follow(job.id);
 }));
 $$("#extract-form input").forEach((i) => i.addEventListener("input", updateForm));
 $$("#extract-form input[name=kind]").forEach((i) => i.addEventListener("change", updateForm));
+
+// ---- the Extract sheet: a side panel over the overview, opened from the header button, #extract or "x"
+const sheet = $("#extract-sheet");
+function openSheet() {
+  if (!sheet.open) sheet.showModal();
+  if (location.hash !== "#extract") history.replaceState(null, "", "#extract");
+}
+function closeSheet() {
+  if (sheet.open) sheet.close();
+}
+sheet.addEventListener("close", () => {
+  if (location.hash === "#extract") history.replaceState(null, "", location.pathname + location.search);
+});
+sheet.addEventListener("click", (e) => { if (e.target === sheet) closeSheet(); });  // click on the backdrop
+$$("[data-close-sheet]").forEach((b) => b.addEventListener("click", closeSheet));
+$$("[data-open-extract]").forEach((a) => a.addEventListener("click", (e) => { e.preventDefault(); openSheet(); }));
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "x" || e.ctrlKey || e.metaKey || e.altKey || e.target.closest("input, textarea, select, [contenteditable]")) return;
+  if (document.querySelector("dialog[open]")) return;
+  e.preventDefault();
+  openSheet();
+});
 
 $("#delete-doc").addEventListener("click", guard(async (e) => {
   if (!confirm(`Delete ${e.currentTarget.dataset.name} and all of its OCR/LLM results?`)) return;
@@ -315,6 +353,7 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
       ocr.parentElement.title = "No OCR engine is installed or configured: see Providers";
     }
     updateForm();
+    if (location.hash === "#extract") openSheet();
     await loadPages();
     const jobs = await refreshJobs();
     jobs.filter((j) => ["running", "queued"].includes(j.status)).forEach((j) => follow(j.id));

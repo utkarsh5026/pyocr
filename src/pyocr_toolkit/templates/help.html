@@ -44,7 +44,7 @@
   <dt>Document → Overview</dt><dd>Start background extractions with any OCR engine or LLM: type a page range or click pages on the page map
     (Shift-click selects a range; presets pick scans only or pages with no text from that engine yet), and choose how many
     pages go in each LLM request. Also lists every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
-  <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text, OCR (pick the engine), LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
+  <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text (pick the PDF library), OCR (pick the engine), LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
   <dt>Document → Full text</dt><dd>The whole document from one source, page by page, optionally next to the page images. Find-in-text, copy and download.</dd>
   <dt>Document → Compare</dt><dd>Pick a reference (A) and a candidate (B). You get the whole-document error rates, a per-page CER chart (click a bar to open that page) and the selected page's text side by side, with words only in A and only in B highlighted. It opens on the worst page.</dd>
   <dt><a href="/search">Search</a></dt><dd>Search every document in the library at once.</dd>
@@ -82,6 +82,14 @@
   nothing is guessed, but it only exists for <i>born-digital</i> files. A scanner only records a picture of the page,
   so a scanned PDF has no glyphs and no native text. A few PDFs also have broken glyph mappings, so native text can
   be gibberish even though the page looks fine.</p>
+<h3>1b. Other PDF libraries</h3>
+<p>PyMuPDF is not the only way to read that text layer. <b>pypdf</b>, <b>pdfplumber</b>, <b>pdfminer.six</b> and
+  <b>pypdfium2</b> (PDFium, Chrome's engine) each rebuild words and lines their own way, so reading order, spacing,
+  ligatures and odd font encodings can differ. If your pipeline uses one of them, test that one. Each installed
+  library is its own source (<code>native:pypdf</code>, <code>native:pdfplumber</code>, ...). On the page inspector's
+  <i>Native</i> tab, pick a library, or press <i>Test all libraries</i> to see which libraries get text out of the
+  page and how much. Compare and Export list them too. Install them with
+  <code>pip install "pyocr-toolkit[pdf]"</code>; they read PDF files only.</p>
 <h3>2. Tesseract OCR: turning pixels back into characters</h3>
 <p>For a picture, all we have is pixels. pyocr renders the page at <code>OCR_DPI</code> (300 by default; small text
   needs enough pixels per character) and gives it to <b>Tesseract</b>, an open-source OCR engine. Tesseract finds
@@ -260,6 +268,8 @@ pyocr extract FILE --engine llm --pages-per-request 5  # 5 pages in each LLM req
 pyocr extract FILE --engine ocr                       # Tesseract, all pages, text to stdout
 pyocr extract FILE --engine ocr:paddleocr             # another OCR engine (`pyocr engines` lists them)
 pyocr extract FILE --engine native --format md        # embedded text layer only
+pyocr extract FILE --engine native:pdfplumber         # the text layer as another PDF library reads it
+pyocr libraries                                       # which PDF libraries are installed
 pyocr compare FILE -p openai -m gpt-6.2-sol                 # per-page OCR/native error rate vs an LLM
 pyocr extract FILE --preprocess clean                 # adjust the image first (a preset or e.g. 'gray;auto;contrast=1.5')
 pyocr import a.pdf b.pdf scans.zip folder/ -w "Q3"    # add many files as one workspace (zips unpacked)

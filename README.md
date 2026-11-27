@@ -33,7 +33,7 @@ checking that step. Upload a document and you get three versions of every page:
 
 | | Source | What it is | Good at | Weak at |
 |---|---|---|---|---|
-| 📄 | **Native text** | Text already embedded in the file (PyMuPDF) | Born-digital PDFs. Exact and instant. | Scans have none. Broken font maps produce gibberish. |
+| 📄 | **Native text** | Text already embedded in the file (PyMuPDF, or pypdf / pdfplumber / pdfminer.six / pypdfium2) | Born-digital PDFs. Exact and instant. | Scans have none. Broken font maps produce gibberish. |
 | 🔍 | **OCR** | Tesseract, or any of 8 other OCR engines (below), on the rendered page image | Free/local or cheap cloud, gives word positions | Varies by engine: Tesseract struggles with tables, columns, poor scans, handwriting |
 | ✨ | **LLM transcription** | A vision LLM told to copy the page *verbatim* | Hard pages, layout, context | Costs money. May quietly "fix" or skip text. |
 
@@ -188,6 +188,26 @@ model weights. Cloud engines send the rendered page image to that service, and n
 Mistral OCR returns Markdown without word positions, so its search hits can't be drawn on the page image. In the
 API, OCR sources are `ocr` (Tesseract) and `ocr:<engine>`, e.g. `ocr:easyocr`.
 
+## PDF libraries
+
+Native text comes from PyMuPDF, but Python has other PDF libraries, and they don't all read a text layer the same
+way: reading order, spacing, ligatures and odd font encodings come out differently. If your pipeline uses one of
+them, check *that* library on your PDFs. Each installed library is its own source, `native:<library>`:
+
+| Library | Source | Notes |
+|---|---|---|
+| PyMuPDF | `native` | always installed; word boxes |
+| pypdf | `native:pypdf` | pure Python; used by many LangChain / LlamaIndex loaders |
+| pdfplumber | `native:pdfplumber` | built on pdfminer.six; word boxes |
+| pdfminer.six | `native:pdfminer` | pure-Python layout analysis |
+| pypdfium2 | `native:pypdfium2` | PDFium, the engine in Chrome |
+
+Install them all with `pip install "pyocr-toolkit[pdf]"` (or just the ones you need). In the page inspector, the
+**Native** tab has a library picker and a **Test all libraries** button that reads the page with each one and shows
+whether it got text out, how much, and how fast. The Compare page and exports list every installed library, so you
+can score `native:pypdf` against `native` across a whole document. `pyocr libraries` shows what's installed, and
+`pyocr extract FILE --engine native:pdfplumber` extracts with one of them. They read PDF files only.
+
 ## Command line
 
 ```bash
@@ -196,6 +216,7 @@ pyocr extract report.pdf --engine llm --pages-per-request 5  # 5 pages in each L
 pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdown to stdout
 pyocr extract scan.pdf --engine ocr:easyocr                  # any OCR engine (see `pyocr engines`)
 pyocr extract born-digital.pdf --engine native              # embedded text only, no network
+pyocr extract born-digital.pdf --engine native:pypdf        # the same text layer as pypdf reads it
 pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR / native CER vs an LLM
 pyocr extract scan.pdf -p anthropic --preprocess 'gray;auto;contrast=1.5'  # adjust the image first (or a preset: clean, bw, ...)
 pyocr import a.pdf b.pdf scans.zip folder/ -w invoices      # add many files as one workspace (zips unpacked)

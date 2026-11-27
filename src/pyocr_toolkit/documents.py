@@ -13,6 +13,7 @@ On disk, each upload lives in its own folder::
         ocr/<page>.json    # cached Tesseract result (text + word boxes)
         ocr/<engine>/<page>.json  # cached result of another OCR engine (EasyOCR, ...)
         llm/<page>/<key>.json   # cached LLM transcriptions
+        native/<library>/<page>.json  # text layer as another PDF library reads it (pypdf, ...)
 
 Page numbers are **0-based** everywhere in the Python/HTTP API; the UI adds 1
 when displaying them.
@@ -99,7 +100,7 @@ class Word:
 class TextLayer:
     """Text of one page from one engine, plus word boxes in PDF points."""
 
-    source: str  # "native" | "ocr" (Tesseract) | "ocr:<engine>"
+    source: str  # "native" | "native:<library>" | "ocr" (Tesseract) | "ocr:<engine>"
     text: str
     words: list[Word]
     elapsed_ms: float | None = None
@@ -225,7 +226,8 @@ class OpenDocument:
             t0 = time.perf_counter()
             text = page.get_text("text", sort=True)
             words = _words_from_page(page)
-            return TextLayer("native", text, words, elapsed_ms=round((time.perf_counter() - t0) * 1000, 1))
+            return TextLayer("native", text, words, elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
+                             meta={"library": "pymupdf", "label": "PyMuPDF", "version": pymupdf.VersionBind})
 
     def _ocr_cache_path(self, number: int, engine: str = DEFAULT_OCR_ENGINE) -> Path:
         if engine == DEFAULT_OCR_ENGINE:
@@ -275,6 +277,21 @@ class OpenDocument:
     def cached_ocr_text(self, number: int, engine: str = DEFAULT_OCR_ENGINE) -> TextLayer | None:
         cache = self._ocr_cache_path(number, engine)
         return TextLayer.from_json(json.loads(cache.read_text())) if cache.exists() else None
+
+    # -- other PDF libraries (see pdftext.py) --------------------------------
+    def _native_cache_path(self, number: int, library: str) -> Path:
+        if not _ENGINE_ID_RE.match(library):
+            raise DocumentError(f"bad PDF library id '{library}'")
+        return self.folder / "native" / library / f"{number}.json"
+
+    def cached_native_layer(self, number: int, library: str) -> TextLayer | None:
+        cache = self._native_cache_path(number, library)
+        return TextLayer.from_json(json.loads(cache.read_text())) if cache.exists() else None
+
+    def save_native_layer(self, number: int, library: str, layer: TextLayer) -> None:
+        cache = self._native_cache_path(number, library)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(layer.to_json(), ensure_ascii=False))
 
     # -- LLM result cache -----------------------------------------------------
     def _llm_dir(self, number: int) -> Path:

@@ -1,4 +1,5 @@
-/* Providers page: edit credentials, rate the model being tested, "Test connection" buttons. */
+/* Providers page: edit credentials, rate the model being tested, "Test connection" buttons for LLM
+ * providers and OCR engines. */
 "use strict";
 
 $$(".provider").forEach((card) => {
@@ -27,6 +28,11 @@ $$(".provider").forEach((card) => {
   if (!form) return;
   // Nothing configured anywhere yet: open the first card's form so the next step is obvious.
   if (!$("[data-provider-ready]") && card === $(".provider")) form.closest("details").open = true;
+  bindCredForm(form, `/api/providers/${pid}/credentials`);
+});
+
+/** Save the settings typed into a credentials form (blank fields keep their value). */
+function bindCredForm(form, url) {
   form.addEventListener("submit", guard(async (ev) => {
     ev.preventDefault();
     const values = {};
@@ -36,9 +42,30 @@ $$(".provider").forEach((card) => {
       $("[data-cred-result]", form).innerHTML = '<span class="muted">Nothing to save.</span>';
       return;
     }
-    const r = await postJSON(`/api/providers/${pid}/credentials`, { values, clear });
+    const r = await postJSON(url, { values, clear });
     $$("input[type=password]", form).forEach((i) => { i.value = ""; });  // don't keep keys in the DOM
     toast(r.provider.configured ? `${r.provider.label} saved and ready` : `Saved. Still missing: ${r.provider.missing.join(", ")}`);
     setTimeout(() => location.reload(), 400);  // badges and tables are server-rendered
   }));
+}
+
+$$(".engine-card").forEach((card) => {
+  const form = $("[data-cred-form]", card);
+  if (form) bindCredForm(form, `/api/ocr-engines/${card.dataset.engineId}/credentials`);
+  const btn = $("[data-test-engine]", card);
+  const out = $("[data-test-result]", card);
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    out.innerHTML = "OCRing a small test image… (local engines may download their model first)";
+    try {
+      const r = await postJSON(`/api/ocr-engines/${card.dataset.engineId}/test`, {});
+      out.innerHTML = `${r.ok ? '<span class="good">✓ Works.</span>' : '<span class="warn">Ran, but the text did not match.</span>'}
+        Read <code>${esc(r.text)}</code> (expected <code>${esc(r.expected)}</code>)${r.model ? ` with <b>${esc(r.model)}</b>` : ""}
+        in ${(r.latency_ms / 1000).toFixed(1)}s.`;
+    } catch (e) {
+      out.innerHTML = `<span class="err">✗ ${esc(e.message)}</span>`;
+    } finally {
+      btn.disabled = false;
+    }
+  });
 });

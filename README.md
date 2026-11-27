@@ -33,8 +33,8 @@ checking that step. Upload a document and you get three versions of every page:
 
 | | Source | What it is | Good at | Weak at |
 |---|---|---|---|---|
-| 📄 | **Native text** | Text already embedded in the file (PyMuPDF) | Born-digital PDFs. Exact and instant. | Scans have none. Broken font maps produce gibberish. |
-| 🔍 | **Tesseract OCR** | Classic OCR on the rendered page image | Free, local, fast, gives word positions | Tables, columns, poor scans, handwriting |
+| 📄 | **Native text** | Text already embedded in the file (PyMuPDF, or pypdf / pdfplumber / pdfminer.six / pypdfium2) | Born-digital PDFs. Exact and instant. | Scans have none. Broken font maps produce gibberish. |
+| 🔍 | **OCR** | Tesseract, or any of 8 other OCR engines (below), on the rendered page image | Free/local or cheap cloud, gives word positions | Varies by engine: Tesseract struggles with tables, columns, poor scans, handwriting |
 | ✨ | **LLM transcription** | A vision LLM told to copy the page *verbatim* | Hard pages, layout, context | Costs money. May quietly "fix" or skip text. |
 
 Then you can:
@@ -46,6 +46,10 @@ Then you can:
 
 **LLM providers:** Claude (Anthropic API), OpenAI, Azure OpenAI, Claude on Azure (Microsoft Foundry), Google
 Gemini, and any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter) for local or private models.
+
+**OCR engines:** Tesseract (default), plus RapidOCR, EasyOCR, PaddleOCR and docTR running locally, and Google
+Cloud Vision, Azure AI Document Intelligence, AWS Textract and Mistral OCR in the cloud. Each engine is its own
+source, so you can score engines against each other or against an LLM.
 
 **Inputs:** PDF, XPS, EPUB, CBZ, MOBI, FB2, SVG, PNG, JPEG, TIFF (multi-page), BMP, GIF, WebP and anything else
 [PyMuPDF](https://pymupdf.readthedocs.io/) opens.
@@ -131,7 +135,7 @@ Everything you upload and extract is stored in `./data` (change it with `DATA_DI
 | **Home** `/` | Drop files to upload; see setup status and recent documents. |
 | **Library** `/documents` | Document cards showing native / OCR / LLM coverage and how many pages still have no text. Filter by status, workspace or name; delete. |
 | **Workspaces** `/workspaces` | Named groups of documents. Uploading several files or a `.zip` offers to create one, with suggested names (from the file names, or `adjective-scientist` like `festive-albattani`). Open one to rename it, add files or remove documents. |
-| **Overview** `/documents/{id}` | Start background extraction (Tesseract or any LLM) for all pages or a range such as `1-5,9`; follow progress; see every *source* (engine + model + prompt) with token usage; export; page thumbnails. |
+| **Overview** `/documents/{id}` | Start background extraction (any OCR engine or LLM) for all pages or a range such as `1-5,9`, typed or picked on a clickable page map (Shift-click for a range; presets for scans only or pages without text yet); choose pages per LLM request; follow progress; see every *source* (engine + model + prompt) with token usage; export; page thumbnails. |
 | **Page inspector** `/documents/{id}/pages/{n}` | Page image next to native, OCR and LLM text; run OCR or an LLM on just this page; per-page diff; a *Side by side* tab with all three texts in synced columns; search hits drawn on the image; *Adjust* to preprocess the image the LLM receives (filters, fine-tuning, crop/rotate) and A/B it against the original. Keyboard: `←/→`, `/`, `1-5`, `t`, `o`, `e`. |
 | **Full text** `/documents/{id}/text` | Read the whole document from one source, optionally beside the page images; find, copy, download. |
 | **Compare** `/documents/{id}/compare` | Score source B against source A on every page: document-level CER/WER, word errors split into misread / missed / added, how many numbers (amounts, dates, IDs) were read exactly, a clickable CER-per-page chart, and an aligned side-by-side diff of the selected page with a breakdown of its errors by kind (opens on the worst page). Works for OCR vs LLM, native vs LLM, or **model vs model**. |
@@ -162,20 +166,78 @@ and the hint under each model box say whether a model suits transcription (custo
 images. For a fully local setup, run Ollama with a vision model and set
 `OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1`.
 
+## Configure OCR engines
+
+Tesseract is the default engine. Every other engine is optional, and the Providers page (and `pyocr engines`) shows
+which are ready, with a **Test** button for each. Cloud keys and engine settings can be set there too, or as
+environment variables. Local engines run on your machine; the first run downloads the
+model weights. Cloud engines send the rendered page image to that service, and nowhere else.
+
+| Engine | Kind | Install / required settings | Optional |
+|---|---|---|---|
+| Tesseract | local | system package (`apt install tesseract-ocr`, `brew install tesseract`) | `TESSERACT_LANGUAGE` |
+| RapidOCR | local | `pip install "pyocr-toolkit[rapidocr]"` (ONNX Runtime, no PyTorch) | – |
+| EasyOCR | local | `pip install "pyocr-toolkit[easyocr]"` (PyTorch) | `EASYOCR_LANGUAGES`, `OCR_GPU` |
+| PaddleOCR | local | `pip install "pyocr-toolkit[paddleocr]"` (PaddlePaddle) | `PADDLEOCR_LANGUAGE` |
+| docTR | local | `pip install "pyocr-toolkit[doctr]"` (PyTorch) | `OCR_GPU` |
+| Google Cloud Vision | cloud | `GOOGLE_VISION_API_KEY` | `GOOGLE_VISION_LANGUAGE_HINTS` |
+| Azure AI Document Intelligence | cloud | `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`, `AZURE_DOCUMENT_INTELLIGENCE_KEY` | – |
+| AWS Textract | cloud | `pip install "pyocr-toolkit[textract]"`, `AWS_REGION` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (or `~/.aws`) |
+| Mistral OCR | cloud | `MISTRAL_API_KEY` | `MISTRAL_OCR_MODEL` (default `mistral-ocr-latest`) |
+
+Mistral OCR returns Markdown without word positions, so its search hits can't be drawn on the page image. In the
+API, OCR sources are `ocr` (Tesseract) and `ocr:<engine>`, e.g. `ocr:easyocr`.
+
+## PDF libraries
+
+Native text comes from PyMuPDF, but Python has other PDF libraries, and they don't all read a text layer the same
+way: reading order, spacing, ligatures and odd font encodings come out differently. If your pipeline uses one of
+them, check *that* library on your PDFs. Each installed library is its own source, `native:<library>`:
+
+| Library | Source | Notes |
+|---|---|---|
+| PyMuPDF | `native` | always installed; word boxes |
+| pypdf | `native:pypdf` | pure Python; used by many LangChain / LlamaIndex loaders |
+| pdfplumber | `native:pdfplumber` | built on pdfminer.six; word boxes |
+| pdfminer.six | `native:pdfminer` | pure-Python layout analysis |
+| pypdfium2 | `native:pypdfium2` | PDFium, the engine in Chrome |
+
+Install them all with `pip install "pyocr-toolkit[pdf]"` (or just the ones you need). In the page inspector, the
+**Native** tab has a library picker and a **Test all libraries** button that reads the page with each one and shows
+whether it got text out, how much, and how fast. The Compare page and exports list every installed library, so you
+can score `native:pypdf` against `native` across a whole document. `pyocr libraries` shows what's installed, and
+`pyocr extract FILE --engine native:pdfplumber` extracts with one of them. They read PDF files only.
+
 ## Command line
 
 ```bash
 pyocr extract report.pdf --engine llm -p anthropic --pages 1-5 --format jsonl -o report.jsonl
+pyocr extract report.pdf --engine llm --pages-per-request 5  # 5 pages in each LLM request
 pyocr extract scan.tiff --engine ocr --format md            # Tesseract, Markdown to stdout
+pyocr extract scan.pdf --engine ocr:easyocr                  # any OCR engine (see `pyocr engines`)
 pyocr extract born-digital.pdf --engine native              # embedded text only, no network
+pyocr extract born-digital.pdf --engine native:pypdf        # the same text layer as pypdf reads it
 pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR / native CER vs an LLM
 pyocr extract scan.pdf -p anthropic --preprocess 'gray;auto;contrast=1.5'  # adjust the image first (or a preset: clean, bw, ...)
 pyocr import a.pdf b.pdf scans.zip folder/ -w invoices      # add many files as one workspace (zips unpacked)
 pyocr providers                                             # which providers are ready
+pyocr engines                                               # which OCR engines are ready
 python -m pyocr_toolkit --help                              # same CLI without the script on PATH
 ```
 
 Documents processed on the command line also appear in the web app's library.
+
+### Several pages per LLM request
+
+If your pipeline sends a few pages in one LLM call, set **Pages per request** on the Overview page (or
+`--pages-per-request N`, up to 20) to measure that setup. Each image goes out right after a label like `Page 5`, and the
+model starts each page with `=== PAGE 5 ===`. The reply is split there, and each page is stored, scored and exported on
+its own. A page whose marker is missing or repeated, or that the output limit cut off, is sent again on its own and
+gets a warning, so text is never assigned to a page by guessing. The batch size is part of the prompt, so a batched
+run is its own source: compare it with one page per request to see what batching costs in accuracy. Tokens of a
+shared request are split evenly over its pages. Batching saves only the repeated system prompt (about 10% of input
+tokens), so its main effect is fewer requests. `LLM_BATCH_MAX_OUTPUT_TOKENS` (default 32000) sets the output limit
+for these requests.
 
 ### Batch uploads and workspaces
 
@@ -190,8 +252,8 @@ you ask otherwise.
 
 1. **Native text.** A PDF page is a list of drawing instructions ("glyph 37 at (72, 700)"). Born-digital files map
    each glyph back to a character, so the text can be rebuilt exactly. A scan is only a picture, so it has no text.
-2. **OCR.** The page is rendered to pixels (300 DPI) and Tesseract recognises characters from their shapes,
-   reporting a box for each word. That is why search can highlight OCR hits on the page.
+2. **OCR.** The page is rendered to pixels (300 DPI) and an OCR engine (Tesseract by default) recognises characters
+   from their shapes, reporting a box for each word (or line, split into words). That is why search can highlight OCR hits on the page.
 3. **LLM.** The page image goes to a vision model with a strict "transcribe, don't correct" prompt
    ([`prompts.py`](https://github.com/utkarsh5026/pyocr/blob/main/src/pyocr_toolkit/llm/prompts.py)). It reads in context, so it is strong on hard pages, but it can
    "fix" typos, which the diff view exposes.

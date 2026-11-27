@@ -99,15 +99,26 @@
     </nav>
 
     <div class="tab-body" data-tab="native">
-      <div class="tab-meta"><span id="native-meta"></span><div class="spacer"></div>
+      <div class="tab-meta">
+        {% if doc.is_pdf %}<select id="native-library" aria-label="PDF library"
+          title="Which Python PDF library reads the embedded text layer"></select>
+        <button id="check-libraries" class="btn small" title="Read this page with every PDF library">{{ icon('diff') }}Test all libraries</button>{% endif %}
+        <div class="spacer"></div>
         <button class="btn small ghost" data-copy="#native-text" title="Copy text">{{ icon('copy') }}Copy</button></div>
+      <div id="native-meta" class="tab-meta small"></div>
+      <div id="native-libraries" class="table-wrap" hidden></div>
       <pre id="native-text" class="text"></pre>
     </div>
 
     <div class="tab-body" data-tab="ocr" hidden>
-      <div class="tab-meta"><span id="ocr-meta"></span><div class="spacer"></div>
+      <div class="tab-meta">
+        <span class="select-logo ocr-engine-pick"><span id="ocr-engine-logo"></span>
+          <select id="ocr-engine" aria-label="OCR engine" title="OCR engine (✓ = already run on this page)"></select></span>
+        <button id="run-ocr" class="btn small primary">{{ icon('play') }}<span class="lbl">Run OCR</span></button>
+        <div class="spacer"></div>
         <button class="btn small ghost" data-copy="#ocr-text" title="Copy text">{{ icon('copy') }}Copy</button>
-        <button id="run-ocr" class="btn small">{{ icon('play') }}<span class="lbl">Run OCR</span></button></div>
+      </div>
+      <div id="ocr-meta" class="tab-meta small"></div>
       <pre id="ocr-text" class="text"></pre>
     </div>
 
@@ -132,7 +143,7 @@
     <div class="tab-body" data-tab="side" hidden>
       <div class="side-cols">
         <section class="side-col"><div class="side-head"><b>{{ icon('type') }}Native</b><span id="side-native-meta"></span></div><pre id="side-native" class="text"></pre></section>
-        <section class="side-col"><div class="side-head"><b>{{ icon('cpu') }}OCR</b><span id="side-ocr-meta"></span></div><pre id="side-ocr" class="text"></pre></section>
+        <section class="side-col"><div class="side-head"><b id="side-ocr-title">{{ icon('cpu') }}OCR</b><span id="side-ocr-meta"></span></div><pre id="side-ocr" class="text"></pre></section>
         <section class="side-col"><div class="side-head"><b>{{ icon('sparkles') }}LLM</b><span id="side-llm-meta"></span></div><pre id="side-llm" class="text"></pre></section>
       </div>
     </div>

@@ -8,7 +8,9 @@ const DOC_ID = cRoot.dataset.docId;
 const cmp = { a: null, b: null, pages: [], page: null };
 
 const optLabel = (sel) => sel.selectedOptions[0]?.textContent.replace(/\s*\(\d+\/\d+\)$/, "") || "";
-const textRef = (v) => (v.startsWith("llm:") ? { source: "llm", key: v.slice(4) } : { source: v });
+const textRef = (v) => (v.startsWith("llm:") ? { source: "llm", key: v.slice(4) }
+  : v.startsWith("ocr:") ? { source: "ocr", engine: v.slice(4) }
+  : v.startsWith("native:") ? { source: "native", library: v.slice(7) } : { source: v });
 
 function pickDefaults() {
   const p = new URLSearchParams(location.search);
@@ -17,7 +19,8 @@ function pickDefaults() {
   const has = (sel, v) => enabled(sel).includes(v);
   const llm = enabled(a).find((v) => v.startsWith("llm:"));
   a.value = has(a, p.get("a")) ? p.get("a") : (llm || "native");
-  const fallback = ["ocr", "native", ...enabled(b)].find((v) => has(b, v) && v !== a.value);
+  const ocrIds = enabled(b).filter((v) => v === "ocr" || v.startsWith("ocr:"));
+  const fallback = [...ocrIds, "native", ...enabled(b)].find((v) => has(b, v) && v !== a.value);
   b.value = has(b, p.get("b")) && p.get("b") !== a.value ? p.get("b") : (fallback || a.value);
 }
 

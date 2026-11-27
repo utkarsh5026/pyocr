@@ -81,7 +81,8 @@ def test_html_pages_render(client, doc_id):
     assert r.status_code == 404 and "unknown document" in r.text and "<html" in r.text
     # static assets referenced by the templates exist
     for asset in ["common.js", "workspace.js", "document.js", "reader.js", "compare.js", "search.js",
-                  "jobs.js", "providers.js", "models.js", "library.js", "workspaces.js", "styles.css"]:
+                  "jobs.js", "providers.js", "models.js", "library.js", "workspaces.js", "styles.css",
+                  "logos/claude.svg"]:
         assert client.get(f"/static/{asset}").status_code == 200, asset
 
 
@@ -263,3 +264,17 @@ def test_llm_results_carry_cost(client, doc_id):
     r = client.post(f"/api/documents/{doc_id}/pages/0/llm", json={"provider": "fake"}).json()
     assert "cost" in r and r["cost"] is None  # the fake model has no catalog price
     assert client.get(f"/api/documents/{doc_id}/pages/0/llm").json()[0]["cost"] is None
+
+
+def test_upload_pickers_match_supported_extensions():
+    """Every file picker offers exactly what the server accepts (plus .zip), so no supported type is hidden."""
+    import re
+
+    from pyocr_toolkit.documents import SUPPORTED_EXTENSIONS
+
+    templates = Path(__file__).resolve().parent.parent / "src" / "pyocr_toolkit" / "templates"
+    for name in ("base.html", "home.html", "workspace_detail.html"):
+        lists = re.findall(r'accept="([^"]+)"', (templates / name).read_text(encoding="utf-8"))
+        assert lists, name
+        for accept in lists:
+            assert set(accept.split(",")) == SUPPORTED_EXTENSIONS | {".zip"}, name

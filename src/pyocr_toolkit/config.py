@@ -32,10 +32,46 @@ class Settings(BaseSettings):
     # How many LLM calls may run at once when transcribing many pages.
     llm_concurrency: int = 4
     llm_timeout_s: float = 300.0
+    # Output-token limit for a request that carries several pages ("pages per
+    # request" > 1). Single-page requests keep 16000. Lower it if a model's own
+    # output limit is smaller (the API then rejects the request).
+    llm_batch_max_output_tokens: int = 32000
     # Rupees per US dollar, used to show LLM costs in ₹ next to the USD list
     # prices from the model catalog. Not fetched live (no outbound calls besides
     # the chosen provider); ~92.5 on 2026-11-26. Set it to today's rate.
     usd_inr_rate: float = 92.5
+
+    # --- extra OCR engines ---------------------------------------------------
+    # Longest edge (px) of the page image given to the non-Tesseract OCR
+    # engines (local models and cloud APIs). OCR_DPI is lowered to fit.
+    ocr_max_edge_px: int = 4000
+    ocr_timeout_s: float = 120.0
+    # Run local deep-learning engines (EasyOCR, PaddleOCR, docTR) on a GPU.
+    ocr_gpu: bool = False
+    # Comma-separated EasyOCR language codes, e.g. "en,de".
+    easyocr_languages: str = "en"
+    # PaddleOCR language code, e.g. "en", "ch", "german", "japan".
+    paddleocr_language: str = "en"
+
+    # Google Cloud Vision (DOCUMENT_TEXT_DETECTION)
+    google_vision_api_key: str | None = None
+    # Optional comma-separated language hints ("en,de"); empty = auto-detect.
+    google_vision_language_hints: str = ""
+
+    # Azure AI Document Intelligence (prebuilt-read model)
+    azure_document_intelligence_endpoint: str | None = None
+    azure_document_intelligence_key: str | None = None
+
+    # AWS Textract (DetectDocumentText). Credentials can also come from the
+    # usual AWS chain (~/.aws/credentials, AWS_PROFILE, instance roles).
+    aws_region: str | None = None
+    aws_access_key_id: str | None = None
+    aws_secret_access_key: str | None = None
+    aws_session_token: str | None = None
+
+    # Mistral OCR API
+    mistral_api_key: str | None = None
+    mistral_ocr_model: str = "mistral-ocr-latest"
 
     # --- OpenAI --------------------------------------------------------------
     openai_api_key: str | None = None
@@ -79,6 +115,26 @@ class Settings(BaseSettings):
     @property
     def workspaces_dir(self) -> Path:
         return self.data_dir / "workspaces"
+
+
+def env_status(settings: BaseSettings | None, env_vars: list[tuple[str, bool, str]]) -> list[dict]:
+    """Which of ``env_vars`` are set: "set", "default" or "missing". Never returns values.
+
+    Shared by LLM providers and OCR engines so the Providers page can show what
+    is configured without a secret ever reaching the browser.
+    """
+    fields = type(settings).model_fields if settings is not None else {}
+    out = []
+    for name, required, desc in env_vars:
+        attr = name.lower()
+        value = getattr(settings, attr, None)
+        default = fields[attr].default if attr in fields else None
+        # "default" = not set by the user but a built-in default applies
+        state = "missing" if not value else "default" if value == default else "set"
+        out.append({"name": name, "required": required, "description": desc,
+                    "set": state == "set", "state": state,
+                    "default": default if isinstance(default, (str, int, float)) else None})
+    return out
 
 
 @lru_cache

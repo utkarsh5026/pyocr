@@ -102,7 +102,15 @@ class Tour:
                     raise
                 self.page.wait_for_load_state("load")
                 self.page.add_style_tag(content=QUIET_CSS)
-        picture = Image.open(io.BytesIO(self.page.screenshot())).convert("RGB")
+        try:
+            shot = self.page.screenshot(timeout=10_000)
+        except Exception:  # a screenshot taken mid-navigation (upload redirect, reload after a job) can hang
+            self.page.wait_for_load_state("load")
+            self.page.add_style_tag(content=QUIET_CSS)
+            self.page.evaluate(POINTER_HTML)
+            self.page.evaluate(MOVE_POINTER, [self.x, self.y, ring])
+            shot = self.page.screenshot()
+        picture = Image.open(io.BytesIO(shot)).convert("RGB")
         self.frames.append((picture, round(ms)))
 
     def wait(self, busy_js: str = PAGE_BUSY, *, settle: float = 0.4) -> None:
@@ -235,10 +243,16 @@ def play_upload(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
         tour.frame(RING_FRAME_MS, 1.2)
     page.add_style_tag(content=QUIET_CSS)
     tour.hold(1.4)
-    tour.click(page.locator("#extract-form label", has_text="Tesseract OCR"), hold=0.8)
+    tour.click(page.locator("#extract-form label:has(input[name=kind][value=ocr])"), hold=0.6)
+    # pick the engine explicitly, so the tour is the same whichever engines this machine has installed
+    tour.choose(page.locator("#ocr-engine"), "tesseract", hold=0.8)
     tour.click(page.locator("#extract-form button[type=submit]"), hold=0.2, busy_js="false")
-    tour.wait(JOB_BUSY)
-    tour.hold(1.6, JOB_BUSY)
+    # the overview reloads itself ~1.5 s after the job ends: let that happen before clicking anything
+    with page.expect_navigation(timeout=60_000):
+        tour.wait(JOB_BUSY)
+        tour.hold(1.6, JOB_BUSY)
+    page.add_style_tag(content=QUIET_CSS)
+    tour.hold(0.6)
     tour.click(page.locator(".doc-tabs a", has_text="Page inspector"), hold=0.8)
     tour.click(page.locator(".tabs button[data-tab=ocr]"), hold=2.6)
 
@@ -286,6 +300,20 @@ def play_search(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
     tour.click(page.locator(".tabs button[data-tab=ocr]"), hold=2.8)
 
 
+def play_libraries(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
+    """A born-digital page read by every PDF library, one library's text, then PyMuPDF and pypdf compared."""
+    page = tour.page
+    # start from PyMuPDF whatever an earlier visit picked
+    page.add_init_script("localStorage.removeItem('pyocr.nativeLibrary')")
+    tour.goto(f"/documents/{ids['report']}/pages/1", hold=1.6)
+    tour.click(page.locator("#check-libraries"), hold=2.8)
+    tour.click(page.locator("#native-libraries [data-lib=pypdf]"), hold=2.2)
+    tour.click(page.locator(".tabs button[data-tab=compare]"), hold=0.6)
+    tour.choose(page.locator("#cmp-ref"), "native", hold=0.4)
+    tour.choose(page.locator("#cmp-hyp"), "native:pypdf", hold=0.4)
+    tour.click(page.locator("#run-compare"), hold=2.8)
+
+
 def play_library(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
     """The library, then a document's overview and its sources."""
     page = tour.page
@@ -303,6 +331,7 @@ class TourSpec:
 TOURS = [
     TourSpec("inspector", play_inspector),
     TourSpec("compare", play_compare),
+    TourSpec("libraries", play_libraries),
     TourSpec("search", play_search),
     TourSpec("library", play_library),
     TourSpec("upload", play_upload, changes_data=True),

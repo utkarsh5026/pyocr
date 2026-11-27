@@ -11,7 +11,9 @@ On disk, each upload lives in its own folder::
         meta.json          # filename, page count, ...
         source.<ext>       # the original bytes, untouched
         ocr/<page>.json    # cached Tesseract result (text + word boxes)
+        ocr/<engine>/<page>.json  # cached result of another OCR engine (EasyOCR, ...)
         llm/<page>/<key>.json   # cached LLM transcriptions
+        native/<library>/<page>.json  # text layer as another PDF library reads it (pypdf, ...)
 
 Page numbers are **0-based** everywhere in the Python/HTTP API; the UI adds 1
 when displaying them.
@@ -48,13 +50,23 @@ SUPPORTED_EXTENSIONS = {
 
 _DOC_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
+#: Tesseract (through MuPDF's Leptonica) has process-wide state: two OCR calls on
+#: *different* documents still collide ("Attempt to use Leptonica from 2 threads
+#: at once"), so the per-document lock is not enough. One Tesseract call at a time.
+TESSERACT_LOCK = threading.Lock()
+
 
 class DocumentError(Exception):
     """Raised for user-facing problems (bad file, unknown id, bad page)."""
 
 
 class OCRUnavailableError(DocumentError):
-    """Raised when Tesseract is not installed / not found by PyMuPDF."""
+    """Raised when an OCR engine can't run here (not installed / not configured)."""
+
+
+#: The engine whose results live in ``ocr/<page>.json`` (the original layout).
+DEFAULT_OCR_ENGINE = "tesseract"
+_ENGINE_ID_RE = re.compile(r"^[a-z0-9_]+$")
 
 
 @dataclass
@@ -88,23 +100,39 @@ class Word:
 class TextLayer:
     """Text of one page from one engine, plus word boxes in PDF points."""
 
-    source: str  # "native" | "ocr"
+    source: str  # "native" | "native:<library>" | "ocr" (Tesseract) | "ocr:<engine>"
     text: str
     words: list[Word]
     elapsed_ms: float | None = None
+    #: engine details worth showing: engine id/label, model, language, warnings
+    meta: dict[str, Any] = field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
         return {
             "source": self.source,
             "text": self.text,
             "elapsed_ms": self.elapsed_ms,
+            "meta": self.meta,
             "words": [[*w.rect, w.text, w.block, w.line] for w in self.words],
         }
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> TextLayer:
         words = [Word(*row[:4], text=row[4], block=row[5], line=row[6]) for row in data["words"]]
-        return cls(source=data["source"], text=data["text"], words=words, elapsed_ms=data.get("elapsed_ms"))
+        return cls(source=data["source"], text=data["text"], words=words, elapsed_ms=data.get("elapsed_ms"),
+                   meta=data.get("meta") or {})
+
+
+@dataclass
+class RenderedImage:
+    """A rasterised page plus the sizes needed to map pixel boxes back to PDF points."""
+
+    data: bytes
+    mime: str  # "image/png" | "image/jpeg" | "raw" (packed RGB samples)
+    width_px: int
+    height_px: int
+    page_width: float  # PDF points
+    page_height: float
 
 
 def _words_from_page(page: pymupdf.Page, textpage: pymupdf.TextPage | None = None) -> list[Word]:
@@ -161,24 +189,34 @@ class OpenDocument:
                 # uploads (PNG/JPEG/...) never have a text layer.
                 "looks_scanned": (native_chars < 20 and image_count > 0) or native_chars == 0,
                 "has_ocr_cache": self._ocr_cache_path(number).exists(),
+                "ocr_engines": self.ocr_engines_cached(number),
                 "llm_results": len(list(self._llm_dir(number).glob("*.json"))),
             }
 
     def render(self, number: int, dpi: int, fmt: str = "png", max_edge_px: int | None = None,
                jpg_quality: int = 90) -> bytes:
         """Rasterise a page. ``fmt`` is ``png``, ``jpeg`` or ``ppm`` (uncompressed, for further processing)."""
+        return self.render_image(number, dpi, fmt, max_edge_px, jpg_quality).data
+
+    def render_image(self, number: int, dpi: int, fmt: str = "png", max_edge_px: int | None = None,
+                     jpg_quality: int = 90) -> RenderedImage:
+        """Like :meth:`render`, plus pixel and page sizes. ``fmt`` may also be ``raw`` (RGB samples)."""
         with self._lock:
             page = self._page(number)
             if max_edge_px:
                 # Pick the largest DPI <= requested that keeps the long edge in bounds.
                 long_edge_pt = max(page.rect.width, page.rect.height)
                 dpi = max(36, min(dpi, int(max_edge_px * 72 / long_edge_pt)))
-            pix = page.get_pixmap(dpi=dpi, alpha=False)
+            pix = page.get_pixmap(dpi=dpi, alpha=False, colorspace=pymupdf.csRGB)
             if fmt == "jpeg":
-                return pix.tobytes("jpeg", jpg_quality=jpg_quality)
-            if fmt == "ppm":
-                return pix.tobytes("ppm")
-            return pix.tobytes("png")
+                data, mime = pix.tobytes("jpeg", jpg_quality=jpg_quality), "image/jpeg"
+            elif fmt == "ppm":
+                data, mime = pix.tobytes("ppm"), "image/x-portable-pixmap"
+            elif fmt == "raw":
+                data, mime = bytes(pix.samples), "raw"
+            else:
+                data, mime = pix.tobytes("png"), "image/png"
+            return RenderedImage(data, mime, pix.width, pix.height, page.rect.width, page.rect.height)
 
     # -- text layers ----------------------------------------------------------
     def native_text(self, number: int) -> TextLayer:
@@ -188,10 +226,28 @@ class OpenDocument:
             t0 = time.perf_counter()
             text = page.get_text("text", sort=True)
             words = _words_from_page(page)
-            return TextLayer("native", text, words, elapsed_ms=round((time.perf_counter() - t0) * 1000, 1))
+            return TextLayer("native", text, words, elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
+                             meta={"library": "pymupdf", "label": "PyMuPDF", "version": pymupdf.VersionBind})
 
-    def _ocr_cache_path(self, number: int) -> Path:
-        return self.folder / "ocr" / f"{number}.json"
+    def _ocr_cache_path(self, number: int, engine: str = DEFAULT_OCR_ENGINE) -> Path:
+        if engine == DEFAULT_OCR_ENGINE:
+            return self.folder / "ocr" / f"{number}.json"
+        if not _ENGINE_ID_RE.match(engine):
+            raise DocumentError(f"bad OCR engine id '{engine}'")
+        return self.folder / "ocr" / engine / f"{number}.json"
+
+    def ocr_engines_cached(self, number: int) -> list[str]:
+        """Ids of the OCR engines that have a cached result for this page."""
+        engines = [DEFAULT_OCR_ENGINE] if self._ocr_cache_path(number).exists() else []
+        root = self.folder / "ocr"
+        if root.is_dir():
+            engines += sorted(d.name for d in root.iterdir() if d.is_dir() and (d / f"{number}.json").exists())
+        return engines
+
+    def save_ocr_layer(self, number: int, engine: str, layer: TextLayer) -> None:
+        cache = self._ocr_cache_path(number, engine)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(layer.to_json(), ensure_ascii=False))
 
     def ocr_text(self, number: int, *, dpi: int, language: str, force: bool = False) -> TextLayer:
         """Tesseract OCR via PyMuPDF. Results are cached on disk because OCR is slow."""
@@ -204,7 +260,8 @@ class OpenDocument:
             try:
                 # full=True OCRs the whole page image, ignoring any existing text
                 # layer: that is what we want when judging OCR quality.
-                tp = page.get_textpage_ocr(full=True, dpi=dpi, language=language)
+                with TESSERACT_LOCK:
+                    tp = page.get_textpage_ocr(full=True, dpi=dpi, language=language)
             except RuntimeError as exc:  # raised when tesseract / tessdata is missing
                 raise OCRUnavailableError(
                     f"Tesseract OCR is not available ({exc}). Install tesseract-ocr and the "
@@ -212,14 +269,29 @@ class OpenDocument:
                 ) from exc
             text = page.get_text("text", textpage=tp, sort=True)
             words = _words_from_page(page, textpage=tp)
-            layer = TextLayer("ocr", text, words, elapsed_ms=round((time.perf_counter() - t0) * 1000, 1))
-        cache.parent.mkdir(parents=True, exist_ok=True)
-        cache.write_text(json.dumps(layer.to_json()))
+            layer = TextLayer("ocr", text, words, elapsed_ms=round((time.perf_counter() - t0) * 1000, 1),
+                              meta={"engine": DEFAULT_OCR_ENGINE, "language": language, "dpi": dpi})
+        self.save_ocr_layer(number, DEFAULT_OCR_ENGINE, layer)
         return layer
 
-    def cached_ocr_text(self, number: int) -> TextLayer | None:
-        cache = self._ocr_cache_path(number)
+    def cached_ocr_text(self, number: int, engine: str = DEFAULT_OCR_ENGINE) -> TextLayer | None:
+        cache = self._ocr_cache_path(number, engine)
         return TextLayer.from_json(json.loads(cache.read_text())) if cache.exists() else None
+
+    # -- other PDF libraries (see pdftext.py) --------------------------------
+    def _native_cache_path(self, number: int, library: str) -> Path:
+        if not _ENGINE_ID_RE.match(library):
+            raise DocumentError(f"bad PDF library id '{library}'")
+        return self.folder / "native" / library / f"{number}.json"
+
+    def cached_native_layer(self, number: int, library: str) -> TextLayer | None:
+        cache = self._native_cache_path(number, library)
+        return TextLayer.from_json(json.loads(cache.read_text())) if cache.exists() else None
+
+    def save_native_layer(self, number: int, library: str, layer: TextLayer) -> None:
+        cache = self._native_cache_path(number, library)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(layer.to_json(), ensure_ascii=False))
 
     # -- LLM result cache -----------------------------------------------------
     def _llm_dir(self, number: int) -> Path:

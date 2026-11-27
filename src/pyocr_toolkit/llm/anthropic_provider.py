@@ -38,6 +38,23 @@ def _supports_effort(model: str) -> bool:
     return version >= (4, 6)
 
 
+def _image_blocks(req: TranscriptionRequest) -> list[dict]:
+    """Image blocks, each preceded by its label when the request holds several pages."""
+    blocks: list[dict] = []
+    for page in req.page_images():
+        if page.label:
+            blocks.append({"type": "text", "text": page.label})
+        blocks.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": page.mime_type,
+                "data": base64.standard_b64encode(page.image).decode("ascii"),
+            },
+        })
+    return blocks
+
+
 class _ClaudeBase(Provider):
     suggested_models = catalog.recommended("anthropic") + ["claude-haiku-5-5"]
     supports_server_fallback = True
@@ -62,17 +79,7 @@ class _ClaudeBase(Provider):
             "system": req.system_prompt,
             "messages": [{
                 "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": req.mime_type,
-                            "data": base64.standard_b64encode(req.image).decode("ascii"),
-                        },
-                    },
-                    {"type": "text", "text": req.user_prompt},
-                ],
+                "content": [*_image_blocks(req), {"type": "text", "text": req.user_prompt}],
             }],
         }
         if _supports_effort(model) and self.settings.anthropic_effort:
@@ -124,6 +131,7 @@ class _ClaudeBase(Provider):
 class AnthropicProvider(_ClaudeBase):
     id = "anthropic"
     label = "Claude (Anthropic API)"
+    brand = "claude"
     docs_url = "https://console.anthropic.com/settings/keys"
     can_list_models = True
     env_vars = [
@@ -156,6 +164,7 @@ class AnthropicFoundryProvider(_ClaudeBase):
 
     id = "azure_claude"
     label = "Claude on Azure (Microsoft Foundry)"
+    brand = "claude"
     model_hint = "Foundry deployment name of the Claude model"
     docs_url = "https://learn.microsoft.com/azure/ai-foundry/"
     env_vars = [

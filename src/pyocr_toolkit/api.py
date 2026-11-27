@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
+import pymupdf
 from fastapi import APIRouter, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
@@ -21,12 +22,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import __version__, compare, search
+from .brands import brands_json
 from .config import Settings, get_settings
-from .documents import DocumentError, DocumentStore, OCRUnavailableError, OpenDocument
+from .documents import DEFAULT_OCR_ENGINE, DocumentError, DocumentStore, OCRUnavailableError, OpenDocument
 from .jobs import JobManager
-from .llm import PROMPT_MODES, ProviderError, build_providers, catalog
+from .llm import MAX_PAGES_PER_REQUEST, PROMPT_MODES, ProviderError, build_providers, catalog
+from .ocr import build_ocr_engines
+from .pdftext import DEFAULT_TEXT_LIBRARY, native_source_id
 from .preprocess import Preprocess, presets_json, process_bytes
-from .service import LLMSpec, Services, parse_pages
+from .service import LLMSpec, Services, ocr_source_id, parse_pages
 from .workspaces import WorkspaceStore, ingest, suggest_names
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -39,19 +43,30 @@ class LLMRunBody(BaseModel):
     prompt_mode: str = "verbatim"
     custom_prompt: str | None = None
     preprocess: str | None = Field(None, description="image preprocessing, e.g. 'gray;contrast=1.5' or a preset id")
+    pages_per_request: int = Field(1, ge=1, le=MAX_PAGES_PER_REQUEST,
+                                   description="pages sent together in one LLM request (1 = one page per request)")
     force: bool = False
 
     def spec(self) -> LLMSpec:
-        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt, self.preprocess or "")
+        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt,
+                       preprocess=self.preprocess or "", pages_per_request=self.pages_per_request)
 
 
 class TextRef(BaseModel):
     source: Literal["native", "ocr", "llm"]
     #: for ``llm``: cache key of a stored result (``None`` -> most recent one)
     key: str | None = None
+    #: for ``ocr``: engine id (``None`` -> Tesseract)
+    engine: str | None = None
+    #: for ``native``: PDF library id (``None`` -> PyMuPDF; see /api/config ``text_libraries``)
+    library: str | None = None
 
     @property
     def source_id(self) -> str:
+        if self.source == "native":
+            return native_source_id(self.library or DEFAULT_TEXT_LIBRARY)
+        if self.source == "ocr":
+            return ocr_source_id(self.engine or DEFAULT_OCR_ENGINE)
         return f"llm:{self.key}" if self.source == "llm" and self.key else self.source
 
 
@@ -68,6 +83,7 @@ class JobBody(BaseModel):
     pages: str | None = Field(None, description="1-based page ranges like '1-3,7'; empty = all pages")
     force: bool = False
     llm: LLMRunBody | None = None
+    engine: str = Field(DEFAULT_OCR_ENGINE, description="OCR engine id for kind=ocr (see /api/config)")
 
 
 class WorkspaceBody(BaseModel):
@@ -121,6 +137,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
               workspaces: WorkspaceStore) -> APIRouter:
     api = APIRouter(prefix="/api")
     providers = services.providers
+    engines = services.ocr_engines
 
     def get_doc(doc_id: str) -> OpenDocument:
         return store.get(doc_id)
@@ -136,7 +153,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         n = doc.meta.page_count
         ocr_pages = llm_pages = 0
         for p in range(n):
-            ocr_pages += doc.cached_ocr_text(p) is not None
+            ocr_pages += bool(doc.ocr_engines_cached(p))
             llm_pages += bool(doc.list_llm_results(p))
         return {**doc.meta.__dict__, "ocr_pages": ocr_pages, "llm_pages": llm_pages}
 
@@ -147,7 +164,14 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "version": __version__,
             "providers": [p.describe() for p in providers.values()],
             "prompt_modes": [{"id": k, "label": v["label"], "prompt": v["system"]} for k, v in PROMPT_MODES.items()],
+            "max_pages_per_request": MAX_PAGES_PER_REQUEST,
             "tesseract_available": shutil.which("tesseract") is not None,
+            "ocr_engines": [e.describe() for e in engines.values()],
+            "text_libraries": [{"id": DEFAULT_TEXT_LIBRARY, "source_id": "native", "label": "PyMuPDF",
+                                "description": "The app's own PDF engine (MuPDF).", "available": True,
+                                "problem": None, "has_boxes": True, "version": pymupdf.VersionBind},
+                               *(lib.describe() for lib in services.text_libraries.values())],
+            "brands": brands_json(),
             "tesseract_language": settings.tesseract_language,
             "max_upload_mb": settings.max_upload_mb,
             "preview_dpi": settings.preview_dpi,
@@ -200,12 +224,40 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             raise HTTPException(status, str(exc)) from exc
         return get_credentials(provider_id)
 
+    @api.get("/ocr-engines/{engine_id}/credentials", tags=["config"])
+    def get_engine_credentials(engine_id: str):
+        e = engines.get(engine_id)
+        if e is None:
+            raise HTTPException(404, f"unknown OCR engine '{engine_id}'")
+        d = e.describe()
+        # same shape as the provider endpoint, so the Providers page handles both
+        return {"provider": {**d, "configured": d["available"]}, "settings": services.credentials.status(e)}
+
+    @api.post("/ocr-engines/{engine_id}/credentials", tags=["config"])
+    def save_engine_credentials(engine_id: str, body: CredentialsBody, request: Request):
+        """Save OCR engine settings from the UI (stored in DATA_DIR/credentials.json, never echoed back)."""
+        _require_same_origin(request)
+        if engine_id not in engines:
+            raise HTTPException(404, f"unknown OCR engine '{engine_id}'")
+        try:
+            services.credentials.update(engine_id, body.values, body.clear)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return get_engine_credentials(engine_id)
+
     @api.post("/providers/{provider_id}/test", tags=["config"])
     async def test_provider(provider_id: str, body: ProviderTestBody):
         try:
             return await services.test_provider(provider_id, body.model)
         except ValueError as exc:
             raise HTTPException(404, str(exc)) from exc
+
+    @api.post("/ocr-engines/{engine_id}/test", tags=["config"])
+    async def test_ocr_engine(engine_id: str):
+        """OCR a small generated image with one engine and report what it read."""
+        if engine_id not in engines:
+            raise HTTPException(404, f"unknown OCR engine '{engine_id}'")
+        return await services.test_ocr_engine(engine_id)
 
     # --------------------------------------------------------------- documents
     @api.get("/documents", tags=["documents"])
@@ -303,16 +355,29 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
 
     # ------------------------------------------------------------- text layers
     @api.get("/documents/{doc_id}/pages/{page}/text/native", tags=["text"])
-    def native_text(doc_id: str, page: int):
-        return get_doc(doc_id).native_text(page).to_json()
+    def native_text(doc_id: str, page: int, force: bool = False,
+                    library: str = Query(DEFAULT_TEXT_LIBRARY, description="PDF library id (see /api/config)")):
+        """The page's embedded text layer, read by PyMuPDF (default) or another PDF library."""
+        return services.native_layer(get_doc(doc_id), page, library, force=force).to_json()
+
+    @api.get("/documents/{doc_id}/pages/{page}/text/native/libraries", tags=["text"])
+    def native_libraries(doc_id: str, page: int):
+        """Read this page with every PDF library: did each get text out, how much, how fast."""
+        doc = get_doc(doc_id)
+        if not 0 <= page < doc.meta.page_count:
+            raise DocumentError(f"page {page} out of range (document has {doc.meta.page_count} pages)")
+        return services.compare_libraries(doc, page)
 
     @api.get("/documents/{doc_id}/pages/{page}/text/ocr", tags=["text"])
-    def ocr_text(doc_id: str, page: int, force: bool = False, cached_only: bool = False):
+    def ocr_text(doc_id: str, page: int, force: bool = False, cached_only: bool = False,
+                 engine: str = Query(DEFAULT_OCR_ENGINE, description="OCR engine id (see /api/config)")):
+        """OCR one page (cached per engine). ``cached_only`` never runs the engine."""
         doc = get_doc(doc_id)
+        services.ocr_engine(engine)  # 400 for an unknown engine
         if cached_only:
-            layer = doc.cached_ocr_text(page)
+            layer = doc.cached_ocr_text(page, engine)
             return layer.to_json() if layer else None
-        return services.run_ocr_page(doc, page, force=force).to_json()
+        return services.run_ocr_page(doc, page, force=force, engine=engine).to_json()
 
     @api.get("/documents/{doc_id}/text", tags=["text"])
     def document_text(doc_id: str, source: str = "native"):
@@ -403,10 +468,8 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         doc = get_doc(doc_id)
         try:
             pages_list = parse_pages(body.pages, doc.meta.page_count)
-            if body.kind == "ocr" and not shutil.which("tesseract"):
-                raise ValueError("Tesseract is not installed on the server")
             job = jobs.start(doc.meta.id, body.kind, pages_list,
-                             llm=body.llm.spec() if body.llm else None, force=body.force)
+                             llm=body.llm.spec() if body.llm else None, force=body.force, engine=body.engine)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
         return job.to_json()
@@ -540,17 +603,20 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
                                  "boxes": search.find_boxes(layer.words, q) if boxes else [],
                                  "snippets": search.find_snippets(layer.text, q, limit=limit_per_page)})
             if "ocr" in wanted:
-                layer = doc.cached_ocr_text(n)
-                if layer is None:
+                cached = doc.ocr_engines_cached(n)
+                if not cached:
                     ocr_missing += 1
-                elif count := search.count_matches(layer.text, q):
-                    hits.append({"source": "ocr", "label": "Tesseract OCR", "count": count,
-                                 "boxes": search.find_boxes(layer.words, q) if boxes else [],
-                                 "snippets": search.find_snippets(layer.text, q, limit=limit_per_page)})
+                for engine in cached:
+                    layer = doc.cached_ocr_text(n, engine)
+                    if layer and (count := search.count_matches(layer.text, q)):
+                        hits.append({"source": "ocr", "engine": engine, "label": services.ocr_label(engine),
+                                     "count": count, "boxes": search.find_boxes(layer.words, q) if boxes else [],
+                                     "snippets": search.find_snippets(layer.text, q, limit=limit_per_page)})
             if "llm" in wanted:
                 for r in doc.list_llm_results(n):
                     if count := search.count_matches(r["text"], q):
-                        hits.append({"source": "llm", "key": r["key"], "label": f"LLM: {r['provider']} / {r['model']}",
+                        hits.append({"source": "llm", "key": r["key"], "provider": r["provider"],
+                                     "label": f"LLM: {r['provider']} / {r['model']}",
                                      "count": count, "boxes": [],
                                      "snippets": search.find_snippets(r["text"], q, limit=limit_per_page)})
             if hits:
@@ -561,7 +627,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
     @api.get("/documents/{doc_id}/search", tags=["search"])
     def search_document(doc_id: str, q: str = Query(..., min_length=1), sources: str = "native,ocr,llm",
                         limit_per_page: int = Query(10, ge=1, le=100)):
-        """Search every page. OCR is only searched on pages already OCR'd (it's slow)."""
+        """Search every page. OCR is only searched where an engine has already run (it's slow)."""
         wanted = {s.strip() for s in sources.split(",") if s.strip()}
         pages_out, total, missing = _search_doc(get_doc(doc_id), q, wanted, limit_per_page)
         return {"query": q, "total": total, "pages": pages_out, "pages_without_ocr": missing}
@@ -585,7 +651,8 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
                key: str | None = None):
         """Download the whole document's text from one source.
 
-        ``source`` is ``native``, ``ocr``, ``llm`` (latest per page) or ``llm:<key>``.
+        ``source`` is ``native`` (PyMuPDF), ``native:<library>`` (pypdf, pdfplumber, ...), ``ocr`` (Tesseract),
+        ``ocr:<engine>``, ``llm`` (latest per page) or ``llm:<key>``.
         ``jsonl`` writes one JSON object per page - handy for RAG / ingestion pipelines.
         Pages without a result for that source are empty (nothing is run implicitly).
         """
@@ -593,7 +660,8 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         if key and source == "llm":
             source = f"llm:{key}"
         texts = [services.page_text(doc, n, source) for n in doc.iter_pages()]
-        stem, tag = _safe_stem(doc.meta.filename), source.split(":")[0]
+        stem = _safe_stem(doc.meta.filename)
+        tag = source.replace(":", "-") if source.startswith(("ocr:", "native:")) else source.split(":")[0]
         disp = lambda ext: {"Content-Disposition": f'attachment; filename="{stem}.{tag}.{ext}"'}  # noqa: E731
         label = services.source_label(doc, source)
         if fmt == "json":
@@ -619,12 +687,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     store = DocumentStore(settings.documents_dir)
     providers = build_providers(settings)
-    services = Services(settings, providers)
+    services = Services(settings, providers, build_ocr_engines(settings))
     jobs = JobManager(store, services)
     workspaces = WorkspaceStore(settings.workspaces_dir, store)
 
     app = FastAPI(title="pyocr-toolkit", version=__version__,
-                  description="Inspect and compare PDF/image text extraction: native text, Tesseract OCR and LLMs.")
+                  description="Inspect and compare PDF/image text extraction: native text, OCR engines and LLMs.")
     app.state.settings = settings
     app.state.store = store
     app.state.providers = providers

@@ -2,9 +2,13 @@
 
     pyocr serve [--open]             start the web app on http://127.0.0.1:8000
     pyocr init                       write a .env template to the current directory
-    pyocr doctor                     check Tesseract, providers and the data directory
+    pyocr doctor                     check OCR engines, providers and the data directory
     pyocr providers                  list LLM providers and whether they are configured
+    pyocr engines                    list OCR engines and whether they are ready
+    pyocr libraries                  list PDF text libraries (pypdf, pdfplumber, ...) and whether they're installed
     pyocr extract FILE --engine llm -p anthropic --pages 1-3 --format jsonl -o out.jsonl
+    pyocr extract FILE --engine ocr --ocr-engine easyocr      (or --engine ocr:easyocr)
+    pyocr extract FILE --engine native:pypdf                  text layer as pypdf reads it
     pyocr compare FILE -p openai     per-page OCR/native error rate against an LLM
     pyocr import a.pdf b.pdf scans.zip [--workspace NAME]
                                      add files (zips unpacked, folders walked) to the library as one workspace
@@ -78,6 +82,32 @@ def cmd_providers(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_engines(_args: argparse.Namespace) -> int:
+    _, services = _services()
+    for e in services.ocr_engines.values():
+        problem = e.problem()
+        status = "ready" + (f" ({e.settings_summary()})" if e.settings_summary() else "") if not problem else problem
+        print(f"{e.id:15} {e.kind:6} {status}")
+    return 0
+
+
+def cmd_libraries(_args: argparse.Namespace) -> int:
+    import pymupdf
+
+    _, services = _services()
+    print(f"{'pymupdf':12} {'native':20} ready (PyMuPDF {pymupdf.VersionBind})")
+    for lib in services.text_libraries.values():
+        status = f"ready ({lib.label} {lib.version()})" if lib.available else lib.problem()
+        print(f"{lib.id:12} {lib.source_id:20} {status}")
+    return 0
+
+
+def _ocr_engine_arg(args: argparse.Namespace) -> str:
+    """``--engine ocr:easyocr`` and ``--engine ocr --ocr-engine easyocr`` mean the same."""
+    engine = args.engine[4:] if args.engine.startswith("ocr:") else args.ocr_engine
+    return engine or "tesseract"
+
+
 def cmd_doctor(_args: argparse.Namespace) -> int:
     settings, services = _services()
     ok = True
@@ -96,7 +126,17 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
             ok = False
             print(f"  ✗ language pack(s) missing for TESSERACT_LANGUAGE={settings.tesseract_language}: {', '.join(missing)}")
     else:
-        print("  ✗ Tesseract not found: OCR is disabled (apt install tesseract-ocr / brew install tesseract)")
+        print("  ✗ Tesseract not found (apt install tesseract-ocr / brew install tesseract)")
+    engines = services.ocr_engines.values()
+    print(f"  OCR engines    {sum(e.available for e in engines)} of {len(engines)} ready")
+    for e in engines:
+        problem = e.problem()
+        print(f"     {'·' if problem else '✓'} {e.label} [{e.kind}]" + (f"  ({problem})" if problem else ""))
+    libs = services.text_libraries.values()
+    print(f"  PDF libraries  {sum(lib.available for lib in libs)} of {len(libs)} installed (optional; besides PyMuPDF)")
+    for lib in libs:
+        print(f"     {'✓' if lib.available else '·'} {lib.label}" + (f" {lib.version()}" if lib.available
+                                                                   else f"  ({lib.install_hint()})"))
     data = settings.data_dir.resolve()
     try:
         data.mkdir(parents=True, exist_ok=True)
@@ -177,32 +217,48 @@ async def _extract(args: argparse.Namespace) -> int:
     doc = _load_document(args.file)
     pages = parse_pages(args.pages, doc.meta.page_count)
     texts: dict[int, str] = {}
-    if args.engine == "native":
-        texts = {n: doc.native_text(n).text for n in pages}
-    elif args.engine == "ocr":
+    if args.engine == "native" or args.engine.startswith("native:"):
+        library = args.engine[7:] or None if args.engine.startswith("native:") else None
+        lib = services.text_library(library)
+        if lib is not None and (problem := lib.problem()):
+            print(problem, file=sys.stderr)
+            return 2
+        texts = {n: services.native_layer(doc, n, library).text for n in pages}
+    elif args.engine == "ocr" or args.engine.startswith("ocr:"):
+        engine = services.ocr_engine(_ocr_engine_arg(args))
+        if problem := engine.problem():
+            print(problem, file=sys.stderr)
+            return 2
         for n in pages:
-            texts[n] = (await asyncio.to_thread(services.run_ocr_page, doc, n)).text
-            print(f"  OCR page {n + 1}/{doc.meta.page_count}", file=sys.stderr)
+            layer = await asyncio.to_thread(services.run_ocr_page, doc, n, False, engine.id)
+            texts[n] = layer.text
+            print(f"  {engine.label} page {n + 1}/{doc.meta.page_count}: {(layer.elapsed_ms or 0) / 1000:.1f}s",
+                  file=sys.stderr)
     else:
-        spec = LLMSpec(args.provider, args.model, args.mode, preprocess=args.preprocess or "")
-        provider, model, _ = services.resolve_spec(spec)
+        spec = LLMSpec(args.provider, args.model, args.mode, preprocess=args.preprocess or "",
+                       pages_per_request=args.pages_per_request)
+        try:
+            provider, model, _ = services.resolve_spec(spec)
+        except ValueError as exc:  # bad --pages-per-request or --preprocess
+            print(str(exc), file=sys.stderr)
+            return 2
         if not provider.configured:
             print(f"{provider.label} is not configured: set {', '.join(provider.missing_settings())}", file=sys.stderr)
             return 2
 
-        async def one(n: int):
-            res = await services.run_llm_page(doc, n, spec)
+        for n, res in (await services.run_llm_pages(doc, pages, spec)).items():
+            if isinstance(res, BaseException):
+                print(f"  page {n + 1} failed: {res}", file=sys.stderr)
+                continue
             note = "cached" if res["cached"] else f"{res['latency_ms'] / 1000:.1f}s"
             print(f"  LLM page {n + 1}: {note}" + "".join(f"  ⚠ {w}" for w in res["warnings"]), file=sys.stderr)
             texts[n] = res["text"]
 
-        results = await asyncio.gather(*(one(n) for n in pages), return_exceptions=True)
-        for n, r in zip(pages, results):
-            if isinstance(r, Exception):
-                print(f"  page {n + 1} failed: {r}", file=sys.stderr)
-
     ordered = [(n, texts.get(n, "")) for n in pages]
-    source = args.engine if args.engine != "llm" else f"llm:{args.provider}"
+    from .service import ocr_source_id
+
+    source = (f"llm:{args.provider}" if args.engine == "llm" else
+              ocr_source_id(_ocr_engine_arg(args)) if args.engine.startswith("ocr") else args.engine)
     if args.format == "jsonl":
         out = "".join(json.dumps({"document_id": doc.meta.id, "filename": doc.meta.filename, "page": n + 1,
                                   "source": source, "text": t}, ensure_ascii=False) + "\n" for n, t in ordered)
@@ -232,13 +288,18 @@ async def _compare(args: argparse.Namespace) -> int:
     pages = parse_pages(args.pages, doc.meta.page_count)
     llm = await asyncio.gather(*(services.run_llm_page(doc, n, spec) for n in pages))
     opts = compare.NormalizeOptions(ignore_case=True)
-    has_tess = shutil.which("tesseract") is not None
+    engine = services.ocr_engine(args.ocr_engine)
+    problem = engine.problem()
+    if problem:
+        print(f"OCR columns skipped: {problem}", file=sys.stderr)
+    print(f"OCR engine: {engine.label}", file=sys.stderr)
     print(f"{'page':>5}  {'OCR CER':>8}  {'OCR WER':>8}  {'OCR numbers':>11}  {'native CER':>10}")
     for n, res in zip(pages, llm):
         native = doc.native_text(n).text
         ocr_cer = ocr_wer = ocr_num = "–"
-        if has_tess:
-            ocr_text = services.run_ocr_page(doc, n).text
+        if not problem:
+            layer = await asyncio.to_thread(services.run_ocr_page, doc, n, False, engine.id)
+            ocr_text = layer.text
             s = compare.score(res["text"], ocr_text, opts)
             ocr_cer, ocr_wer = f"{s['cer']:.1%}", f"{s['wer']:.1%}"
             num = compare.check_numbers(res["text"], ocr_text, max_wrong=0)
@@ -278,13 +339,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="check the installation").set_defaults(func=cmd_doctor)
     sub.add_parser("providers", help="list LLM providers").set_defaults(func=cmd_providers)
+    sub.add_parser("engines", help="list OCR engines").set_defaults(func=cmd_engines)
+    sub.add_parser("libraries", help="list PDF text libraries (native:<library> sources)").set_defaults(
+        func=cmd_libraries)
 
     e = sub.add_parser("extract", help="extract text from a PDF/image (whole document or pages)")
     e.add_argument("file", type=Path)
-    e.add_argument("--engine", choices=["native", "ocr", "llm"], default="llm")
+    e.add_argument("--engine", default="llm", metavar="{native,native:<library>,ocr,ocr:<engine>,llm}",
+                   help="text source (default: llm); native:pypdf etc. read the text layer with another PDF "
+                        "library, see `pyocr libraries`")
+    e.add_argument("--ocr-engine", default="tesseract", help="for --engine ocr; see `pyocr engines`")
     e.add_argument("-p", "--provider", default="anthropic", help="for --engine llm")
     e.add_argument("-m", "--model", default=None)
     e.add_argument("--mode", default="verbatim", choices=["verbatim", "markdown"], help="LLM prompt")
+    e.add_argument("--pages-per-request", type=int, default=1, metavar="N",
+                   help="send N pages to the LLM in one request (default 1); a separate source from N=1")
     e.add_argument("--pages", default=None, help="1-based ranges, e.g. 1-3,7 (default: all)")
     e.add_argument("--preprocess", default=None, metavar="SPEC", help=PREPROCESS_HELP)
     e.add_argument("--format", choices=["txt", "md", "json", "jsonl"], default="txt")
@@ -297,8 +366,9 @@ def build_parser() -> argparse.ArgumentParser:
     m.add_argument("--no-workspace", action="store_true", help="add to the library without grouping")
     m.set_defaults(func=cmd_import)
 
-    c = sub.add_parser("compare", help="score Tesseract / native text against an LLM transcription")
+    c = sub.add_parser("compare", help="score OCR / native text against an LLM transcription")
     c.add_argument("file", type=Path)
+    c.add_argument("--ocr-engine", default="tesseract", help="OCR engine to score; see `pyocr engines`")
     c.add_argument("-p", "--provider", default="anthropic")
     c.add_argument("-m", "--model", default=None)
     c.add_argument("--pages", default=None)
@@ -315,10 +385,17 @@ def main(argv: list[str] | None = None) -> None:
                 stream.reconfigure(errors="replace")
             except (ValueError, OSError):
                 pass
-    args = build_parser().parse_args(argv)
+    from .documents import DocumentError
+    from .llm import ProviderError
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    engine = getattr(args, "engine", None)
+    if engine and engine not in ("native", "ocr", "llm") and not engine.startswith(("ocr:", "native:")):
+        parser.error(f"--engine must be native, native:<library>, ocr, ocr:<engine> or llm (got '{engine}')")
     try:
         sys.exit(args.func(args))
-    except (ValueError, FileNotFoundError) as exc:
+    except (ValueError, FileNotFoundError, DocumentError, ProviderError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         sys.exit(2)
 

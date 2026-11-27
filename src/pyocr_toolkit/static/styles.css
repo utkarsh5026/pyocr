@@ -126,7 +126,7 @@ kbd { border: 1px solid var(--border-strong); border-bottom-width: 2px; padding:
 /* ==========================================================================
    Controls
    ========================================================================== */
-select, input[type=search], input:not([type]), input[list], input[type=text], input[type=password], textarea {
+select, input[type=search], input:not([type]), input[list], input[type=text], input[type=number], input[type=password], textarea {
   font: inherit; font-size: 13.5px; color: var(--text); background: var(--surface);
   border: 1px solid var(--border-strong); border-radius: 8px; padding: 6px 10px; min-width: 0; height: 34px;
   transition: border-color .15s, box-shadow .15s;
@@ -328,6 +328,50 @@ details.meta dd { margin: 0; word-break: break-word; }
 .llm-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .llm-picker label { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--muted); }
 .llm-picker label:last-of-type { grid-column: 1 / -1; }
+/* A form field with a label row (label left, live note right) above its controls */
+.field { display: flex; flex-direction: column; gap: 8px; }
+.field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.field-head label, .field-label { font-size: 12.5px; font-weight: 500; color: var(--muted); }
+.field-note { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; text-align: right; }
+.field-note b { color: var(--text); font-weight: 600; }
+.field-note.err { color: var(--bad); }
+.field input.invalid { border-color: var(--bad); }
+.field input.invalid:focus { box-shadow: 0 0 0 3px var(--bad-soft); }
+.field > .hint { margin: 0; }
+
+/* Extract form: preset chips and the clickable page map under the "Pages" box */
+.chips button { font: inherit; font-size: 12px; font-weight: 500; padding: 3px 10px; border-radius: 99px; border: 1px solid var(--border-strong); background: none; color: var(--muted); cursor: pointer; transition: all .15s; }
+.chips button:hover { color: var(--text); border-color: var(--subtle); }
+.chips button.on { background: var(--accent-soft); border-color: transparent; color: var(--accent); }
+.chips button:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--accent-ring); }
+.page-map { display: flex; flex-wrap: wrap; gap: 4px; max-height: 132px; overflow-y: auto; padding: 8px; border-radius: var(--radius-sm); background: var(--bg-sunken); user-select: none; }
+.page-map button { position: relative; min-width: 28px; height: 24px; padding: 0 4px; border-radius: 5px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--muted); font: inherit; font-size: 11px; font-variant-numeric: tabular-nums; cursor: pointer; transition: background .1s, color .1s, border-color .1s; }
+.page-map button:hover { border-color: var(--accent); color: var(--text); }
+.page-map button[aria-pressed=true] { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.page-map button.scan { border-style: dashed; }
+.page-map button[aria-pressed=true].scan { border-style: solid; }
+/* small dot: this page already has text from the chosen engine */
+.page-map button.done::after { content: ""; position: absolute; top: 2px; right: 2px; width: 5px; height: 5px; border-radius: 50%; background: var(--good); }
+.page-map button[aria-pressed=true].done::after { background: var(--accent-text); }
+.page-map.compact { gap: 3px; }
+.page-map.compact button { min-width: 0; width: 12px; height: 12px; padding: 0; border-radius: 3px; font-size: 0; }
+.page-map.compact button.done::after { top: 3px; right: 3px; width: 4px; height: 4px; }
+.page-map:empty, .page-map:empty + .page-map-legend { display: none; }
+.page-map-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: -2px; font-size: 11.5px; color: var(--subtle); }
+.page-map-legend > span:first-child { margin-right: auto; }
+.legend-key { display: inline-flex; align-items: center; gap: 5px; }
+.legend-key i { display: inline-block; position: relative; width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--border-strong); background: var(--surface); }
+.legend-key i.key-scan { border-style: dashed; }
+.legend-key i.key-done::after { content: ""; position: absolute; top: 2px; right: 2px; width: 4px; height: 4px; border-radius: 50%; background: var(--good); }
+
+/* "Pages per request": presets + any other value, with how many requests that makes */
+.preprocess-field, .per-request { margin-top: 14px; }
+.field > .hint .icon { width: 13px; height: 13px; vertical-align: -2px; }
+.per-request-row { margin-top: 0; gap: 10px; flex-wrap: wrap; align-items: center; }
+.per-request-row .seg label { min-width: 34px; justify-content: center; padding: 5px 10px; font-variant-numeric: tabular-nums; }
+.per-request-other { display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted); }
+.per-request-other input { width: 5.5em; }
+.per-request-other.on input { border-color: var(--accent); }
 .llm-picker select, .llm-picker input { color: var(--text); font-weight: 400; width: 100%; }
 .llm-picker .custom-prompt, .llm-picker .picker-status { grid-column: 1 / -1; }
 .llm-picker .picker-status:empty { display: none; }
@@ -896,3 +940,38 @@ h3.h-icon .icon { width: 16px; height: 16px; }
 .upload-files li.err span:last-child { color: var(--bad); }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px; }
 @media (prefers-reduced-motion: reduce) { .dialog[open], .ws-card { animation: none; transition: none; } }
+/* ---------------------------------------------------------------- brand logos
+   A rounded tile in the brand colour. Bundled SVGs (static/logos/) are drawn
+   through a CSS mask in --brand-fg; brands without a free logo show letters. */
+.logo {
+  --logo-size: 22px;
+  display: inline-grid; place-items: center; flex: none; vertical-align: middle;
+  width: var(--logo-size); height: var(--logo-size); border-radius: calc(var(--logo-size) * .26);
+  background: var(--brand, #64748b); color: var(--brand-fg, #fff);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .12), 0 1px 2px rgba(0, 0, 0, .12);
+  font: 700 calc(var(--logo-size) * .4)/1 system-ui, sans-serif; letter-spacing: -.03em;
+  user-select: none;
+}
+.logo.mono { font-size: calc(var(--logo-size) * .36); }
+.logo i {
+  width: 64%; height: 64%; background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat;
+}
+.logo.sm { --logo-size: 16px; }
+.logo.lg { --logo-size: 34px; }
+.with-logo { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.select-logo { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.select-logo select { flex: 1; min-width: 0; }
+.engine-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 16px; }
+.engine-card { min-width: 0; display: flex; flex-direction: column; }
+.engine-card pre.code { overflow-x: auto; white-space: pre; max-width: 100%; }
+.engine-card .env { width: 100%; table-layout: fixed; }
+.engine-card .env td:first-child { overflow-wrap: anywhere; }
+.engine-card .env td:last-child { width: 9.5em; text-align: right; }
+.engine-card .env .small.muted { margin-top: 2px; font-family: inherit; }
+.engine-card > .row { margin-top: auto; padding-top: 8px; }
+.engine-card .section-head h3 { margin: 0; }
+.engine-card .desc { margin: 4px 0 10px; }
+.kind-badge { text-transform: uppercase; font-size: 10px; letter-spacing: .04em; }
+.engine-card .env td.nowrap { white-space: normal; overflow-wrap: anywhere; }
+.ocr-engine-pick { flex: 1 1 180px; max-width: 300px; }

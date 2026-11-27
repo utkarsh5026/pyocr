@@ -1,4 +1,11 @@
-"""Provider-neutral interface for "transcribe this page image" calls."""
+"""Provider-neutral interface for "transcribe this page image" calls.
+
+A request normally carries one page. A *batched* request carries several pages
+(``TranscriptionRequest.pages``), each with a text label ("Page 5") that the
+provider sends right before the image. Labelling each image, rather than letting
+the model count them, is what lets ``service.py`` split the reply back into
+pages reliably.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +13,7 @@ import abc
 import time
 from dataclasses import dataclass, field
 
+from ..config import env_status
 from . import catalog
 
 
@@ -18,6 +26,16 @@ class ProviderNotConfigured(ProviderError):
 
 
 @dataclass
+class PageImage:
+    """One page of a batched request."""
+
+    image: bytes
+    mime_type: str
+    #: text sent right before the image, e.g. "Page 5" (1-based, as the user sees it)
+    label: str
+
+
+@dataclass
 class TranscriptionRequest:
     image: bytes
     mime_type: str  # "image/png" or "image/jpeg"
@@ -25,6 +43,12 @@ class TranscriptionRequest:
     user_prompt: str
     model: str | None = None  # None -> provider default
     max_output_tokens: int = 16000
+    #: several pages in one request; when set, these are sent instead of ``image``
+    pages: list[PageImage] = field(default_factory=list)
+
+    def page_images(self) -> list[PageImage]:
+        """The images to send, in order. A single-page request has one unlabelled image."""
+        return self.pages or [PageImage(self.image, self.mime_type, "")]
 
 
 @dataclass
@@ -55,21 +79,12 @@ class Provider(abc.ABC):
     #: whether :meth:`list_models` asks the provider's API (False: deployments you name yourself)
     can_list_models: bool = False
 
+    #: key into ``brands.BRANDS`` for the logo shown in the UI
+    brand: str = ""
+
     def env_status(self) -> list[dict]:
         """Which settings are set (never the values themselves)."""
-        settings = getattr(self, "settings", None)
-        fields = type(settings).model_fields if settings is not None else {}
-        out = []
-        for name, required, desc in self.env_vars:
-            attr = name.lower()
-            value = getattr(settings, attr, None)
-            default = fields[attr].default if attr in fields else None
-            # "default" = not set by the user but a built-in default applies
-            state = "missing" if not value else "default" if value == default else "set"
-            out.append({"name": name, "required": required, "description": desc,
-                        "set": state == "set", "state": state,
-                        "default": default if isinstance(default, (str, int, float)) else None})
-        return out
+        return env_status(getattr(self, "settings", None), self.env_vars)
 
     @property
     @abc.abstractmethod
@@ -122,5 +137,6 @@ class Provider(abc.ABC):
             "model_hint": self.model_hint,
             "env": self.env_status(),
             "docs_url": self.docs_url,
+            "brand": self.brand,
             "can_list_models": self.can_list_models,
         }

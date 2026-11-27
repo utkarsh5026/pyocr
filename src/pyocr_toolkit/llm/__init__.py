@@ -6,6 +6,7 @@ from ..config import Settings
 from . import catalog
 from .anthropic_provider import AnthropicFoundryProvider, AnthropicProvider
 from .base import (
+    PageImage,
     Provider,
     ProviderError,
     ProviderNotConfigured,
@@ -14,7 +15,15 @@ from .base import (
 )
 from .gemini_provider import GeminiProvider
 from .openai_provider import AzureOpenAIProvider, OpenAICompatibleProvider, OpenAIProvider
-from .prompts import PROMPT_MODES, USER_PROMPT, resolve_prompt
+from .prompts import (
+    BATCH_USER_PROMPT,
+    MAX_PAGES_PER_REQUEST,
+    PROMPT_MODES,
+    USER_PROMPT,
+    batch_rules,
+    resolve_prompt,
+    split_batch,
+)
 
 PROVIDER_CLASSES: list[type[Provider]] = [
     AnthropicProvider,
@@ -32,6 +41,11 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
 
 __all__ = [
     "catalog",
+    "BATCH_USER_PROMPT",
+    "MAX_PAGES_PER_REQUEST",
+    "PageImage",
+    "batch_rules",
+    "split_batch",
     "PROMPT_MODES",
     "USER_PROMPT",
     "Provider",

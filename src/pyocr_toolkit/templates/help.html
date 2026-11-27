@@ -31,7 +31,7 @@
 <ol>
   <li><b>Upload</b> a file with the <i>Upload</i> button (top right) or by dropping it anywhere on a page. You can upload several at once, or a <b>.zip</b>; those go into a <a href="#workspaces">workspace</a>.</li>
   <li>The file opens on its <b>Overview</b> page. Each page gets a badge; <span class="badge scan">scan</span> means it has no embedded text, so it needs OCR or an LLM.</li>
-  <li>Start an <b>extraction</b>: choose Tesseract or an LLM, a page range (or leave it empty for every page), and click <i>Start extraction</i>. A progress bar follows the job.</li>
+  <li>Start an <b>extraction</b>: choose an OCR engine or an LLM, a page range (or leave it empty for every page), and click <i>Start extraction</i>. A progress bar follows the job.</li>
   <li>Open the <b>Page inspector</b> to see one page next to all of its texts, or <b>Full text</b> to read the whole document from one source.</li>
   <li>Use <b>Compare</b> to measure two sources against each other, then export the text you want.</li>
 </ol>
@@ -41,8 +41,10 @@
   <dt><a href="/">Home</a></dt><dd>Upload area, setup status and recent documents.</dd>
   <dt><a href="/documents">Library</a></dt><dd>Every uploaded document as a card showing how many pages have native, OCR and LLM text, and how many still have no text at all. Filter by status (<i>Needs text</i>, <i>Scanned</i>, <i>All pages have text</i>), by workspace or by name.</dd>
   <dt><a href="/workspaces">Workspaces</a></dt><dd>Named groups of documents, usually one batch upload each. Open one to rename it, add files, or take documents out of it.</dd>
-  <dt>Document → Overview</dt><dd>Start background extractions, list every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
-  <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text, Tesseract, LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
+  <dt>Document → Overview</dt><dd>Start background extractions with any OCR engine or LLM: type a page range or click pages on the page map
+    (Shift-click selects a range; presets pick scans only or pages with no text from that engine yet), and choose how many
+    pages go in each LLM request. Also lists every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
+  <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text (pick the PDF library), OCR (pick the engine), LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
   <dt>Document → Full text</dt><dd>The whole document from one source, page by page, optionally next to the page images. Find-in-text, copy and download.</dd>
   <dt>Document → Compare</dt><dd>Pick a reference (A) and a candidate (B). You get the whole-document error rates, the word errors split into misread / missed / added, how many numbers were read exactly, a per-page CER chart (click a bar to open that page) and the selected page's text side by side, with words only in A and only in B highlighted. Above the diff, a <a href="#error-kinds">breakdown</a> says what kind of mistakes the page has. It opens on the worst page.</dd>
   <dt><a href="/search">Search</a></dt><dd>Search every document in the library at once.</dd>
@@ -80,12 +82,32 @@
   nothing is guessed, but it only exists for <i>born-digital</i> files. A scanner only records a picture of the page,
   so a scanned PDF has no glyphs and no native text. A few PDFs also have broken glyph mappings, so native text can
   be gibberish even though the page looks fine.</p>
+<h3>1b. Other PDF libraries</h3>
+<p>PyMuPDF is not the only way to read that text layer. <b>pypdf</b>, <b>pdfplumber</b>, <b>pdfminer.six</b> and
+  <b>pypdfium2</b> (PDFium, Chrome's engine) each rebuild words and lines their own way, so reading order, spacing,
+  ligatures and odd font encodings can differ. If your pipeline uses one of them, test that one. Each installed
+  library is its own source (<code>native:pypdf</code>, <code>native:pdfplumber</code>, ...). On the page inspector's
+  <i>Native</i> tab, pick a library, or press <i>Test all libraries</i> to see which libraries get text out of the
+  page and how much. Compare and Export list them too. Install them with
+  <code>pip install "pyocr-toolkit[pdf]"</code>; they read PDF files only.</p>
 <h3>2. Tesseract OCR: turning pixels back into characters</h3>
 <p>For a picture, all we have is pixels. pyocr renders the page at <code>OCR_DPI</code> (300 by default; small text
   needs enough pixels per character) and gives it to <b>Tesseract</b>, an open-source OCR engine. Tesseract finds
   lines of text, segments them, and recognises characters with a neural network (LSTM). It also reports a box for every
   word, which is how search can highlight OCR hits on the page. It is fast, free and private, but it reads shapes rather
   than meaning. Tables, multi-column layouts, stamps, low-contrast or skewed scans and handwriting are its weak spots.</p>
+<h3>2b. Other OCR engines</h3>
+<p>Tesseract is one of several engines, and each engine you run becomes its own source (<code>ocr:&lt;engine&gt;</code>),
+  so you can compare engines against each other or against an LLM. <b>Local</b> engines run on your machine and need an
+  extra install (<code>pip install "pyocr-toolkit[easyocr]"</code>); they download their model the first time:
+  <b>RapidOCR</b> (light, ONNX Runtime), <b>EasyOCR</b> (PyTorch, many languages), <b>PaddleOCR</b> (very accurate on
+  dense and Asian-script pages) and <b>docTR</b> (document-focused, gives blocks/lines/words). <b>Cloud</b> engines send
+  the page image to the service you configured: <b>Google Cloud Vision</b>, <b>Azure AI Document Intelligence</b>,
+  <b>AWS Textract</b> and <b>Mistral OCR</b>. They are usually stronger on handwriting and poor scans, and cost a
+  fraction of a cent per page. Most engines detect whole <i>lines</i>; pyocr orders the lines top to bottom and splits
+  each line box into word boxes by character count, so search highlights land close to the word. Mistral OCR returns
+  Markdown without positions. The <a href="/providers">Providers</a> page shows which engines are ready and has a
+  <i>Test</i> button for each.</p>
 <h3>3. LLM transcription: a vision model reading the page</h3>
 <p>The page is rendered to an image (<code>LLM_DPI</code>, with the longest side capped at <code>LLM_MAX_EDGE_PX</code>)
   and sent to a multimodal LLM with instructions to act as a <i>transcription engine</i>, not an assistant. Because it
@@ -102,6 +124,26 @@
 </ul>
 <p>Every provider + model + prompt combination is stored separately, so you can run several and compare them.
   Results are cached: repeating a request costs nothing unless you click <i>re-run</i>.</p>
+
+<h3 id="batching">Several pages per request</h3>
+<p>Many pipelines send a few pages in one LLM call instead of one call per page. To measure that setup, set
+  <b>Pages per request</b> on the Overview page (or <code>--pages-per-request N</code> on the command line).</p>
+<ul>
+  <li><b>How it works.</b> Each image goes out right after a label such as <i>Page 5</i>. The prompt asks the model to
+    start each page with a line <code>=== PAGE 5 ===</code>, and the reply is split at those lines. Every page is
+    still stored, scored and exported on its own.</li>
+  <li><b>When the reply doesn't match.</b> If a page's marker is missing or repeated, or the output limit cut the
+    reply short, that page is sent again on its own (with the same prompt) and gets a warning. Text is never assigned
+    to a page by guessing.</li>
+  <li><b>Its own source.</b> The page count per request is part of the prompt, so "5 pages per request" is a separate
+    source from one page per request. Compare the two to see whether batching costs accuracy on your documents.</li>
+  <li><b>Cost.</b> Image and output tokens stay the same, so batching saves only the repeated system prompt (roughly
+    10% of input tokens). It mostly means fewer requests. Tokens of a shared request are split evenly over its pages.</li>
+  <li><b>Limits.</b> Up to 20 pages per request. The output limit for batched requests is
+    <code>LLM_BATCH_MAX_OUTPUT_TOKENS</code> (default 32000); lower it if your model allows less.</li>
+  <li><b>With image preprocessing.</b> Batched pages get the same <i>Image preprocessing</i> as single pages, so the two
+    settings combine: each combination is its own source.</li>
+</ul>
 
 <h2 id="preprocess">Adjusting the image before the LLM sees it</h2>
 <p>A vision model never sees your PDF, only the pixels it is sent. So the pixels are part of the experiment: a grey
@@ -207,7 +249,7 @@ WER = word edits / reference words           = 1 / 3  = 33 %</pre>
 
 <h2 id="search">Search</h2>
 <p>Search is case-insensitive, and a phrase matches even when it is split across lines. In the page inspector, hits
-  from the native text are drawn in <span class="hl-native">yellow</span> and Tesseract hits in
+  from the native text are drawn in <span class="hl-native">yellow</span> and OCR hits (any engine) in
   <span class="hl-ocr">blue</span>, using each word's coordinates. LLM output has no coordinates, so its hits appear as
   text snippets. OCR and LLM text is only searchable on pages where it has been extracted.</p>
 
@@ -242,8 +284,12 @@ pyocr init                                            # write a .env template he
 pyocr doctor                                          # check Tesseract, providers, data dir
 pyocr providers                                       # list providers and their status
 pyocr extract FILE --engine llm -p anthropic --pages 1-5 --format jsonl -o out.jsonl
+pyocr extract FILE --engine llm --pages-per-request 5  # 5 pages in each LLM request
 pyocr extract FILE --engine ocr                       # Tesseract, all pages, text to stdout
+pyocr extract FILE --engine ocr:paddleocr             # another OCR engine (`pyocr engines` lists them)
 pyocr extract FILE --engine native --format md        # embedded text layer only
+pyocr extract FILE --engine native:pdfplumber         # the text layer as another PDF library reads it
+pyocr libraries                                       # which PDF libraries are installed
 pyocr compare FILE -p openai -m gpt-6.2-sol                 # per-page OCR/native error rate vs an LLM
 pyocr extract FILE --preprocess clean                 # adjust the image first (a preset or e.g. 'gray;auto;contrast=1.5')
 pyocr import a.pdf b.pdf scans.zip folder/ -w "Q3"    # add many files as one workspace (zips unpacked)
@@ -267,7 +313,7 @@ POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)
 <h2 id="data">Data and privacy</h2>
 <ul>
   <li>Everything is stored under <code>DATA_DIR</code> (default <code>./data</code>): the original file, OCR results and LLM results as plain JSON. Workspaces are small JSON files in <code>workspaces/</code> that list document ids.</li>
-  <li>A page image goes to an LLM provider <b>only</b> when you start a transcription for that page, and only to the provider you chose. Native text and Tesseract never leave your machine.</li>
+  <li>A page image goes to an LLM provider <b>only</b> when you start a transcription for that page, and only to the provider you chose. The same goes for cloud OCR engines (Google Vision, Azure, Textract, Mistral). Native text, Tesseract and the local OCR engines never leave your machine.</li>
   <li>API keys are read on the server and are never sent to the browser.</li>
   <li>There is no login. Keep it on <code>127.0.0.1</code> (the default) or put it behind your own authentication before sharing it on a network.</li>
 </ul>

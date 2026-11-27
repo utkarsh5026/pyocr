@@ -6,6 +6,13 @@
   the Full text *Download* menu, or `GET /api/documents/{id}/export/all?fmt=json|jsonl|csv|md|zip`.
   JSON keeps each page's text per source, CSV puts sources side by side (a column each), and ZIP bundles the JSON
   and CSV with a TXT and Markdown file per source. Like single-source export, it only reads cached results.
+- **Other PDF libraries.** Besides PyMuPDF, the text layer can be read with pypdf, pdfplumber, pdfminer.six and
+  pypdfium2 (optional: `pip install "pyocr-toolkit[pdf]"`). Each installed library is its own source
+  (`native:<library>`; `native` stays PyMuPDF) that can be compared and exported. The page inspector's Native tab
+  has a library picker and a **Test all libraries** button that shows which libraries get text out of the page.
+  CLI: `--engine native:<library>` and `pyocr libraries`; API: `?library=` on `/text/native`, a new
+  `/pages/{page}/text/native/libraries` endpoint, and `text_libraries` in `/api/config`. Results are cached under
+  `native/<library>/<page>.json` and re-read when the library version changes.
 - **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as
   `pip install "pyocr-toolkit[easyocr]"`), and Google Cloud Vision, Azure AI Document Intelligence, AWS Textract
   and Mistral OCR (cloud, configured with environment variables). Each engine is a separate source

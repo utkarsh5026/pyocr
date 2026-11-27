@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
+import pymupdf
 from fastapi import APIRouter, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -26,6 +27,7 @@ from .documents import DEFAULT_OCR_ENGINE, DocumentError, DocumentStore, OCRUnav
 from .jobs import JobManager
 from .llm import MAX_PAGES_PER_REQUEST, PROMPT_MODES, ProviderError, build_providers, catalog
 from .ocr import build_ocr_engines
+from .pdftext import DEFAULT_TEXT_LIBRARY, native_source_id
 from .preprocess import Preprocess, presets_json, process_bytes
 from .service import LLMSpec, Services, ocr_source_id, parse_pages
 from .workspaces import WorkspaceStore, ingest, suggest_names
@@ -55,9 +57,13 @@ class TextRef(BaseModel):
     key: str | None = None
     #: for ``ocr``: engine id (``None`` -> Tesseract)
     engine: str | None = None
+    #: for ``native``: PDF library id (``None`` -> PyMuPDF; see /api/config ``text_libraries``)
+    library: str | None = None
 
     @property
     def source_id(self) -> str:
+        if self.source == "native":
+            return native_source_id(self.library or DEFAULT_TEXT_LIBRARY)
         if self.source == "ocr":
             return ocr_source_id(self.engine or DEFAULT_OCR_ENGINE)
         return f"llm:{self.key}" if self.source == "llm" and self.key else self.source
@@ -160,6 +166,10 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "max_pages_per_request": MAX_PAGES_PER_REQUEST,
             "tesseract_available": shutil.which("tesseract") is not None,
             "ocr_engines": [e.describe() for e in engines.values()],
+            "text_libraries": [{"id": DEFAULT_TEXT_LIBRARY, "source_id": "native", "label": "PyMuPDF",
+                                "description": "The app's own PDF engine (MuPDF).", "available": True,
+                                "problem": None, "has_boxes": True, "version": pymupdf.VersionBind},
+                               *(lib.describe() for lib in services.text_libraries.values())],
             "brands": brands_json(),
             "tesseract_language": settings.tesseract_language,
             "max_upload_mb": settings.max_upload_mb,
@@ -344,8 +354,18 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
 
     # ------------------------------------------------------------- text layers
     @api.get("/documents/{doc_id}/pages/{page}/text/native", tags=["text"])
-    def native_text(doc_id: str, page: int):
-        return get_doc(doc_id).native_text(page).to_json()
+    def native_text(doc_id: str, page: int, force: bool = False,
+                    library: str = Query(DEFAULT_TEXT_LIBRARY, description="PDF library id (see /api/config)")):
+        """The page's embedded text layer, read by PyMuPDF (default) or another PDF library."""
+        return services.native_layer(get_doc(doc_id), page, library, force=force).to_json()
+
+    @api.get("/documents/{doc_id}/pages/{page}/text/native/libraries", tags=["text"])
+    def native_libraries(doc_id: str, page: int):
+        """Read this page with every PDF library: did each get text out, how much, how fast."""
+        doc = get_doc(doc_id)
+        if not 0 <= page < doc.meta.page_count:
+            raise DocumentError(f"page {page} out of range (document has {doc.meta.page_count} pages)")
+        return services.compare_libraries(doc, page)
 
     @api.get("/documents/{doc_id}/pages/{page}/text/ocr", tags=["text"])
     def ocr_text(doc_id: str, page: int, force: bool = False, cached_only: bool = False,
@@ -611,7 +631,8 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
                       key: str | None = None):
         """Download the whole document's text from one source.
 
-        ``source`` is ``native``, ``ocr`` (Tesseract), ``ocr:<engine>``, ``llm`` (latest per page) or ``llm:<key>``.
+        ``source`` is ``native`` (PyMuPDF), ``native:<library>`` (pypdf, pdfplumber, ...), ``ocr`` (Tesseract),
+        ``ocr:<engine>``, ``llm`` (latest per page) or ``llm:<key>``.
         ``jsonl`` writes one JSON object per page - handy for RAG / ingestion pipelines.
         Pages without a result for that source are empty (nothing is run implicitly).
         """

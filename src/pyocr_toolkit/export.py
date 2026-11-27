@@ -62,7 +62,7 @@ class DocumentTexts:
 
 def file_tag(source: str) -> str:
     """Short, filename-safe tag for a source id (``ocr:easyocr`` → ``ocr-easyocr``, ``llm:<key>`` → ``llm``)."""
-    return source.replace(":", "-") if source.startswith("ocr:") else source.split(":")[0]
+    return source.replace(":", "-") if source.startswith(("ocr:", "native:")) else source.split(":")[0]
 
 
 # --------------------------------------------------------------- one source

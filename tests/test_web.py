@@ -141,9 +141,9 @@ def test_llm_job_sources_compare_export(client, doc_id):
 
 def test_export_all_sources(client, doc_id):
     url = f"/api/documents/{doc_id}/export/all"
-    # before any extraction only the native text layer has pages
-    only_native = client.get(url).json()
-    assert [s["id"] for s in only_native["sources"]] == ["native"]
+    # before any extraction only the text layer (PyMuPDF + any installed PDF library) has pages
+    before = [s["id"] for s in client.get(url).json()["sources"]]
+    assert before[0] == "native" and all(s.startswith("native") for s in before)
 
     wait_for_job(client, client.post(f"/api/documents/{doc_id}/jobs",
                                      json={"kind": "llm", "llm": {"provider": "fake"}}).json()["id"])
@@ -151,10 +151,10 @@ def test_export_all_sources(client, doc_id):
     assert r.status_code == 200 and 'filename="sample.all-sources.json"' in r.headers["content-disposition"]
     data = r.json()
     ids = [s["id"] for s in data["sources"]]
-    assert ids[0] == "native" and len(ids) == 2 and ids[1].startswith("llm:")
+    assert ids[:len(before)] == before and len(ids) == len(before) + 1 and ids[-1].startswith("llm:")
     assert "ocr" not in ids  # nothing extracted with Tesseract, so it's left out
     assert [p["page"] for p in data["pages"]] == [1, 2]
-    assert "lazzy" in data["pages"][0]["texts"][ids[1]]
+    assert "lazzy" in data["pages"][0]["texts"][ids[-1]]
     assert all("text" not in s and "pages" not in s for s in data["sources"])  # no UI bookkeeping
 
     lines = [json.loads(line) for line in client.get(url, params={"fmt": "jsonl"}).text.splitlines()]
@@ -162,8 +162,8 @@ def test_export_all_sources(client, doc_id):
 
     csv_text = client.get(url, params={"fmt": "csv"}).text
     rows = list(csv.reader(io.StringIO(csv_text.lstrip("\ufeff"))))
-    assert rows[0][0] == "page" and len(rows[0]) == 3 and len(rows) == 3
-    assert "lazzy" in rows[1][2]
+    assert rows[0][0] == "page" and len(rows[0]) == len(ids) + 1 and len(rows) == 3
+    assert "lazzy" in rows[1][-1]
 
     md = client.get(url, params={"fmt": "md"}).text
     assert "## Page 2" in md and "### Native text layer" in md

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import queue
 import re
 import shutil
 import threading
@@ -47,6 +49,8 @@ SUPPORTED_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".jpx", ".jp2", ".bmp", ".gif", ".tif", ".tiff",
     ".pnm", ".pgm", ".pbm", ".ppm", ".pam", ".psd", ".webp",
 }
+
+log = logging.getLogger(__name__)
 
 _DOC_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -152,6 +156,8 @@ class OpenDocument:
         self._lock = threading.RLock()
         self._doc: pymupdf.Document | None = None
         self._page_stats: list[dict[str, Any]] | None = None
+        # Guards computing page_stats() only, so a long pass doesn't hold the PyMuPDF lock (and block renders).
+        self._stats_lock = threading.Lock()
 
     # -- lifecycle -----------------------------------------------------------
     @property
@@ -186,13 +192,20 @@ class OpenDocument:
         computed once and kept in ``pages.json``. The file is derived data: a missing, stale or damaged one is
         simply rebuilt, so folders from older versions keep working.
         """
-        with self._lock:
+        if self._page_stats is not None:
+            return self._page_stats
+        with self._stats_lock:  # a second caller waits for the first pass instead of repeating it
             if self._page_stats is not None:
                 return self._page_stats
             stats = self._load_page_stats()
             if stats is None:
-                doc = self._handle()
-                stats = [self._compute_page_stats(doc[n]) for n in range(self.meta.page_count)]
+                stats = []
+                for n in range(self.meta.page_count):
+                    # Lock per page, not for the whole pass: page renders interleave with a
+                    # background pass over a large document instead of waiting for all of it.
+                    with self._lock:
+                        stats.append(self._compute_page_stats(self._handle()[n]))
+                    time.sleep(0)  # let a waiting render take the lock; re-acquiring at once would starve it
                 tmp = self._page_stats_path.with_suffix(".json.tmp")
                 tmp.write_text(json.dumps({"version": _PAGE_STATS_VERSION, "pages": stats}, separators=(",", ":")))
                 tmp.replace(self._page_stats_path)
@@ -390,6 +403,8 @@ class DocumentStore:
         self._open: OrderedDict[str, OpenDocument] = OrderedDict()
         self._max_open = max_open
         self._lock = threading.Lock()
+        self._warm_queue: queue.Queue[str] = queue.Queue()
+        self._warm_thread: threading.Thread | None = None
 
     def add(self, filename: str, data: bytes) -> DocumentMeta:
         ext = Path(filename).suffix.lower() or ".pdf"
@@ -439,6 +454,33 @@ class DocumentStore:
                 _, evicted = self._open.popitem(last=False)
                 evicted.close()
             return doc
+
+    def warm_page_stats(self, doc_id: str) -> None:
+        """Queue building ``pages.json`` ahead of the first Overview visit; returns at once.
+
+        One daemon worker does the queued documents in order, outside any request, so a batch upload doesn't
+        start a thread per file and a slow pass never holds up the next request on the uploader's connection.
+        Best effort: if the document is deleted meanwhile, or anything else fails, the next visit computes it.
+        """
+        with self._lock:
+            if self._warm_thread is None:
+                self._warm_thread = threading.Thread(target=self._warm_worker, name="pyocr-page-stats", daemon=True)
+                self._warm_thread.start()
+        self._warm_queue.put(doc_id)
+
+    def wait_for_warmups(self) -> None:
+        """Block until every queued :meth:`warm_page_stats` has finished (for tests and the CLI)."""
+        self._warm_queue.join()
+
+    def _warm_worker(self) -> None:
+        while True:
+            doc_id = self._warm_queue.get()
+            try:
+                self.get(doc_id).page_stats()
+            except Exception:  # noqa: BLE001 - a warm-up must never surface as an error
+                log.debug("could not precompute page stats for %s", doc_id, exc_info=True)
+            finally:
+                self._warm_queue.task_done()
 
     def list(self) -> list[DocumentMeta]:
         metas = []

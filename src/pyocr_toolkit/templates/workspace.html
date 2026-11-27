@@ -127,19 +127,33 @@
     </div>
 
     <div class="tab-body" data-tab="llm" hidden>
-      {% set picker_id = 'ws' %}{% include "_llm_picker.html" %}
-      <div id="llm-image-line" class="image-line small"></div>
-      <div class="tab-meta">
-        <button id="run-llm" class="btn small primary">{{ icon('sparkles') }}Transcribe this page</button>
-        <button id="rerun-llm" class="btn small ghost" title="Ignore the cache and call the model again">{{ icon('refresh') }}Re-run</button>
+      {# The model setup is folded to one line; it opens on its own when the chosen provider isn't configured. #}
+      <details class="llm-setup" id="llm-setup">
+        <summary title="Provider, model, prompt and image sent to the model">
+          <span class="setup-k">Model</span>
+          <span class="setup-v" id="llm-setup-summary"></span>
+          <span class="setup-change">Change</span>
+        </summary>
+        <div class="llm-setup-body">
+          {% set picker_id = 'ws' %}{% include "_llm_picker.html" %}
+          <div id="llm-image-line" class="image-line small"></div>
+        </div>
+      </details>
+      <div class="tab-meta llm-actions">
+        <button id="run-llm" class="btn small primary" title="Transcribe this page with the model above (t)">{{ icon('sparkles') }}Transcribe this page</button>
         <button id="ab-llm" class="btn small" hidden title="Transcribe the original and the adjusted image with this model, then diff them">{{ icon('diff') }}A/B: original vs adjusted</button>
         <div class="spacer"></div>
         <button id="llm-json-toggle" class="btn small ghost" hidden title="Show the raw JSON instead of the field table">{{ icon('code') }}<span class="lbl">JSON</span></button>
         <button class="btn small ghost" data-copy="#llm-text" title="Copy text">{{ icon('copy') }}Copy</button>
+        <details class="menu" id="llm-more"><summary class="btn small ghost icon-only" title="More" aria-label="More actions for this transcription">⋯</summary>
+          <div>
+            <button type="button" id="rerun-llm" title="Ignore the cache and call the model again">{{ icon('refresh') }}Re-run (call the model again)</button>
+            <button type="button" id="delete-llm" class="danger" title="Delete this stored result">{{ icon('trash') }}Delete this result</button>
+          </div>
+        </details>
       </div>
-      <div class="tab-meta">
-        <label class="grow">Stored <select id="llm-result-select" title="Transcriptions stored for this page"></select></label>
-        <button id="delete-llm" class="btn small ghost danger icon-only" title="Delete this stored result">{{ icon('trash') }}</button>
+      <div class="tab-meta" id="llm-result-row" hidden>
+        <label class="grow">Result <select id="llm-result-select" title="Transcriptions stored for this page"></select></label>
       </div>
       <div id="llm-meta" class="tab-meta small"></div>
       <div id="llm-data" class="extract-view" hidden></div>

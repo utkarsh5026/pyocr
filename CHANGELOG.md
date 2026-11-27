@@ -13,6 +13,10 @@
     per request and re-run under *More options*, whose summary line shows their current values.
   - *Pages* (the page inspector): sources (Native / OCR / LLM) on the left of the text panel and the two views,
     *Diff* and *Columns* (was *Side by side*), on the right; page and zoom controls float over the page image.
+    The LLM tab folds provider, model, prompt and image into one line ("Model: demo-vision · Verbatim  Change"),
+    which opens by itself when the chosen provider isn't configured; Re-run and Delete move to a ⋯ menu, and the
+    stored-result picker shows only when the page has more than one result.
+  - Fixed: re-running an LLM transcription in the inspector no longer counts it twice in the page list.
   - *Home* and *Compare* drop the explainer text and stat tiles; Compare's case/punctuation options move to an
     Options menu.
 

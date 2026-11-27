@@ -59,6 +59,15 @@ def test_index_and_config(client):
     assert all(not p["configured"] for p in cfg["providers"] if p["id"] != "fake")
 
 
+def test_upload_precomputes_page_stats(client, tmp_path, sample_pdf, sample_png):
+    """Uploads build pages.json in the background, so the first Overview visit doesn't wait for it."""
+    one = client.post("/api/documents", files={"file": ("sample.pdf", sample_pdf, "application/pdf")}).json()["id"]
+    batch = client.post("/api/uploads", files=[("files", ("a.png", sample_png, "image/png"))]).json()
+    client.app.state.store.wait_for_warmups()
+    for d in (one, batch["documents"][0]["id"]):
+        assert (tmp_path / "documents" / d / "pages.json").exists()
+
+
 def test_upload_pages_image_text(client, doc_id):
     pages = client.get(f"/api/documents/{doc_id}/pages").json()
     assert len(pages) == 2 and pages[1]["looks_scanned"]

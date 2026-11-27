@@ -17,10 +17,14 @@ from .gemini_provider import GeminiProvider
 from .openai_provider import AzureOpenAIProvider, OpenAICompatibleProvider, OpenAIProvider
 from .prompts import (
     BATCH_USER_PROMPT,
+    DRAFT_SYSTEM,
+    EXTRACT_MODE,
+    EXTRACT_USER_PROMPT,
     MAX_PAGES_PER_REQUEST,
     PROMPT_MODES,
     USER_PROMPT,
     batch_rules,
+    draft_user_prompt,
     resolve_prompt,
     split_batch,
 )
@@ -41,6 +45,10 @@ def build_providers(settings: Settings) -> dict[str, Provider]:
 
 __all__ = [
     "catalog",
+    "DRAFT_SYSTEM",
+    "draft_user_prompt",
+    "EXTRACT_MODE",
+    "EXTRACT_USER_PROMPT",
     "BATCH_USER_PROMPT",
     "MAX_PAGES_PER_REQUEST",
     "PageImage",

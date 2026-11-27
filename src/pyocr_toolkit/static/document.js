@@ -129,8 +129,8 @@ $("#page-presets").addEventListener("click", (e) => {
 // The preset buttons and the "Other" box both set one value; "Other" stays empty while a preset is chosen.
 const perRequestIn = $("#extract-form input[name=per_request]");
 let perRequestN = 1;
-/** Pages per LLM request (1 = one page per request). */
-const perRequest = () => perRequestN;
+/** Pages per LLM request (1 = one page per request). Structured extraction is always 1: one JSON object per page. */
+const perRequest = () => (picker?.isExtract() ? 1 : perRequestN);
 
 function setPerRequest(value, typed = false) {
   perRequestN = Math.max(1, Math.min(+perRequestIn.max || 20, Math.floor(+value) || 1));
@@ -173,6 +173,7 @@ function updateForm() {
   renderPageMap();
   renderPresets();
 
+  $(".field.per-request").hidden = kind() === "llm" && !!picker?.isExtract();
   const count = sel.error ? 0 : sel.pages.length;
   const n = perRequest();
   const requests = Math.ceil(count / n);
@@ -192,11 +193,13 @@ function updateForm() {
       : `Runs locally on ${what} with ${engine?.label || "OCR"}`;
 }
 
-async function loadPages() {
-  const pages = await api(`/api/documents/${DOC_ID}/pages`);
-  pageInfo = pages;
-  updateForm();
-  $("#page-grid").innerHTML = pages.map((p, n) => `
+// Tiles are added in batches as the grid scrolls into view, so a document with
+// thousands of pages doesn't build thousands of DOM nodes up front.
+const TILE_BATCH = 200;
+let tileObserver = null;
+
+function tileHtml(p, n) {
+  return `
     <a class="page-tile" href="/documents/${DOC_ID}/pages/${n + 1}">
       <img loading="lazy" src="/api/documents/${DOC_ID}/pages/${n}/image?dpi=50" alt="Page ${n + 1}">
       <div class="tile-foot"><b>${n + 1}</b>
@@ -204,7 +207,36 @@ async function loadPages() {
         ${p.ocr_engines?.length ? `<span class="badge ok" title="${esc(p.ocr_engines.map(ocrLabel).join(", "))}">OCR${p.ocr_engines.length > 1 ? "×" + p.ocr_engines.length : ""}</span>` : ""}
         ${p.llm_results ? `<span class="badge ok">LLM${p.llm_results > 1 ? "×" + p.llm_results : ""}</span>` : ""}
       </div>
-    </a>`).join("");
+    </a>`;
+}
+
+function renderTiles(grid, start) {
+  const end = Math.min(start + TILE_BATCH, pageInfo.length);
+  grid.querySelector(".grid-more")?.remove();
+  grid.insertAdjacentHTML("beforeend", pageInfo.slice(start, end).map((p, i) => tileHtml(p, start + i)).join(""));
+  if (end >= pageInfo.length) return;
+  const more = document.createElement("div");
+  more.className = "grid-more muted small";
+  more.textContent = `Showing ${end} of ${plural(pageInfo.length, "page")}…`;
+  grid.append(more);
+  tileObserver ??= new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      tileObserver.unobserve(e.target);
+      renderTiles(grid, Number(e.target.dataset.next));
+    }
+  }, { rootMargin: "800px" });
+  more.dataset.next = end;
+  tileObserver.observe(more);
+}
+
+async function loadPages() {
+  const pages = await api(`/api/documents/${DOC_ID}/pages`);
+  pageInfo = pages;
+  updateForm();
+  const grid = $("#page-grid");
+  grid.innerHTML = "";
+  renderTiles(grid, 0);
 }
 
 async function refreshJobs() {
@@ -243,7 +275,7 @@ $("#extract-form").addEventListener("submit", guard(async (e) => {
     body.llm = { ...picker.spec(), pages_per_request: perRequest() };
     body.llm.preprocess = form.preprocess.value.trim() || null;
     preprocessStore.set(DOC_ID, body.llm.preprocess);
-    localStorage.setItem("pyocr.perRequest", String(body.llm.pages_per_request));
+    if (!picker.isExtract()) localStorage.setItem("pyocr.perRequest", String(body.llm.pages_per_request));
     const n = sel.all ? `all ${plural(PAGE_COUNT, "page")}` : `${plural(sel.pages.length, "page")} (${body.pages})`;
     const batch = body.llm.pages_per_request > 1 ? `, ${body.llm.pages_per_request} pages per request` : "";
     const img = body.llm.preprocess ? `\nImage preprocessing: ${body.llm.preprocess}\n` : "";
@@ -266,7 +298,7 @@ $("#delete-doc").addEventListener("click", guard(async (e) => {
 
 (async function main() {
   try {
-    picker = await initLlmPicker($("#llm-options [data-llm-picker]"));
+    picker = await initLlmPicker($("#llm-options [data-llm-picker]"), { page: () => ({ doc_id: DOC_ID, page: 0 }) });
     const cfg = await getConfig();
     ocrSelect.innerHTML = ocrEngineOptions(cfg);
     ocrSelect.value = preferredOcrEngine(cfg);

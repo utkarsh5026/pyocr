@@ -31,6 +31,59 @@
   `corrected/<page>.json` in the document's folder; existing folders are unaffected. API:
   `GET/PUT/DELETE /api/documents/{id}/pages/{n}/corrected`; the page consensus adds a word `box` per column (from
   native text or OCR), `page_size` and the page's `corrected` state.
+- Faster Overview for large documents: per-page facts (size, text-layer characters, images) are computed once and
+  saved to `pages.json` in the document folder, so later visits to a 2,000-page PDF's Overview drop from ~2.5 s
+  to ~40 ms. Uploads build `pages.json` in the background right away, so the first visit is fast too, and page
+  renders keep working while it runs. The page grid draws thumbnails in batches of 200 as you scroll. Existing
+  folders (and documents added with `pyocr add`) get `pages.json` on first view; it is derived data and is rebuilt
+  if missing or damaged.
+
+## 0.6.0 - 2026-11-27
+
+- **Structured data extraction**: a new prompt, *Structured data (fields → JSON)*, fills a JSON Schema from each page
+  instead of transcribing it. Built-in schemas for invoices, receipts and form fields, or your own JSON Schema
+  (checked as you type). Providers enforce the schema natively where they can (Claude structured outputs, OpenAI /
+  Azure strict `response_format`, Gemini `response_json_schema`); older Claude models and OpenAI-compatible servers
+  get it in the prompt, with a warning. Values are copied as printed, and fields that aren't on the page are `null`.
+  The LLM tab shows the result as a field table (fields found, line items, schema problems on their field) with the
+  raw JSON one click away. Every reply is parsed and validated against the schema; results store `data`,
+  `data_errors`, `fields_filled` and `fields_total` next to the text.
+- **Schema editor**: build your own schema field by field (name, type, hint for the model, required; tables and
+  groups nest) without writing JSON Schema, or edit it as JSON in an editor with colours, line numbers and the
+  error line marked. *Fix syntax* repairs quotes, unquoted keys, missing or trailing commas, unclosed brackets,
+  comments, Python `True`/`None` and type names such as `str` or `bool`. Each edit is checked: mistakes come with
+  suggestions ("did you mean 'properties'?"), and a note says whether the chosen provider and model enforce the
+  schema or only get it in the prompt. An example output, as the field table or as JSON, shows what a result will
+  look like before you pay for a run.
+- **Draft fields from plain words**: describe what to extract ("invoice number, date, every line item with its
+  amount") and the chosen model drafts the fields, optionally looking at the current page. The draft opens in the
+  field editor for review, and *Change my current fields* refines it step by step ("also add the due date"). One
+  paid call per draft (tokens and cost shown), through `LLM_CONCURRENCY`. API: `POST /api/extract/draft-schema`
+  (`description`, `provider`, `model`, optional `current_schema`, `doc_id` and `page`; same-origin only).
+- The schema is part of the LLM cache key, so each schema is its own source. Plain transcriptions keep their
+  existing keys, so cached results are unaffected.
+- API: `prompt_mode: "extract"` with `extract_schema` (a preset id or a JSON Schema) on
+  `POST /api/documents/{id}/pages/{n}/llm` and in job bodies, `POST /api/extract/check-schema` (validation notes,
+  example output, syntax error position and a repaired version; takes an optional `provider` and `model`), `extract_presets` in
+  `/api/config`, and a per-page `data` object in JSON / JSONL exports of an extraction (one source, and
+  *Export all* as `data: {source_id: fields}`). CLI:
+  `pyocr extract --mode extract --schema invoice|receipt|form|<file.json>`.
+- The README and website now install from PyPI (`pipx install pyocr-toolkit`) instead of from GitHub.
+- Existing results and cache keys are unchanged.
+
+## 0.5.0 - 2026-11-27
+
+- **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as
+  `pip install "pyocr-toolkit[easyocr]"`), and Google Cloud Vision, Azure AI Document Intelligence, AWS Textract
+  and Mistral OCR (cloud, configured with environment variables). Each engine is a separate source
+  (`ocr:<engine>`; `ocr` stays Tesseract) that can be searched, compared and exported.
+  - The page inspector, Overview extract form, background jobs and the CLI (`--engine ocr:<engine>`,
+    `--ocr-engine`, `pyocr engines`) can pick the OCR engine. The Providers page lists every engine with its status
+    and a Test button, and cloud OCR keys and engine settings can be saved there like LLM provider credentials.
+  - New settings: `GOOGLE_VISION_API_KEY`, `GOOGLE_VISION_LANGUAGE_HINTS`, `AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT`,
+    `AZURE_DOCUMENT_INTELLIGENCE_KEY`, `AWS_REGION` (plus the usual AWS credentials), `MISTRAL_API_KEY`,
+    `MISTRAL_OCR_MODEL`, `EASYOCR_LANGUAGES`, `PADDLEOCR_LANGUAGE`, `OCR_GPU`, `OCR_MAX_EDGE_PX`, `OCR_TIMEOUT_S`.
+  - Existing Tesseract results (`ocr/<page>.json`) are read as before; other engines cache under `ocr/<engine>/`.
 - **Other PDF libraries.** Besides PyMuPDF, the text layer can be read with pypdf, pdfplumber, pdfminer.six and
   pypdfium2 (optional: `pip install "pyocr-toolkit[pdf]"`). Each installed library is its own source
   (`native:<library>`; `native` stays PyMuPDF) that can be compared and exported. The page inspector's Native tab
@@ -38,17 +91,15 @@
   CLI: `--engine native:<library>` and `pyocr libraries`; API: `?library=` on `/text/native`, a new
   `/pages/{page}/text/native/libraries` endpoint, and `text_libraries` in `/api/config`. Results are cached under
   `native/<library>/<page>.json` and re-read when the library version changes.
-- **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as
-  `pip install "pyocr-toolkit[easyocr]"`), and Google Cloud Vision, Azure AI Document Intelligence, AWS Textract
-  and Mistral OCR (cloud, configured with environment variables). Each engine is a separate source
-  (`ocr:<engine>`; `ocr` stays Tesseract) that can be searched, compared and exported.
-- Page inspector, Overview extract form, background jobs and the CLI (`--engine ocr:<engine>`, `--ocr-engine`,
-  `pyocr engines`) can pick the OCR engine. The Providers page lists every engine with its status and a Test button.
+- **Export all sources.** Download everything extracted for a document in one file: Overview → *Export all*,
+  the Full text *Download* menu, or `GET /api/documents/{id}/export/all?fmt=json|jsonl|csv|md|zip`.
+  JSON keeps each page's text per source, CSV puts sources side by side (a column each), and ZIP bundles the JSON
+  and CSV with a TXT and Markdown file per source. Like single-source export, it only reads cached results.
 - Logos for LLM providers and OCR engines across the UI (bundled locally, no external requests).
-- Cloud OCR keys and engine settings can be saved on the Providers page, like LLM provider credentials.
-- Existing Tesseract results (`ocr/<page>.json`) are read as before; other engines cache under `ocr/<engine>/`.
+- The upload file pickers now offer `.txt`, `.cbr` and `.pam` files, which the server already accepted.
 - Fix: running Tesseract on two documents at once (e.g. two OCR jobs) failed with "Attempt to use Leptonica from
   2 threads at once"; Tesseract calls are now serialised across the whole process.
+- LLM prompts and cache keys are unchanged, so existing results stay valid.
 
 ## 0.4.0 - 2026-11-27
 

@@ -42,7 +42,8 @@ Then you can:
 - **Extract** page by page, a range like `1-5,9`, or the whole document, as background jobs
 - **Compare** any two sources: character and word error rate (CER/WER), word-level diffs, a per-page chart
 - **Search** across every document and every source at once
-- **Export** clean text as TXT, Markdown, JSON or JSONL for your pipeline
+- **Export** clean text as TXT, Markdown, JSON or JSONL for your pipeline, or every source at once as JSON, CSV,
+  Markdown, JSONL or a ZIP
 
 **LLM providers:** Claude (Anthropic API), OpenAI, Azure OpenAI, Claude on Azure (Microsoft Foundry), Google
 Gemini, and any OpenAI-compatible server (Ollama, vLLM, LM Studio, OpenRouter) for local or private models.
@@ -95,19 +96,20 @@ choco install tesseract                                 # Windows (or the UB Man
 **Option A: pipx** (recommended, installs it as an isolated command):
 
 ```bash
-pipx install git+https://github.com/utkarsh5026/pyocr
+pipx install pyocr-toolkit
 ```
 
 **Option B: pip** in a virtual environment:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
-pip install git+https://github.com/utkarsh5026/pyocr
+pip install pyocr-toolkit
 ```
 
 > [!NOTE]
-> The PyPI name is `pyocr-toolkit` (plain `pyocr` is a different, unrelated library). Once it's published to
-> PyPI, `pipx install pyocr-toolkit` will also work.
+> The PyPI name is `pyocr-toolkit` (plain `pyocr` is a different, unrelated library). Optional extras add more
+> engines, e.g. `pipx install "pyocr-toolkit[pdf,rapidocr]"`. To run the latest unreleased code, install from
+> GitHub instead: `pipx install git+https://github.com/utkarsh5026/pyocr`.
 
 **Option C: Docker** (Tesseract and several language packs included):
 
@@ -219,6 +221,7 @@ pyocr extract born-digital.pdf --engine native              # embedded text only
 pyocr extract born-digital.pdf --engine native:pypdf        # the same text layer as pypdf reads it
 pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR / native CER vs an LLM
 pyocr extract scan.pdf -p anthropic --preprocess 'gray;auto;contrast=1.5'  # adjust the image first (or a preset: clean, bw, ...)
+pyocr extract invoice.pdf -p anthropic --mode extract --schema invoice --format json  # fields, not text (or a JSON Schema file)
 pyocr import a.pdf b.pdf scans.zip folder/ -w invoices      # add many files as one workspace (zips unpacked)
 pyocr providers                                             # which providers are ready
 pyocr engines                                               # which OCR engines are ready

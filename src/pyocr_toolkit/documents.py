@@ -9,6 +9,7 @@ On disk, each upload lives in its own folder::
 
     data/documents/<doc_id>/
         meta.json          # filename, page count, ...
+        pages.json         # per-page facts (size, text-layer chars, ...); derived, rebuilt if missing
         source.<ext>       # the original bytes, untouched
         ocr/<page>.json    # cached Tesseract result (text + word boxes)
         ocr/<engine>/<page>.json  # cached result of another OCR engine (EasyOCR, ...)
@@ -27,6 +28,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import queue
 import re
 import shutil
 import threading
@@ -48,6 +51,8 @@ SUPPORTED_EXTENSIONS = {
     ".pnm", ".pgm", ".pbm", ".ppm", ".pam", ".psd", ".webp",
 }
 
+log = logging.getLogger(__name__)
+
 _DOC_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 
 #: Tesseract (through MuPDF's Leptonica) has process-wide state: two OCR calls on
@@ -67,6 +72,9 @@ class OCRUnavailableError(DocumentError):
 #: The engine whose results live in ``ocr/<page>.json`` (the original layout).
 DEFAULT_OCR_ENGINE = "tesseract"
 _ENGINE_ID_RE = re.compile(r"^[a-z0-9_]+$")
+
+#: Bump when the fields in ``pages.json`` change; older files are then recomputed.
+_PAGE_STATS_VERSION = 1
 
 
 @dataclass
@@ -148,6 +156,9 @@ class OpenDocument:
         self.meta = meta
         self._lock = threading.RLock()
         self._doc: pymupdf.Document | None = None
+        self._page_stats: list[dict[str, Any]] | None = None
+        # Guards computing page_stats() only, so a long pass doesn't hold the PyMuPDF lock (and block renders).
+        self._stats_lock = threading.Lock()
 
     # -- lifecycle -----------------------------------------------------------
     @property
@@ -171,27 +182,96 @@ class OpenDocument:
         return self._handle()[number]
 
     # -- page info / rendering ----------------------------------------------
+    @property
+    def _page_stats_path(self) -> Path:
+        return self.folder / "pages.json"
+
+    def page_stats(self) -> list[dict[str, Any]]:
+        """Facts about every page that never change for a stored file (size, text-layer chars, images).
+
+        Reading them takes a full text extraction per page (seconds for a few thousand pages), so they are
+        computed once and kept in ``pages.json``. The file is derived data: a missing, stale or damaged one is
+        simply rebuilt, so folders from older versions keep working.
+        """
+        if self._page_stats is not None:
+            return self._page_stats
+        with self._stats_lock:  # a second caller waits for the first pass instead of repeating it
+            if self._page_stats is not None:
+                return self._page_stats
+            stats = self._load_page_stats()
+            if stats is None:
+                stats = []
+                for n in range(self.meta.page_count):
+                    # Lock per page, not for the whole pass: page renders interleave with a
+                    # background pass over a large document instead of waiting for all of it.
+                    with self._lock:
+                        stats.append(self._compute_page_stats(self._handle()[n]))
+                    time.sleep(0)  # let a waiting render take the lock; re-acquiring at once would starve it
+                tmp = self._page_stats_path.with_suffix(".json.tmp")
+                tmp.write_text(json.dumps({"version": _PAGE_STATS_VERSION, "pages": stats}, separators=(",", ":")))
+                tmp.replace(self._page_stats_path)
+            self._page_stats = stats
+            return stats
+
+    def _load_page_stats(self) -> list[dict[str, Any]] | None:
+        try:
+            data = json.loads(self._page_stats_path.read_text())
+        except (OSError, ValueError):
+            return None
+        pages = data.get("pages") if isinstance(data, dict) else None
+        if data.get("version") != _PAGE_STATS_VERSION or not isinstance(pages, list) \
+                or len(pages) != self.meta.page_count:
+            return None
+        return pages
+
+    @staticmethod
+    def _compute_page_stats(page: pymupdf.Page) -> dict[str, Any]:
+        native_chars = len(page.get_text().strip())
+        image_count = len(page.get_images(full=False))
+        return {
+            "width": round(page.rect.width, 2),
+            "height": round(page.rect.height, 2),
+            "rotation": page.rotation,
+            "native_chars": native_chars,
+            "image_count": image_count,
+            # A page with images but (almost) no text layer is almost
+            # certainly a scan and needs OCR to be searchable. Raster
+            # uploads (PNG/JPEG/...) never have a text layer.
+            "looks_scanned": (native_chars < 20 and image_count > 0) or native_chars == 0,
+        }
+
     def page_info(self, number: int) -> dict[str, Any]:
-        with self._lock:
-            page = self._page(number)
-            text = page.get_text()
-            image_count = len(page.get_images(full=False))
-            native_chars = len(text.strip())
-            return {
-                "number": number,
-                "width": round(page.rect.width, 2),
-                "height": round(page.rect.height, 2),
-                "rotation": page.rotation,
-                "native_chars": native_chars,
-                "image_count": image_count,
-                # A page with images but (almost) no text layer is almost
-                # certainly a scan and needs OCR to be searchable. Raster
-                # uploads (PNG/JPEG/...) never have a text layer.
-                "looks_scanned": (native_chars < 20 and image_count > 0) or native_chars == 0,
-                "has_ocr_cache": self._ocr_cache_path(number).exists(),
-                "ocr_engines": self.ocr_engines_cached(number),
-                "llm_results": len(list(self._llm_dir(number).glob("*.json"))),
-            }
+        if not 0 <= number < self.meta.page_count:
+            raise DocumentError(f"page {number} out of range (document has {self.meta.page_count} pages)")
+        return self.page_infos()[number]
+
+    def page_infos(self) -> list[dict[str, Any]]:
+        """:meth:`page_stats` plus which caches each page has, for every page.
+
+        Scans the ``ocr/`` and ``llm/`` folders once instead of probing them page by page.
+        """
+        stats = self.page_stats()
+        ocr: dict[int, list[str]] = {}
+        ocr_root = self.folder / "ocr"
+        if ocr_root.is_dir():
+            for f in ocr_root.glob("*.json"):  # Tesseract, the original layout
+                if f.stem.isdigit():
+                    ocr.setdefault(int(f.stem), []).append(DEFAULT_OCR_ENGINE)
+            for d in sorted(e for e in ocr_root.iterdir() if e.is_dir()):
+                for f in d.glob("*.json"):
+                    if f.stem.isdigit():
+                        ocr.setdefault(int(f.stem), []).append(d.name)
+        llm: dict[int, int] = {}
+        llm_root = self.folder / "llm"
+        if llm_root.is_dir():
+            for d in llm_root.iterdir():
+                if d.is_dir() and d.name.isdigit():
+                    llm[int(d.name)] = sum(1 for _ in d.glob("*.json"))
+        return [
+            {"number": n, **s, "has_ocr_cache": DEFAULT_OCR_ENGINE in ocr.get(n, ()),
+             "ocr_engines": ocr.get(n, []), "llm_results": llm.get(n, 0)}
+            for n, s in enumerate(stats)
+        ]
 
     def render(self, number: int, dpi: int, fmt: str = "png", max_edge_px: int | None = None,
                jpg_quality: int = 90) -> bytes:
@@ -298,14 +378,16 @@ class OpenDocument:
         return self.folder / "llm" / str(number)
 
     @staticmethod
-    def llm_cache_key(provider: str, model: str, prompt: str, preprocess: str = "") -> str:
+    def llm_cache_key(provider: str, model: str, prompt: str, preprocess: str = "", schema: str = "") -> str:
         """Stable id of one LLM configuration, identical on every page of a document.
 
-        ``preprocess`` is the canonical image-preprocessing spec. It is only mixed
-        into the digest when non-empty, so runs on the plain page image keep the
-        keys they had before preprocessing existed (no orphaned caches).
+        ``preprocess`` is the canonical image-preprocessing spec and ``schema`` the
+        canonical JSON of a structured-extraction schema. Each is only mixed into the
+        digest when non-empty, so plain transcriptions keep the keys they had before
+        those features existed (no orphaned caches).
         """
-        material = f"{provider}\0{model}\0{prompt}" + (f"\0{preprocess}" if preprocess else "")
+        material = (f"{provider}\0{model}\0{prompt}" + (f"\0{preprocess}" if preprocess else "")
+                    + (f"\0schema={schema}" if schema else ""))
         digest = hashlib.sha256(material.encode()).hexdigest()[:16]
         safe_model = re.sub(r"[^A-Za-z0-9._-]+", "_", model)[:60]
         return f"{provider}__{safe_model}__{digest}"
@@ -373,6 +455,8 @@ class DocumentStore:
         self._open: OrderedDict[str, OpenDocument] = OrderedDict()
         self._max_open = max_open
         self._lock = threading.Lock()
+        self._warm_queue: queue.Queue[str] = queue.Queue()
+        self._warm_thread: threading.Thread | None = None
 
     def add(self, filename: str, data: bytes) -> DocumentMeta:
         ext = Path(filename).suffix.lower() or ".pdf"
@@ -422,6 +506,33 @@ class DocumentStore:
                 _, evicted = self._open.popitem(last=False)
                 evicted.close()
             return doc
+
+    def warm_page_stats(self, doc_id: str) -> None:
+        """Queue building ``pages.json`` ahead of the first Overview visit; returns at once.
+
+        One daemon worker does the queued documents in order, outside any request, so a batch upload doesn't
+        start a thread per file and a slow pass never holds up the next request on the uploader's connection.
+        Best effort: if the document is deleted meanwhile, or anything else fails, the next visit computes it.
+        """
+        with self._lock:
+            if self._warm_thread is None:
+                self._warm_thread = threading.Thread(target=self._warm_worker, name="pyocr-page-stats", daemon=True)
+                self._warm_thread.start()
+        self._warm_queue.put(doc_id)
+
+    def wait_for_warmups(self) -> None:
+        """Block until every queued :meth:`warm_page_stats` has finished (for tests and the CLI)."""
+        self._warm_queue.join()
+
+    def _warm_worker(self) -> None:
+        while True:
+            doc_id = self._warm_queue.get()
+            try:
+                self.get(doc_id).page_stats()
+            except Exception:  # noqa: BLE001 - a warm-up must never surface as an error
+                log.debug("could not precompute page stats for %s", doc_id, exc_info=True)
+            finally:
+                self._warm_queue.task_done()
 
     def list(self) -> list[DocumentMeta]:
         metas = []

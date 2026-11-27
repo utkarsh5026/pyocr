@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from ..config import env_status
 from . import catalog
+from .prompts import schema_instructions
 
 
 class ProviderError(Exception):
@@ -37,18 +38,28 @@ class PageImage:
 
 @dataclass
 class TranscriptionRequest:
-    image: bytes
+    image: bytes  # empty = text only (e.g. drafting a schema without a sample page)
     mime_type: str  # "image/png" or "image/jpeg"
     system_prompt: str
     user_prompt: str
     model: str | None = None  # None -> provider default
     max_output_tokens: int = 16000
+    #: structured extraction: a normalized JSON Schema the reply must follow (see ``extract.provider_schema``).
+    #: Providers enforce it natively where they can, otherwise put it in the prompt (``system_with_schema``).
+    output_schema: dict | None = None
+
+    def system_with_schema(self) -> str:
+        """The system prompt, plus the schema spelled out for models that can't enforce it natively."""
+        return self.system_prompt + (schema_instructions(self.output_schema) if self.output_schema else "")
+
     #: several pages in one request; when set, these are sent instead of ``image``
     pages: list[PageImage] = field(default_factory=list)
 
     def page_images(self) -> list[PageImage]:
-        """The images to send, in order. A single-page request has one unlabelled image."""
-        return self.pages or [PageImage(self.image, self.mime_type, "")]
+        """The images to send, in order. A single-page request has one unlabelled image, a text-only one none."""
+        if self.pages:
+            return self.pages
+        return [PageImage(self.image, self.mime_type, "")] if self.image else []  # no image: a text-only request
 
 
 @dataclass
@@ -97,6 +108,10 @@ class Provider(abc.ABC):
     @property
     def configured(self) -> bool:
         return not self.missing_settings()
+
+    def schema_support(self, model: str | None) -> tuple[str, str]:
+        """How a structured-extraction schema is handled for ``model``: (``ok`` | ``warn``, sentence for the UI)."""
+        return "warn", f"{self.label} can't enforce a schema: it's given in the prompt, so check the fields"
 
     def reset_client(self) -> None:
         """Forget the cached SDK client so the next call picks up changed settings."""

@@ -32,20 +32,29 @@
 <ol>
   <li><b>Upload</b> a file with the <i>Upload</i> button (top right) or by dropping it anywhere on a page. You can upload several at once, or a <b>.zip</b>; those go into a <a href="#workspaces">workspace</a>.</li>
   <li>The file opens on its <b>Overview</b> page. Each page gets a badge; <span class="badge scan">scan</span> means it has no embedded text, so it needs OCR or an LLM.</li>
-  <li>Start an <b>extraction</b>: choose an OCR engine or an LLM, a page range (or leave it empty for every page), and click <i>Start extraction</i>. A progress bar follows the job.</li>
-  <li>Open the <b>Page inspector</b> to see one page next to all of its texts, or <b>Full text</b> to read the whole document from one source.</li>
+  <li>Start an <b>extraction</b> with the <i>Extract</i> button in the document header (or press <kbd>x</kbd>): choose an OCR engine or an LLM, the pages, and click <i>Start extraction</i>. A progress bar follows the job.</li>
+  <li>Open <b>Pages</b> (the page inspector) to see one page next to all of its texts, or <b>Full text</b> to read the whole document from one source.</li>
   <li>Use <b>Compare</b> to measure two sources against each other, then export the text you want.</li>
 </ol>
 
 <h2 id="tour">Tour of the pages</h2>
+<p>The top bar has three sections: <b>Documents</b> (Workspaces and All files), <b>Search</b> and <b>Settings</b>
+  (Providers and Models). <i>Jobs</i> next to them shows how many extractions are running. Press <kbd>Ctrl</kbd>+<kbd>K</kbd>
+  (<kbd>⌘</kbd>+<kbd>K</kbd> on a Mac) anywhere to open any page or document by name, run the current document's actions
+  (extract, compare, export) or search every document's text.</p>
 <dl class="defs">
   <dt><a href="/">Home</a></dt><dd>Upload area, setup status and recent documents.</dd>
-  <dt><a href="/documents">Library</a></dt><dd>Every uploaded document as a card showing how many pages have native, OCR and LLM text, and how many still have no text at all. Filter by status (<i>Needs text</i>, <i>Scanned</i>, <i>All pages have text</i>), by workspace or by name.</dd>
+  <dt><a href="/documents">All files</a> (Library)</dt><dd>Every uploaded document as a card showing how many pages have native, OCR and LLM text, and how many still have no text at all. Filter by status (<i>Needs text</i>, <i>Scanned</i>, <i>All pages have text</i>), by workspace or by name.</dd>
   <dt><a href="/workspaces">Workspaces</a></dt><dd>Named groups of documents, usually one batch upload each. Open one to rename it, add files, or take documents out of it.</dd>
-  <dt>Document → Overview</dt><dd>Start background extractions with any OCR engine or LLM: type a page range or click pages on the page map
-    (Shift-click selects a range; presets pick scans only or pages with no text from that engine yet), and choose how many
-    pages go in each LLM request. Also lists every <i>source</i> (each engine/model/prompt you've run), export a source, and see all pages as thumbnails.</dd>
-  <dt>Document → Page inspector</dt><dd>The page image on the left; tabs for native text (pick the PDF library), OCR (pick the engine), LLM and a per-page diff on the right. Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
+  <dt>Document → Overview</dt><dd>Every <i>source</i> (each engine/model/prompt you've run) with its page coverage, a Read link and
+    an export menu; running jobs; all pages as thumbnails. The original file, its metadata and <i>Delete</i> are at the bottom.</dd>
+  <dt>Document → Extract</dt><dd>A side panel for background extractions with any OCR engine or LLM: pick pages with the presets,
+    a typed range or the page map (Shift-click selects a range). <i>More options</i> holds image preprocessing, pages per LLM
+    request and re-running pages that are already done; its summary line shows what they are set to.</dd>
+  <dt>Document → Pages</dt><dd>The page inspector. The page image in the middle, with page and zoom controls floating at its foot;
+    on the right, the page's text from one source at a time (Native, with a choice of PDF library; OCR, with a choice of engine;
+    LLM), plus two views: <i>Diff</i> (word diff and error rates between two sources) and <i>Columns</i> (all three texts side by side).
+    Search hits are drawn on the image. Run OCR or an LLM on just this page.</dd>
   <dt>Document → Full text</dt><dd>The whole document from one source, page by page, optionally next to the page images. Find-in-text, copy and download.</dd>
   <dt>Document → Compare</dt><dd>Pick a reference (A) and a candidate (B). You get the whole-document error rates, a per-page CER chart (click a bar to open that page) and the selected page's text side by side, with words only in A and only in B highlighted. It opens on the worst page.</dd>
   <dt><a href="/search">Search</a></dt><dd>Search every document in the library at once.</dd>
@@ -366,11 +375,14 @@ POST /api/documents/{id}/pages/{n}/llm           transcribe one page (0-based n)
   <dt>Can I use it with a local model and no internet?</dt><dd>Yes. Run Ollama with a vision model and set <code>OPENAI_COMPATIBLE_BASE_URL=http://localhost:11434/v1</code>.</dd>
 </dl>
 
-<h2 id="keys">Keyboard shortcuts (page inspector)</h2>
+<h2 id="keys">Keyboard shortcuts</h2>
 <table class="table compact">
+  <tr><td><kbd>Ctrl</kbd>+<kbd>K</kbd> / <kbd>⌘</kbd>+<kbd>K</kbd></td><td>anywhere: open the command palette</td></tr>
+  <tr><td><kbd>x</kbd></td><td>document overview: open <i>Extract</i></td></tr>
+  <tr><td colspan="2"><b>Page inspector</b></td></tr>
   <tr><td><kbd>←</kbd> / <kbd>→</kbd> or <kbd>k</kbd> / <kbd>j</kbd></td><td>previous / next page</td></tr>
   <tr><td><kbd>/</kbd></td><td>focus the search box</td></tr>
-  <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>switch tab (native, OCR, LLM, compare, side by side). <i>Side by side</i> widens the text panel and shows all three texts in columns that scroll together; it stays on until you pick another tab.</td></tr>
+  <tr><td><kbd>1</kbd>–<kbd>5</kbd></td><td>switch view (Native, OCR, LLM, Diff, Columns). <i>Columns</i> widens the text panel and shows all three texts in columns that scroll together; it stays on until you pick another view.</td></tr>
   <tr><td><kbd>t</kbd></td><td>transcribe the page with the selected LLM</td></tr>
   <tr><td><kbd>o</kbd></td><td>run OCR on the page</td></tr>
   <tr><td><kbd>e</kbd></td><td>open or close <i>Adjust</i> (image preprocessing for the LLM)</td></tr>

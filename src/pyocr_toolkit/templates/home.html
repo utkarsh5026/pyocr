@@ -2,52 +2,30 @@
 {% from "_icons.html" import icon %}
 {% block title %}Home{% endblock %}
 {% block content %}
-<section class="hero">
+<section class="hero hero-slim">
   <div>
     <h1>See exactly what your text extraction produces.</h1>
-    <p class="lead">Put a document's <b>embedded text</b>, <b>OCR</b> (Tesseract, EasyOCR, PaddleOCR, cloud OCR…) and <b>LLM transcriptions</b>
-      side by side, measure how far apart they are, and export clean text for your GenAI pipeline.</p>
+    <p class="lead">Embedded text, OCR and LLM transcriptions side by side, with error rates and clean exports.</p>
   </div>
   <label class="dropzone" id="home-drop">
     <input class="upload-input" type="file" hidden multiple
            accept=".zip,.pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.pam,.psd,.webp,.cbr,.txt">
-    <div class="dz-icon"><span class="emoji" aria-hidden="true">📤</span></div>
+    <div class="dz-icon">{{ icon('upload') }}</div>
     <b>Drop files here or click to upload</b>
-    <span class="small">PDF, XPS, EPUB, PNG, JPEG, TIFF, WebP or a .zip of them · several files become a workspace · up to {{ request.app.state.settings.max_upload_mb }} MB</span>
+    <span class="small" title="PDF, XPS, EPUB, PNG, JPEG, TIFF, WebP or a .zip of them · several files become a workspace">PDF, images or a .zip · up to {{ request.app.state.settings.max_upload_mb }} MB</span>
   </label>
 </section>
 
-<section class="status-row">
-  <a class="card stat" href="/documents">
-    <span class="stat-icon"><span class="emoji" aria-hidden="true">📚</span></span>
-    <div><div class="v">{{ total_docs }}</div><div class="k">document{{ 's' if total_docs != 1 }} in library</div></div>
-  </a>
-  <a class="card stat" href="/providers">
-    <span class="stat-icon"><span class="emoji" aria-hidden="true">🤖</span></span>
-    <div><div class="v {{ 'good' if configured else 'warn' }}">{{ configured|length }} / {{ providers|length }}</div>
-    <div class="k">LLM providers configured</div></div>
-  </a>
-  <a class="card stat" href="/providers">
-    <span class="stat-icon"><span class="emoji" aria-hidden="true">🔠</span></span>
-    {% set ready = ocr_engines|selectattr('available')|list %}
-    <div><div class="v {{ 'good' if ready else 'bad' }}">{{ ready|length }} / {{ ocr_engines|length }}</div>
-    <div class="k">OCR engines ready</div></div>
-  </a>
-</section>
+{% set ready = ocr_engines|selectattr('available')|list %}
+<p class="status-line">
+  <a href="/providers"><i class="dot {{ 'good' if ready else 'bad' }}"></i>{{ ready|length }} of {{ ocr_engines|length }} OCR engines ready</a>
+  <a href="/providers"><i class="dot {{ 'good' if configured else 'warn' }}"></i>{{ configured|length }} LLM provider{{ 's' if configured|length != 1 }} configured</a>
+  <a href="/documents"><i class="dot"></i>{{ total_docs }} document{{ 's' if total_docs != 1 }}</a>
+</p>
 {% if not configured %}
 <div class="callout warn">{{ icon('info') }}<div>No LLM provider is configured yet. Native text and OCR work right away;
   to compare against an LLM, <a href="/providers">add an API key</a>.</div></div>
 {% endif %}
-
-<section>
-  <h2 class="h-icon">{{ icon('info') }}How it works</h2>
-  <ol class="steps">
-    <li><span class="step-icon"><span class="emoji" aria-hidden="true">📤</span></span><b>Upload</b><span>Any PDF or image. Pages without a real text layer are flagged as scans.</span></li>
-    <li><span class="step-icon"><span class="emoji" aria-hidden="true">✨</span></span><b>Extract</b><span>Run an OCR engine or an LLM on a page, a range or the whole document.</span></li>
-    <li><span class="step-icon"><span class="emoji" aria-hidden="true">🔍</span></span><b>Inspect &amp; compare</b><span>Page image next to each text, word-level diffs and error rates.</span></li>
-    <li><span class="step-icon"><span class="emoji" aria-hidden="true">📦</span></span><b>Export</b><span>TXT, Markdown, JSON or JSONL, ready for RAG and ingestion.</span></li>
-  </ol>
-</section>
 
 {% if recent_ws %}
 <section>
@@ -67,7 +45,7 @@
 {% endif %}
 
 <section>
-  <div class="section-head"><h2 class="h-icon">{{ icon('clock') }}Recent documents</h2>{% if recent %}<a href="/documents" class="small">View all {{ icon('arrow-right') }}</a>{% endif %}</div>
+  <div class="section-head"><h2>Recent documents</h2>{% if recent %}<a href="/documents" class="small">View all {{ icon('arrow-right') }}</a>{% endif %}</div>
   {% if recent %}
   <div class="doc-cards">
     {% for d in recent %}

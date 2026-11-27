@@ -243,17 +243,18 @@ def play_upload(tour: Tour, app: DemoApp, ids: dict[str, str]) -> None:
         tour.frame(RING_FRAME_MS, 1.2)
     page.add_style_tag(content=QUIET_CSS)
     tour.hold(1.4)
+    tour.click(page.locator(".doc-extract"), hold=0.8)  # opens the Extract side panel
     tour.click(page.locator("#extract-form label:has(input[name=kind][value=ocr])"), hold=0.6)
     # pick the engine explicitly, so the tour is the same whichever engines this machine has installed
     tour.choose(page.locator("#ocr-engine"), "tesseract", hold=0.8)
-    tour.click(page.locator("#extract-form button[type=submit]"), hold=0.2, busy_js="false")
+    tour.click(page.locator("#extract-sheet button[type=submit]"), hold=0.2, busy_js="false")
     # the overview reloads itself ~1.5 s after the job ends: let that happen before clicking anything
     with page.expect_navigation(timeout=60_000):
         tour.wait(JOB_BUSY)
         tour.hold(1.6, JOB_BUSY)
     page.add_style_tag(content=QUIET_CSS)
     tour.hold(0.6)
-    tour.click(page.locator(".doc-tabs a", has_text="Page inspector"), hold=0.8)
+    tour.click(page.locator(".doc-tabs a", has_text="Pages"), hold=0.8)
     tour.click(page.locator(".tabs button[data-tab=ocr]"), hold=2.6)
 
 

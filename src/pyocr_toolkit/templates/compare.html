@@ -4,15 +4,14 @@
 {% block subnav %}{% include "_doctabs.html" %}{% endblock %}
 {% block content %}
 <div id="compare-root" data-doc-id="{{ doc.id }}" data-page-count="{{ doc.page_count }}">
-  <div class="page-head">
-    <div>
-      <h1>Compare two sources across the whole document</h1>
-      <p>The <b>reference</b> is the text you trust more; the <b>candidate</b> is the one being judged.</p>
-    </div>
-    <div class="row" style="margin:0">
-      <label class="check"><input type="checkbox" id="opt-case" checked> Ignore case</label>
-      <label class="check"><input type="checkbox" id="opt-punct"> Ignore punctuation</label>
-    </div>
+  <div class="page-head page-head-slim">
+    <h1 title="The reference (A) is the text you trust more; the candidate (B) is the one being judged.">Compare two sources across the whole document</h1>
+    <details class="menu menu-right"><summary class="btn small ghost">{{ icon('sliders') }}Options {{ icon('chevron-down') }}</summary>
+      <div class="menu-form">
+        <label class="check"><input type="checkbox" id="opt-case" checked> Ignore case</label>
+        <label class="check"><input type="checkbox" id="opt-punct"> Ignore punctuation</label>
+      </div>
+    </details>
   </div>
 
   <div class="src-pick">
@@ -78,7 +77,6 @@
       <tbody></tbody>
     </table>
   </details>
-  <p class="small muted" id="cmp-hint">Pages missing from either source are shown but not scored.</p>
 </div>
 {% endblock %}
 {% block scripts %}<script src="/static/compare.js?v={{ version }}"></script>{% endblock %}

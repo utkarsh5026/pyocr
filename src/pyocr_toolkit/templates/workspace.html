@@ -90,12 +90,16 @@
   </section>
 
   <section class="panel">
-    <nav class="tabs" role="tablist">
-      <button data-tab="native" class="active">{{ icon('type') }}Native</button>
-      <button data-tab="ocr">{{ icon('cpu') }}OCR</button>
-      <button data-tab="llm">{{ icon('sparkles') }}LLM</button>
-      <button data-tab="compare">{{ icon('diff') }}Compare</button>
-      <button data-tab="side" title="Native, OCR and LLM text in columns (5)">{{ icon('columns') }}Side by side</button>
+    <nav class="tabs" role="tablist" aria-label="Page text">
+      <span class="tab-group" aria-label="Source">
+        <button data-tab="native" class="active" title="Embedded text layer (1)">{{ icon('type') }}Native</button>
+        <button data-tab="ocr" title="OCR engine output (2)">{{ icon('cpu') }}OCR</button>
+        <button data-tab="llm" title="LLM transcription (3)">{{ icon('sparkles') }}LLM</button>
+      </span>
+      <span class="tab-group tab-modes" aria-label="View">
+        <button data-tab="compare" title="Word diff and error rates between two sources (4)">{{ icon('diff') }}Diff</button>
+        <button data-tab="side" title="Native, OCR and LLM text in columns (5)">{{ icon('columns') }}Columns</button>
+      </span>
     </nav>
 
     <div class="tab-body" data-tab="native">

@@ -18,29 +18,26 @@
   </script>
   <link rel="stylesheet" href="/static/styles.css?v={{ version }}">
 </head>
-<body class="{% block body_class %}site{% endblock %}">
+<body class="{% block body_class %}site{% endblock %}"{% if doc is defined and doc %} data-doc-id="{{ doc.id }}" data-doc-name="{{ doc.filename }}"{% endif %}>
 <header class="topbar">
   <a class="brand" href="/"><span class="logo">{{ icon('scan') }}</span>pyocr <span>toolkit</span></a>
-  <nav class="mainnav">
-    <a href="/" class="{{ 'active' if nav == 'home' }}" title="Home">{{ icon('home') }}<span>Home</span></a>
-    <a href="/documents" class="{{ 'active' if nav == 'library' }}" title="Library">{{ icon('folder') }}<span>Library</span></a>
-    <a href="/workspaces" class="{{ 'active' if nav == 'workspaces' }}" title="Workspaces">{{ icon('folders') }}<span>Workspaces</span></a>
-    <a href="/search" class="{{ 'active' if nav == 'search' }}" title="Search">{{ icon('search') }}<span>Search</span></a>
-    <a href="/jobs" class="{{ 'active' if nav == 'jobs' }}" title="Jobs">{{ icon('layers') }}<span>Jobs</span></a>
-    <a href="/providers" class="{{ 'active' if nav == 'providers' }}" title="Providers">{{ icon('key') }}<span>Providers</span></a>
-    <a href="/models" class="{{ 'active' if nav == 'models' }}" title="Models">{{ icon('grid') }}<span>Models</span></a>
-    <a href="/help" class="{{ 'active' if nav == 'help' }}" title="Help">{{ icon('help') }}<span>Help</span></a>
+  <nav class="mainnav" aria-label="Main">
+    <a href="/documents" class="{{ 'active' if nav in ('library', 'workspaces') }}" title="Library and workspaces">{{ icon('folder') }}<span>Documents</span></a>
+    <a href="/search" class="{{ 'active' if nav == 'search' }}" title="Search all documents">{{ icon('search') }}<span>Search</span></a>
+    <a href="/providers" class="{{ 'active' if nav in ('providers', 'models') }}" title="Providers and models">{{ icon('key') }}<span>Settings</span></a>
   </nav>
   <div class="spacer"></div>
-  <form class="quicksearch" action="/search" method="get" role="search">
-    {{ icon('search') }}
-    <input type="search" name="q" placeholder="Search all documents…" aria-label="Search all documents">
-  </form>
+  {# Filled by common.js: how many extraction jobs are running right now. #}
+  <a href="/jobs" class="jobs-pill {{ 'active' if nav == 'jobs' }}" id="jobs-pill" title="Extraction jobs">{{ icon('layers') }}<span id="jobs-pill-label">Jobs</span></a>
+  <button type="button" class="palette-open" id="palette-open" title="Search documents, open a page or run a command (Ctrl+K)" aria-haspopup="dialog">
+    {{ icon('search') }}<span class="palette-open-label">Search or jump to…</span><kbd>Ctrl K</kbd>
+  </button>
   <button type="button" class="btn ghost icon-only theme-toggle" id="theme-toggle" title="Theme" aria-label="Toggle colour theme">
     <span data-icon="system">{{ icon('monitor') }}</span>
     <span data-icon="light">{{ icon('sun') }}</span>
     <span data-icon="dark">{{ icon('moon') }}</span>
   </button>
+  <a href="/help" class="btn ghost icon-only {{ 'active' if nav == 'help' }}" title="Help" aria-label="Help">{{ icon('help') }}</a>
   <label class="btn primary" title="PDF, XPS, EPUB, PNG, JPEG, TIFF, ... (anything PyMuPDF opens)">
     {{ icon('upload') }}<span class="upload-label">Upload</span>
     <input class="upload-input" type="file" hidden multiple
@@ -52,6 +49,7 @@
 
 {% block main %}
 <main class="container">
+  {% include "_section_tabs.html" %}
   {% block content %}{% endblock %}
 </main>
 <footer class="footer">

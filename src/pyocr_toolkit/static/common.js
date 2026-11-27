@@ -1174,3 +1174,165 @@ function renderDiff(segments) {
     }
   }).join(" ");
 }
+
+// ------------------------------------------------------------------ jobs pill + command palette
+/* The top bar keeps three sections (Documents, Search, Settings). Everything else is one keystroke away:
+   Ctrl/Cmd+K opens a palette that jumps to any page, runs the current document's actions, opens a document
+   by name or searches every document's text. The jobs pill shows how many extractions are running. */
+(function jobsPill() {
+  const pill = $("#jobs-pill"), label = $("#jobs-pill-label");
+  if (!pill) return;
+  let timer;
+  async function refresh() {
+    let running = 0;
+    try {
+      const jobs = await api("/api/jobs");
+      running = jobs.filter((j) => j.status === "running" || j.status === "queued").length;
+    } catch (_) { return; }  // the pill is a hint; never toast about it
+    pill.classList.toggle("busy", running > 0);
+    label.textContent = running ? `${running} running` : "Jobs";
+    clearTimeout(timer);
+    if (running) timer = setTimeout(refresh, 4000);
+  }
+  refresh();
+  window.addEventListener("pyocr:jobs-changed", refresh);
+})();
+
+(function commandPalette() {
+  const opener = $("#palette-open");
+  if (!opener) return;
+  const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const kbd = opener.querySelector("kbd");
+  if (kbd && isMac) kbd.textContent = "⌘K";
+
+  const docId = document.body.dataset.docId;
+  const docName = document.body.dataset.docName;
+  const commands = [];
+  const add = (group, label, target, hint = "", keywords = "") => commands.push({ group, label, target, hint, keywords });
+
+  if (docId) {
+    const g = docName || "This document";
+    const base = `/documents/${docId}`;
+    add(g, "Extract text…", `${base}#extract`, "OCR or LLM on several pages", "run transcribe ocr llm batch");
+    add(g, "Overview", base, "sources, pages, jobs");
+    add(g, "Pages", `${base}/pages/1`, "page image next to each text", "inspector");
+    add(g, "Full text", `${base}/text`, "read a source end to end", "reader");
+    add(g, "Compare sources", `${base}/compare`, "error rates and word diffs", "cer wer diff");
+    for (const [fmt, name] of [["zip", "ZIP (everything)"], ["json", "JSON"], ["csv", "CSV"], ["md", "Markdown"], ["jsonl", "JSONL"]]) {
+      add(g, `Export all sources as ${name}`, `/api/documents/${docId}/export/all?fmt=${fmt}`, "", "download");
+    }
+    add(g, "Download original file", `/api/documents/${docId}/source`, "", "download source");
+  }
+  add("Go to", "Home", "/");
+  add("Go to", "Workspaces", "/workspaces", "groups of documents", "documents");
+  add("Go to", "All files", "/documents", "the library", "documents library");
+  add("Go to", "Search", "/search", "every document's text");
+  add("Go to", "Jobs", "/jobs", "background extractions");
+  add("Go to", "Providers", "/providers", "API keys, connection test", "settings llm ocr keys");
+  add("Go to", "Models", "/models", "ratings and the model catalog", "settings");
+  add("Go to", "Help", "/help", "how it works, shortcuts");
+  add("Go to", "API docs", "/docs", "OpenAPI", "swagger");
+  add("Actions", "Upload files…", () => $(".upload-input")?.click(), "PDF, images or a .zip");
+  add("Actions", "Change theme", () => $("#theme-toggle")?.click(), "system, light, dark", "dark mode light mode");
+
+  let docs = null;  // loaded when the palette first opens
+  async function loadDocs() {
+    if (docs) return;
+    docs = [];
+    try {
+      docs = (await api("/api/documents")).map((d) =>
+        ({ group: "Documents", label: d.filename, target: `/documents/${d.id}`, hint: `${plural(d.page_count, "page")}`, keywords: "" }));
+    } catch (_) { /* offline or empty: the palette still works without them */ }
+    render();
+  }
+
+  const dialog = document.createElement("dialog");
+  dialog.className = "palette";
+  dialog.setAttribute("aria-label", "Command palette");
+  dialog.innerHTML = `
+    <div class="palette-input">
+      <input type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list"
+             placeholder="Search documents, pages and actions…" autocomplete="off" spellcheck="false">
+      <kbd>Esc</kbd>
+    </div>
+    <ul class="palette-list" id="palette-list" role="listbox"></ul>
+    <div class="palette-foot"><span>↑↓ move</span><span>↵ open</span><span class="grow"></span><span>Ctrl+K anywhere</span></div>`;
+  document.body.append(dialog);
+  const input = $("input", dialog), list = $("#palette-list", dialog);
+  let items = [], active = 0;
+
+  // Every typed word must start a word of the label, keywords or group ("ex" finds Extract and Export, not "text").
+  function matches(c, words) {
+    const hay = `${c.label} ${c.keywords} ${c.group}`.toLowerCase().split(/[^\p{L}\p{N}]+/u);
+    return words.every((w) => hay.some((h) => h.startsWith(w)));
+  }
+
+  function render() {
+    const q = input.value.trim();
+    const words = q.toLowerCase().split(/\s+/).filter(Boolean);
+    const pool = commands.concat(words.length ? (docs || []) : (docs || []).slice(0, 5));
+    items = pool.filter((c) => matches(c, words)).slice(0, 40);
+    if (q) items.push({ group: "Text in documents", label: `Search every document for “${q}”`, target: `/search?q=${encodeURIComponent(q)}`, hint: "" });
+    active = Math.min(active, Math.max(0, items.length - 1));
+    let html = "", group = null;
+    items.forEach((c, i) => {
+      if (c.group !== group) {
+        group = c.group;
+        html += `<li class="palette-group" role="presentation">${esc(group)}</li>`;
+      }
+      html += `<li role="option" id="pal-${i}" data-i="${i}" aria-selected="${i === active}">` +
+        `<span class="pal-label">${esc(c.label)}</span>${c.hint ? `<span class="pal-hint">${esc(c.hint)}</span>` : ""}</li>`;
+    });
+    list.innerHTML = html || `<li class="palette-empty" role="presentation">Nothing matches. Try fewer words.</li>`;
+    input.setAttribute("aria-activedescendant", items.length ? `pal-${active}` : "");
+    $(`#pal-${active}`, list)?.scrollIntoView({ block: "nearest" });
+  }
+
+  function run(i) {
+    const c = items[i];
+    if (!c) return;
+    dialog.close();
+    if (typeof c.target === "function") return c.target();
+    // the Extract sheet lives on the overview; on that page just open it without a reload
+    const url = new URL(c.target, location.href);
+    if (url.pathname === location.pathname && url.hash) {
+      location.hash = url.hash;
+      $(`[data-open-extract]`)?.click();
+      return;
+    }
+    location.href = c.target;
+  }
+
+  function open() {
+    if (dialog.open) return;
+    input.value = "";
+    active = 0;
+    render();
+    dialog.showModal();
+    input.focus();
+    loadDocs();
+  }
+
+  opener.addEventListener("click", open);
+  input.addEventListener("input", () => { active = 0; render(); });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % Math.max(1, items.length); render(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + items.length) % Math.max(1, items.length); render(); }
+    else if (e.key === "Enter") { e.preventDefault(); run(active); }
+  });
+  list.addEventListener("click", (e) => {
+    const li = e.target.closest("[data-i]");
+    if (li) run(Number(li.dataset.i));
+  });
+  list.addEventListener("mousemove", (e) => {
+    const li = e.target.closest("[data-i]");
+    if (li && Number(li.dataset.i) !== active) { active = Number(li.dataset.i); render(); }
+  });
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });  // backdrop
+  document.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      if (dialog.open) dialog.close(); else open();
+    }
+  });
+})();

@@ -72,7 +72,7 @@ each is also in dark mode, as `docs/tours/*-dark.webp`).
     <td><b>Upload and extract</b>: drop a scan, run Tesseract on every page as a background job, read the result.<br><br><img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/tours/upload-light.webp" alt="Upload and extract tour"></td>
   </tr>
   <tr>
-    <td colspan="2"><b>Library</b>: how much of each document has native, OCR and LLM text.<br><br><img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/tours/library-light.webp" alt="Library tour" width="50%"></td>
+    <td colspan="2"><b>Library</b>: how much of each document has native, OCR and LLM text, and every source exported at once.<br><br><img src="https://raw.githubusercontent.com/utkarsh5026/pyocr/main/docs/tours/library-light.webp" alt="Library tour" width="50%"></td>
   </tr>
 </table>
 

@@ -93,6 +93,17 @@ def test_llm_run_cache_compare_search_export(client, doc_id):
     }).json()
     assert 0 < cmp["metrics"]["cer"] < 0.05
     assert any(seg["op"] == "replace" and seg["ref"] == "lazzy" for seg in cmp["diff"])
+    errs = cmp["errors"]
+    assert errs["misread"] + errs["missed"] + errs["added"] == cmp["metrics"]["word_distance"]
+    assert {"ref": "lazzy", "hyp": "lazy", "kind": "word"} in errs["examples"]
+    assert cmp["numbers"]["total"] == cmp["numbers"]["correct"]
+    assert [s["step"] for s in cmp["ladder"]][0] == "exact"
+
+    doc_cmp = client.get(f"/api/documents/{doc_id}/compare", params={"a": f"llm:{r1['key']}", "b": "native"}).json()
+    page0 = doc_cmp["pages"][0]
+    assert page0["errors"] == {k: errs[k] for k in ("misread", "missed", "added")}
+    assert doc_cmp["overall"]["errors"]["misread"] >= 1
+    assert doc_cmp["overall"]["numbers"]["total"] >= page0["numbers"]["total"]
 
     res = client.get(f"/api/documents/{doc_id}/search", params={"q": "lazzy"}).json()
     assert res["total"] >= 1 and res["pages"][0]["hits"][0]["source"] == "llm"

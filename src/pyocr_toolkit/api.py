@@ -447,6 +447,9 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "reference": {"label": services.source_label(doc, body.reference.source_id), **body.reference.model_dump()},
             "hypothesis": {"label": services.source_label(doc, body.hypothesis.source_id), **body.hypothesis.model_dump()},
             "metrics": compare.score(ref_text, hyp_text, opts),
+            "errors": compare.error_breakdown(ref_text, hyp_text, opts),
+            "numbers": compare.check_numbers(ref_text, hyp_text),
+            "ladder": compare.cer_ladder(ref_text, hyp_text),
             "diff": compare.word_diff(ref_text, hyp_text, opts) if body.diff else None,
         }
 
@@ -458,10 +461,15 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
 
         ``overall`` is micro-averaged (total edits / total reference chars), so
         long pages weigh more than short ones - the honest whole-document number.
+        Each scored page also carries ``errors`` (misread / missed / added word
+        counts) and ``numbers`` (digit-bearing tokens read exactly); ``overall``
+        sums both.
         """
         doc = get_doc(doc_id)
         opts = compare.NormalizeOptions(ignore_case, ignore_punctuation)
         rows, tot_cd, tot_rc, tot_wd, tot_rw = [], 0, 0, 0, 0
+        errors = {"misread": 0, "missed": 0, "added": 0}
+        numbers = {"total": 0, "correct": 0}
         for n in doc.iter_pages():
             ta, tb = services.page_text(doc, n, a), services.page_text(doc, n, b)
             if ta is None or tb is None:
@@ -470,7 +478,15 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             m = compare.score(ta, tb, opts)
             tot_cd += m["char_distance"]; tot_rc += m["reference_chars"]
             tot_wd += m["word_distance"]; tot_rw += m["reference_words"]
-            rows.append({"page": n, "metrics": m, "missing": []})
+            br = compare.error_breakdown(ta, tb, opts, max_examples=0, max_confusions=0)
+            err = {k: br[k] for k in errors}
+            nums = compare.check_numbers(ta, tb, max_wrong=0)
+            num = {"total": nums["total"], "correct": nums["correct"]}
+            for k in errors:
+                errors[k] += err[k]
+            for k in numbers:
+                numbers[k] += num[k]
+            rows.append({"page": n, "metrics": m, "missing": [], "errors": err, "numbers": num})
         scored = [r for r in rows if r["metrics"]]
         overall = None
         if scored:
@@ -480,6 +496,9 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
                 "wer": round(tot_wd / tot_rw, 4) if tot_rw else None,
                 "worst_page": max(scored, key=lambda r: r["metrics"]["cer"])["page"],
                 "pages_over_10pct": sum(r["metrics"]["cer"] > 0.10 for r in scored),
+                "pages_under_2pct": sum(r["metrics"]["cer"] <= 0.02 for r in scored),
+                "errors": errors,
+                "numbers": numbers,
             }
         return {"a": {"id": a, "label": services.source_label(doc, a)},
                 "b": {"id": b, "label": services.source_label(doc, b)},

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Compare explains its numbers.** A single CER can't tell a dropped umlaut from a wrong invoice total or an invented
+  sentence, so the Compare page now also shows:
+  - word errors split into **misread / missed / added** (they add up to the word edit distance behind WER), for the
+    whole document and per page;
+  - **numbers read exactly**: every token with a digit (amounts, dates, IDs) checked on its own, with the wrong ones
+    listed (`2,530.54 → 2.530,54`);
+  - each page's errors **by kind** (numbers, misread words, accents / ß, case, punctuation, split or joined words,
+    missed, added, stray scan marks) and the most common **character confusions** (`0→O`, `m→rn`);
+  - **CER as differences are forgiven**: the page's CER with case, punctuation and accents ignored and added text
+    dropped, step by step, so you can see how much of it is real misreading.
+  The page inspector's compare tab shows the misread / missed / added split and the number check too, and
+  `pyocr compare` prints an *OCR numbers* column. API: `errors`, `numbers` and `ladder` on
+  `POST /api/documents/{id}/pages/{n}/compare`; `errors` and `numbers` per page and in `overall` on
+  `GET /api/documents/{id}/compare`. Existing fields are unchanged.
 - **Adjust image** (page inspector, shortcut `e`): preprocess the page image before it is sent to an LLM, then
   check whether that helped. It has a strip of filters, each a thumbnail of the current page (Clean scan, High contrast,
   Black & white with Otsu thresholding, Fix faded, Denoise, Bring out detail, Invert), and fine-tuning for

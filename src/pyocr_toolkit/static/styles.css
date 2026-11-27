@@ -437,7 +437,7 @@ pre.text:empty::before { content: attr(data-empty); color: var(--subtle); font-f
 .chart-note { margin: 10px 0 0; font-size: 13px; color: var(--good); }
 .swap-btn { height: auto; width: 44px; border: 1px solid var(--border); background: var(--surface); border-radius: 12px; }
 .run-btn { height: auto; min-height: 44px; padding: 0 22px; border-radius: 12px; }
-.stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
 .stat-grid:empty { display: none; }
 .stat-tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow-sm); }
 .stat-tile .k { font-size: 11px; color: var(--subtle); font-weight: 600; text-transform: uppercase; letter-spacing: .05em; }
@@ -455,6 +455,37 @@ pre.text:empty::before { content: attr(data-empty); color: var(--subtle); font-f
 .diff-cols > div { padding: 14px 18px 18px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .diff-cols > div + div { border-left: 1px solid var(--border); }
 .diff-cols pre.text { background: transparent; border: 0; padding: 0; max-height: 62vh; font-size: 12.5px; line-height: 1.75; }
+.stackbar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--bg-sunken); margin: 6px 0 4px; }
+.stackbar i, .stack-legend i { display: block; }
+.stackbar .misread, .stack-legend .misread { background: var(--chart-bad); }
+.stackbar .missed, .stack-legend .missed { background: var(--chart-good); }
+.stackbar .added, .stack-legend .added { background: var(--chart-warn); }
+.stack-legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted); }
+.stack-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.stack-legend i { width: 8px; height: 8px; border-radius: 2px; }
+.err-strip { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border-bottom: 1px solid var(--border); }
+.err-block { padding: 12px 18px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.err-block:first-child { border-right: 1px solid var(--border); }
+.err-block.wide { grid-column: 1 / -1; border-top: 1px solid var(--border); }
+@media (max-width: 720px) { .err-strip { grid-template-columns: minmax(0, 1fr); } .err-block:first-child { border-right: 0; } }
+.err-k { font-size: 12.5px; font-weight: 600; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.err-k .muted { font-weight: 500; }
+.err-sub { display: flex; flex-direction: column; gap: 6px; }
+.kind-chips { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.kind-chip { font-size: 12px; padding: 3px 9px; border-radius: 99px; background: var(--surface-2); color: var(--text); cursor: default; }
+.kind-chip b { font-variant-numeric: tabular-nums; margin-left: 2px; }
+.kind-chip.number, .kind-chip.word { background: var(--bad-soft); }
+.kind-chip.added, .kind-chip.missed { background: var(--warn-soft); }
+.kind-chip.noise { background: var(--surface-2); }
+.kind-chip.case, .kind-chip.punctuation, .kind-chip.accents, .kind-chip.spacing { background: var(--info-soft); }
+.num-chip { font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: var(--radius-sm); background: var(--bg-sunken); }
+.num-chip.bad { background: var(--bad-soft); color: var(--bad); }
+.num-chip small { color: var(--muted); font-family: var(--sans); }
+.ladder { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.ladder-step { display: inline-flex; flex-direction: column; padding: 6px 12px; border-radius: var(--radius-sm); background: var(--bg-sunken); min-width: 96px; }
+.ladder-step .k { font-size: 11px; color: var(--muted); }
+.ladder-step b { font-size: 15px; font-variant-numeric: tabular-nums; }
+.ladder-sep { color: var(--subtle); }
 .del-mark { background: var(--del-bg); border-radius: 3px; padding: 0 2px; }
 .ins-mark { background: var(--ins-bg); border-radius: 3px; padding: 0 2px; }
 .table-details { padding: 0; }

@@ -50,6 +50,71 @@ def test_word_diff_keeps_line_breaks():
     assert diff == [{"op": "equal", "ref": "a b\nc d", "hyp": "a b\nc d"}]
 
 
+INVOICE_REF = "Bill to Müller & Söhne, Köln. Total due €2,530.54 within 30 days."
+
+
+def test_error_breakdown_splits_misread_missed_added():
+    ref = "the quick brown fox jumps over the dog"
+    hyp = "the quack brown jumps over the lazy dog today"
+    b = compare.error_breakdown(ref, hyp)
+    assert (b["misread"], b["missed"], b["added"]) == (1, 1, 2)
+    # the split is exactly the word edit distance, so it explains the WER
+    assert b["misread"] + b["missed"] + b["added"] == compare.score(ref, hyp)["word_distance"]
+    assert b["kinds"] == {"word": 1, "missed": 1, "added": 2}
+    assert {"kind": "missed", "ref": "fox", "hyp": ""} in b["examples"]
+
+
+def test_error_breakdown_kinds():
+    ref = "INVOICE Müller Straße 2024 done. recognition"
+    hyp = "Invoice Muller Strasse 2O24 done! recog nition"
+    kinds = compare.error_breakdown(ref, hyp)["kinds"]
+    # ß -> ss is an accent difference, not case (casefold() would call it case)
+    assert kinds == {"case": 1, "accents": 2, "number": 1, "punctuation": 1, "spacing": 1}
+    # with ignore_case on, case differences are not errors at all
+    assert "case" not in compare.error_breakdown(ref, hyp, compare.NormalizeOptions(ignore_case=True))["kinds"]
+
+
+def test_error_breakdown_stray_marks_are_noise_not_added_text():
+    b = compare.error_breakdown("Readings at noon", "Readings | at . noon _ extra")
+    assert b["added"] == 4  # still counted as added words in the split...
+    assert b["kinds"] == {"noise": 3, "added": 1}  # ...but scan specks are their own kind
+
+
+def test_cer_ladder_never_goes_up():
+    for hyp in ("12:00°> iInch. : 7 13220 Found", "Lunch | . noon", "totally different words here"):
+        cers = [s["cer"] for s in compare.cer_ladder("12:00 Lunch. 13:20 Found", hyp)]
+        assert cers == sorted(cers, reverse=True)
+
+
+def test_error_breakdown_confusions_merge_neighbouring_chars():
+    conf = compare.error_breakdown("Payment 2024 10 30", "Payrnent 2O24 1O 3O")["confusions"]
+    assert conf[0] == {"ref": "0", "hyp": "O", "count": 3}
+    assert {"ref": "m", "hyp": "rn", "count": 1} in conf
+
+
+def test_check_numbers():
+    hyp = "Bill to Muller & Sohne, Koln. Total due €2.530,54 within 3O days."
+    n = compare.check_numbers(INVOICE_REF, hyp)
+    assert (n["total"], n["correct"]) == (2, 0)
+    # swapped separators are a wrong number even though only punctuation moved
+    assert n["wrong"] == [{"ref": "2,530.54", "hyp": "2.530,54"}, {"ref": "30", "hyp": "3O"}]
+    # edge punctuation and currency symbols don't count
+    assert compare.check_numbers("(12) €5.00.", "12 5.00")["correct"] == 2
+    n = compare.check_numbers("pay within 30 days", "pay within days, call 555")
+    assert n["wrong"] == [{"ref": "30", "hyp": ""}] and n["extra"] == 1
+
+
+def test_cer_ladder_explains_the_gap():
+    styled = "BILL TO Muller & Sohne Koln Total due €2,530.54 within 30 days!"
+    ladder = compare.cer_ladder(INVOICE_REF, styled)
+    assert [s["step"] for s in ladder] == ["exact", "case", "punctuation", "accents", "added"]
+    cers = [s["cer"] for s in ladder]
+    assert cers[0] > cers[1] > cers[2] > 0 and cers[3] == 0  # only style: nothing left
+    invented = INVOICE_REF + " Please call us with any questions."
+    ladder = compare.cer_ladder(INVOICE_REF, invented)
+    assert ladder[0]["cer"] > 0.3 and ladder[-1]["cer"] == 0  # all of it was added text
+
+
 # ---------------------------------------------------------------- search
 def _words(*texts):
     return [Word(i * 10, 0, i * 10 + 8, 10, t, 0, 0) for i, t in enumerate(texts)]

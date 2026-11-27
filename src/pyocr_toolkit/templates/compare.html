@@ -65,6 +65,7 @@
       </div>
       <a id="pg-open" class="btn small ghost" href="#">{{ icon('eye') }}Open in inspector</a>
     </div>
+    <div class="err-strip" id="pg-errors"></div>
     <div class="diff-cols">
       <div><div class="src-k">A · <span id="pg-a-label"></span></div><pre class="text" id="pg-a"></pre></div>
       <div><div class="src-k">B · <span id="pg-b-label"></span></div><pre class="text" id="pg-b"></pre></div>
@@ -74,7 +75,7 @@
   <details class="card table-details" id="cmp-table-wrap" hidden>
     <summary>{{ icon('text') }}All pages as a table</summary>
     <table class="table hover" id="cmp-table">
-      <thead><tr><th>Page</th><th>CER</th><th>WER</th><th>Ref chars</th><th>Cand chars</th><th></th></tr></thead>
+      <thead><tr><th>Page</th><th>CER</th><th>WER</th><th title="Words B got wrong">Misread</th><th title="Words in A that B left out">Missed</th><th title="Words B has that A doesn't">Added</th><th title="Tokens with a digit (amounts, dates, IDs) read exactly">Numbers</th><th>Ref chars</th><th>Cand chars</th><th></th></tr></thead>
       <tbody></tbody>
     </table>
   </details>

@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Several pages per LLM request: set **Pages per request** on the Overview page, `--pages-per-request N` on
+  `pyocr extract`, or `pages_per_request` in the API's LLM body (1–20, default 1). Pages go out as labelled images
+  in one call and the reply is split back into pages at `=== PAGE n ===` markers. A page the reply can't be matched
+  to (marker missing or repeated, or cut off by the output limit) is re-sent on its own, with a warning. A batched
+  run is its own source (`… · N pages/request`), so you can compare it with one page per request; existing
+  single-page results and cache keys are unchanged. Tokens of a shared request are split evenly over its pages, and
+  each page's record has a `batch` object with the request totals. New setting `LLM_BATCH_MAX_OUTPUT_TOKENS`
+  (default 32000).
+- Easier page selection on the Overview page. The page-range box checks what you type as you type ("9 of 14 pages",
+  or what's wrong with the range) and stays in sync with a clickable page map (Shift-click for a range), with
+  presets for all pages, the first 5, scans only, and pages with no text from the chosen engine yet. The map marks
+  scans and pages that already have text. "Pages per request" has presets (1, 2, 3, 4, 5, 10), a box for any other
+  value, and shows how many requests the job will make.
 - **Adjust image** (page inspector, shortcut `e`): preprocess the page image before it is sent to an LLM, then
   check whether that helped. It has a strip of filters, each a thumbnail of the current page (Clean scan, High contrast,
   Black & white with Otsu thresholding, Fix faded, Denoise, Bring out detail, Invert), and fine-tuning for

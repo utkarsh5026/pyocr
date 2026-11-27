@@ -25,7 +25,7 @@ from .brands import brands_json
 from .config import Settings, get_settings
 from .documents import DEFAULT_OCR_ENGINE, DocumentError, DocumentStore, OCRUnavailableError, OpenDocument
 from .jobs import JobManager
-from .llm import PROMPT_MODES, ProviderError, build_providers, catalog
+from .llm import MAX_PAGES_PER_REQUEST, PROMPT_MODES, ProviderError, build_providers, catalog
 from .ocr import build_ocr_engines
 from .preprocess import Preprocess, presets_json, process_bytes
 from .service import LLMSpec, Services, ocr_source_id, parse_pages
@@ -41,10 +41,13 @@ class LLMRunBody(BaseModel):
     prompt_mode: str = "verbatim"
     custom_prompt: str | None = None
     preprocess: str | None = Field(None, description="image preprocessing, e.g. 'gray;contrast=1.5' or a preset id")
+    pages_per_request: int = Field(1, ge=1, le=MAX_PAGES_PER_REQUEST,
+                                   description="pages sent together in one LLM request (1 = one page per request)")
     force: bool = False
 
     def spec(self) -> LLMSpec:
-        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt, self.preprocess or "")
+        return LLMSpec(self.provider, self.model, self.prompt_mode, self.custom_prompt,
+                       preprocess=self.preprocess or "", pages_per_request=self.pages_per_request)
 
 
 class TextRef(BaseModel):
@@ -155,6 +158,7 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
             "version": __version__,
             "providers": [p.describe() for p in providers.values()],
             "prompt_modes": [{"id": k, "label": v["label"], "prompt": v["system"]} for k, v in PROMPT_MODES.items()],
+            "max_pages_per_request": MAX_PAGES_PER_REQUEST,
             "tesseract_available": shutil.which("tesseract") is not None,
             "ocr_engines": [e.describe() for e in engines.values()],
             "brands": brands_json(),

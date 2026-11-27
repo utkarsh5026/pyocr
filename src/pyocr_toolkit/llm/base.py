@@ -1,4 +1,11 @@
-"""Provider-neutral interface for "transcribe this page image" calls."""
+"""Provider-neutral interface for "transcribe this page image" calls.
+
+A request normally carries one page. A *batched* request carries several pages
+(``TranscriptionRequest.pages``), each with a text label ("Page 5") that the
+provider sends right before the image. Labelling each image, rather than letting
+the model count them, is what lets ``service.py`` split the reply back into
+pages reliably.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +26,16 @@ class ProviderNotConfigured(ProviderError):
 
 
 @dataclass
+class PageImage:
+    """One page of a batched request."""
+
+    image: bytes
+    mime_type: str
+    #: text sent right before the image, e.g. "Page 5" (1-based, as the user sees it)
+    label: str
+
+
+@dataclass
 class TranscriptionRequest:
     image: bytes
     mime_type: str  # "image/png" or "image/jpeg"
@@ -26,6 +43,12 @@ class TranscriptionRequest:
     user_prompt: str
     model: str | None = None  # None -> provider default
     max_output_tokens: int = 16000
+    #: several pages in one request; when set, these are sent instead of ``image``
+    pages: list[PageImage] = field(default_factory=list)
+
+    def page_images(self) -> list[PageImage]:
+        """The images to send, in order. A single-page request has one unlabelled image."""
+        return self.pages or [PageImage(self.image, self.mime_type, "")]
 
 
 @dataclass

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as
+  `pip install "pyocr-toolkit[easyocr]"`), and Google Cloud Vision, Azure AI Document Intelligence, AWS Textract
+  and Mistral OCR (cloud, configured with environment variables). Each engine is a separate source
+  (`ocr:<engine>`; `ocr` stays Tesseract) that can be searched, compared and exported.
+- Page inspector, Overview extract form, background jobs and the CLI (`--engine ocr:<engine>`, `--ocr-engine`,
+  `pyocr engines`) can pick the OCR engine. The Providers page lists every engine with its status and a Test button.
+- Logos for LLM providers and OCR engines across the UI (bundled locally, no external requests).
+- Cloud OCR keys and engine settings can be saved on the Providers page, like LLM provider credentials.
+- Existing Tesseract results (`ocr/<page>.json`) are read as before; other engines cache under `ocr/<engine>/`.
+- Fix: running Tesseract on two documents at once (e.g. two OCR jobs) failed with "Attempt to use Leptonica from
+  2 threads at once"; Tesseract calls are now serialised across the whole process.
+
+## 0.4.0 - 2026-11-27
+
 - Several pages per LLM request: set **Pages per request** on the Overview page, `--pages-per-request N` on
   `pyocr extract`, or `pages_per_request` in the API's LLM body (1–20, default 1). Pages go out as labelled images
   in one call and the reply is split back into pages at `=== PAGE n ===` markers. A page the reply can't be matched
@@ -28,17 +42,6 @@
   endpoint, `GET /api/documents/{id}/pages/{n}/llm-image` (the exact image a model receives), `GET /api/preprocess`
   (validate / normalise a spec), and `preprocess_presets` in `/api/config`. CLI: `pyocr extract|compare --preprocess`.
 - New dependency: Pillow (image processing).
-- **More OCR engines.** Besides Tesseract: RapidOCR, EasyOCR, PaddleOCR and docTR (local, optional extras such as
-  `pip install "pyocr-toolkit[easyocr]"`), and Google Cloud Vision, Azure AI Document Intelligence, AWS Textract
-  and Mistral OCR (cloud, configured with environment variables). Each engine is a separate source
-  (`ocr:<engine>`; `ocr` stays Tesseract) that can be searched, compared and exported.
-- Page inspector, Overview extract form, background jobs and the CLI (`--engine ocr:<engine>`, `--ocr-engine`,
-  `pyocr engines`) can pick the OCR engine. The Providers page lists every engine with its status and a Test button.
-- Logos for LLM providers and OCR engines across the UI (bundled locally, no external requests).
-- Cloud OCR keys and engine settings can be saved on the Providers page, like LLM provider credentials.
-- Existing Tesseract results (`ocr/<page>.json`) are read as before; other engines cache under `ocr/<engine>/`.
-- Fix: running Tesseract on two documents at once (e.g. two OCR jobs) failed with "Attempt to use Leptonica from
-  2 threads at once"; Tesseract calls are now serialised across the whole process.
 
 ## 0.3.0 - 2026-11-27
 

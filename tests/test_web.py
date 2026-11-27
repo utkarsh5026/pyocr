@@ -68,13 +68,14 @@ def test_html_pages_render(client, doc_id):
         (f"/documents/{doc_id}/pages/1", 'data-page="0"'),
         (f"/documents/{doc_id}/pages/99", 'data-page="1"'),  # clamped to the last page
         (f"/documents/{doc_id}/text", "source-select"),
-        (f"/documents/{doc_id}/compare", "Compare two sources"),
+        (f"/documents/{doc_id}/compare", "Compare sources across"),
         ("/search?q=fox", "Search all documents"),
         ("/jobs", "Extraction jobs"),
         ("/providers", "ANTHROPIC_API_KEY"),
         ("/models", "Models your key can use"),
         ("/help", "first principles"),
         ("/workspaces", "Workspaces"),
+        ("/leaderboard", "Which source reads your documents best?"),
     ]:
         r = client.get(url)
         assert r.status_code == 200, url
@@ -84,7 +85,7 @@ def test_html_pages_render(client, doc_id):
     assert r.status_code == 404 and "unknown document" in r.text and "<html" in r.text
     # static assets referenced by the templates exist
     for asset in ["common.js", "workspace.js", "document.js", "reader.js", "compare.js", "search.js",
-                  "jobs.js", "providers.js", "models.js", "library.js", "workspaces.js", "styles.css",
+                  "jobs.js", "providers.js", "models.js", "library.js", "workspaces.js", "leaderboard.js", "styles.css",
                   "logos/claude.svg"]:
         assert client.get(f"/static/{asset}").status_code == 200, asset
 
@@ -98,6 +99,7 @@ def test_calm_layout_keeps_every_page_reachable(client, doc_id):
         assert needle in home
     assert 'href="/models"' in client.get("/providers").text  # Settings → Models
     assert 'href="/workspaces"' in client.get("/documents").text  # Documents → Workspaces
+    assert 'href="/leaderboard"' in client.get("/documents").text  # Documents → Leaderboard
     overview = client.get(f"/documents/{doc_id}").text
     # inside a document the document header replaces the section tabs, and Extract lives in a side sheet
     assert 'class="section-tabs"' not in overview

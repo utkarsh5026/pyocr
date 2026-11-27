@@ -1227,6 +1227,7 @@ function renderDiff(segments) {
   add("Go to", "Workspaces", "/workspaces", "groups of documents", "documents");
   add("Go to", "All files", "/documents", "the library", "documents library");
   add("Go to", "Search", "/search", "every document's text");
+  add("Go to", "Leaderboard", "/leaderboard", "rank every source across documents", "ranking cer wer best engine model");
   add("Go to", "Jobs", "/jobs", "background extractions");
   add("Go to", "Providers", "/providers", "API keys, connection test", "settings llm ocr keys");
   add("Go to", "Models", "/models", "ratings and the model catalog", "settings");

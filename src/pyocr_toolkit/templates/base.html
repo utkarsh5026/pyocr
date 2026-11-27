@@ -22,7 +22,7 @@
 <header class="topbar">
   <a class="brand" href="/"><span class="logo">{{ icon('scan') }}</span>pyocr <span>toolkit</span></a>
   <nav class="mainnav" aria-label="Main">
-    <a href="/documents" class="{{ 'active' if nav in ('library', 'workspaces') }}" title="Library and workspaces">{{ icon('folder') }}<span>Documents</span></a>
+    <a href="/documents" class="{{ 'active' if nav in ('library', 'workspaces', 'leaderboard') }}" title="Workspaces, all files and the leaderboard">{{ icon('folder') }}<span>Documents</span></a>
     <a href="/search" class="{{ 'active' if nav == 'search' }}" title="Search all documents">{{ icon('search') }}<span>Search</span></a>
     <a href="/providers" class="{{ 'active' if nav in ('providers', 'models') }}" title="Providers and models">{{ icon('key') }}<span>Settings</span></a>
   </nav>

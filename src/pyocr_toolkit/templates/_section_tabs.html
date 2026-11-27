@@ -1,9 +1,10 @@
 {# The top bar has three sections; the pages inside a section are switched here, at the top of the page. #}
 {% if doc is defined and doc %}{# inside a document the document header takes this place #}
-{% elif nav in ('library', 'workspaces') %}
+{% elif nav in ('library', 'workspaces', 'leaderboard') %}
 <nav class="section-tabs" aria-label="Documents">
   <a href="/workspaces" class="{{ 'active' if nav == 'workspaces' }}">Workspaces</a>
   <a href="/documents" class="{{ 'active' if nav == 'library' }}">All files</a>
+  <a href="/leaderboard" class="{{ 'active' if nav == 'leaderboard' }}">Leaderboard</a>
 </nav>
 {% elif nav in ('providers', 'models') %}
 <nav class="section-tabs" aria-label="Settings">

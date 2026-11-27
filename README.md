@@ -140,12 +140,13 @@ Everything you upload and extract is stored in `./data` (change it with `DATA_DI
 | **Overview** `/documents/{id}` | Every *source* (engine + model + prompt) with coverage and token usage; read or export it; running jobs; page thumbnails. The **Extract** button in the document header (or `x`) opens a side panel to start background extraction (any OCR engine or LLM) for all pages or a range such as `1-5,9`, typed or picked on a clickable page map; *More options* holds image preprocessing, pages per LLM request and re-running. |
 | **Pages** (page inspector) `/documents/{id}/pages/{n}` | Page image next to native, OCR and LLM text; run OCR or an LLM on just this page; a *Diff* view; a *Columns* view with all three texts in synced columns; search hits drawn on the image; *Adjust* to preprocess the image the LLM receives (filters, fine-tuning, crop/rotate) and A/B it against the original. Keyboard: `←/→`, `/`, `1-5`, `t`, `o`, `e`. |
 | **Full text** `/documents/{id}/text` | Read the whole document from one source, optionally beside the page images; find, copy, download. |
-| **Compare** `/documents/{id}/compare` | Score source B against source A on every page: document-level CER/WER, a clickable CER-per-page chart, and an aligned side-by-side diff of the selected page (opens on the worst page). Works for OCR vs LLM, native vs LLM, or **model vs model**. |
+| **Compare** `/documents/{id}/compare` | Score source B against source A on every page: document-level CER/WER (plus WER in any order, which ignores reading order), word errors split into misread / missed / added, how many numbers (amounts, dates, IDs) were read exactly, a clickable CER-per-page chart, and an aligned side-by-side diff of the selected page with a breakdown of its errors by kind (opens on the worst page). **All sources** votes three or more sources into a word-by-word consensus and scores each against it, so you don't need to know which one is right; close calls are marked for review. **Review & correct** shows the page image next to the text, highlights each disputed word on it, and saves your choices as a *Corrected* source: ground truth to score every engine against. Works for OCR vs LLM, native vs LLM, or **model vs model**. |
 | **Search** `/search` | Search all documents at once. |
 | **Jobs** `/jobs` | All background extractions, with progress, errors and tokens. |
 | **Providers** `/providers` | Which settings are set or missing, a form to set keys/endpoints in the browser, plus a **Test connection** button per provider. |
 | **Models** `/models` | Search a catalog of vision models rated for transcription (excellent / good / fair / not suitable, with price and reason); list the models your key can use and pick one. |
-| **Command palette** `Ctrl+K` / `⌘K` | On every page: open any page or document by name, run the current document's actions (extract, compare, export), or search every document's text. The top bar itself has three sections: Documents, Search, Settings. |
+| **Command palette** `Ctrl+K` / `⌘K` | On every page: open any page or document by name, run the current document's actions (extract, compare, export), or search every document's text. The top bar itself has three sections: Documents (Workspaces, All files, Leaderboard), Search, Settings (Providers, Models). |
+| **Leaderboard** `/leaderboard` | Every OCR engine, LLM run and PDF library ranked across the library or one workspace: CER/WER, misread / missed / added, numbers read exactly, pages scored, cost and time per page. Each page is scored against your corrected text where you reviewed it, otherwise the consensus of three or more sources; *Only pages every source has read* makes it like for like. |
 | **Help** `/help` | The full guide: concepts, metrics, workflows, troubleshooting. |
 | **API docs** `/docs` | Interactive OpenAPI docs for the JSON API. |
 
@@ -268,7 +269,9 @@ you ask otherwise.
    between two texts. **CER** = edits / reference characters; **WER** is the same count over words. For example,
    "the cat sat" → "the bat sat" has 1 edit, so CER = 1/11 = 9%. Whitespace is normalised first, because line
    breaks aren't reading errors. Disagreement between two engines is not proof of error: compare against a
-   born-digital PDF's native text when you need ground truth.
+   born-digital PDF's native text when you need ground truth. **WER in any order** compares the texts as bags of
+   words, so an engine that reads a two-column page across the columns isn't punished for order alone; the gap
+   between it and WER is the cost of reading order.
 
 The Help page explains each of these in more depth.
 

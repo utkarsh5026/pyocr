@@ -19,7 +19,10 @@ function sourceFromUrl() {
 function renderDownloads(source) {
   const enc = encodeURIComponent(source);
   $("#downloads").innerHTML = [["txt", "Plain text"], ["md", "Markdown"], ["json", "JSON"], ["jsonl", "JSONL (page per line)"]]
-    .map(([f, l]) => `<a href="/api/documents/${DOC_ID}/export?source=${enc}&fmt=${f}">${l}</a>`).join("");
+    .map(([f, l]) => `<a href="/api/documents/${DOC_ID}/export?source=${enc}&fmt=${f}">${l}</a>`).join("")
+    + '<span class="menu-sep small muted">All sources</span>'
+    + [["json", "JSON"], ["csv", "CSV"], ["zip", "ZIP"]]
+      .map(([f, l]) => `<a href="/api/documents/${DOC_ID}/export/all?fmt=${f}">${l} (every source)</a>`).join("");
 }
 
 function render() {

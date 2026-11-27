@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Export all sources.** Download everything extracted for a document in one file: Overview → *Export all*,
+  the Full text *Download* menu, or `GET /api/documents/{id}/export/all?fmt=json|jsonl|csv|md|zip`.
+  JSON keeps each page's text per source, CSV puts sources side by side (a column each), and ZIP bundles the JSON
+  and CSV with a TXT and Markdown file per source. Like single-source export, it only reads cached results.
 - **Other PDF libraries.** Besides PyMuPDF, the text layer can be read with pypdf, pdfplumber, pdfminer.six and
   pypdfium2 (optional: `pip install "pyocr-toolkit[pdf]"`). Each installed library is its own source
   (`native:<library>`; `native` stays PyMuPDF) that can be compared and exported. The page inspector's Native tab

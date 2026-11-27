@@ -104,6 +104,13 @@
     </table>
     <div class="row" style="margin-top:18px">
       <a class="btn" href="/documents/{{ doc.id }}/compare">Compare sources {{ icon('arrow-right') }}</a>
+      <details class="menu"><summary class="btn ghost" title="Every source with extracted text, in one file">{{ icon('download') }}Export all {{ icon('chevron-down') }}</summary>
+        <div>
+          {% for fmt, name in [('json','JSON'),('csv','CSV (column per source)'),('md','Markdown'),('jsonl','JSONL'),('zip','ZIP (everything)')] %}
+          <a href="/api/documents/{{ doc.id }}/export/all?fmt={{ fmt }}">{{ name }}</a>
+          {% endfor %}
+        </div>
+      </details>
       <a class="btn ghost" href="/api/documents/{{ doc.id }}/source">{{ icon('download') }}Original</a>
       <div class="spacer"></div>
       <button class="btn ghost danger" id="delete-doc" data-name="{{ doc.filename }}">{{ icon('trash') }}Delete</button>

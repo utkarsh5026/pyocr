@@ -279,6 +279,82 @@ async function openUploadDialog(files) {
   dlg.showModal();
 }
 
+// ------------------------------------------------------------------ import from S3 / links
+/** "s3://b/scans/2024/" -> "2024", "https://x/r.pdf?sig=..." -> "r.pdf": what name suggestions start from. */
+const lastPart = (url) => url.replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop() || url;
+
+/** Paste s3:// paths or links; the server fetches them (POST /api/imports) into a workspace or the Library. */
+async function openImportDialog(workspaceId) {
+  const dlg = $("#import-dialog");
+  if (!dlg?.showModal) { toast("This browser can't show the import dialog; use `pyocr import s3://...`", true); return; }
+  const urlsIn = $("#import-urls"), target = $("#import-target"), nameIn = $("#import-ws-name");
+  const okBtn = $("#import-ok"), out = $("#import-result");
+  const lines = () => urlsIn.value.split("\n").map((l) => l.trim()).filter(Boolean);
+  const lock = (on) => { urlsIn.disabled = on; target.disabled = on; nameIn.disabled = on; };
+  let done = null;  // set after an import that skipped something: where "Continue" goes
+  let typedName = false;
+  workspaceId ??= $("#ws-root")?.dataset.wsId;
+
+  out.hidden = true; out.innerHTML = "";
+  okBtn.disabled = false; okBtn.textContent = "Import";
+  lock(false);
+  nameIn.value = "";
+  const spaces = await api("/api/workspaces");
+  target.innerHTML = `<option value="new">New workspace</option>` +
+    spaces.map((w) => `<option value="${esc(w.id)}">${esc(w.name)} (${esc(plural(w.document_count, "doc"))})</option>`).join("") +
+    `<option value="">No workspace (Library only)</option>`;
+  target.value = workspaceId && spaces.some((w) => w.id === workspaceId) ? workspaceId : "new";
+  const syncTarget = () => { $("#import-ws-name-row").hidden = target.value !== "new"; };
+  target.onchange = syncTarget;
+  syncTarget();
+
+  nameIn.oninput = () => { typedName = true; };
+  urlsIn.onchange = guard(async () => {  // suggest a name from the paths, unless one was typed
+    if (typedName || !lines().length) return;
+    nameIn.value = (await suggestNames(lines().map(lastPart), 1))[0] || "";
+  });
+
+  $("#import-cancel").onclick = () => { if (done) location.href = done; else dlg.close(); };
+  $("#import-form").onsubmit = guard(async (e) => {
+    e.preventDefault();
+    if (done) { location.href = done; return; }
+    const urls = lines();
+    if (!urls.length) { urlsIn.focus(); throw new Error("Paste at least one s3:// path or https:// link"); }
+    const body = { urls };
+    if (target.value === "new") body.workspace_name = nameIn.value.trim() || (await suggestNames(urls.map(lastPart), 1))[0];
+    else if (target.value) body.workspace_id = target.value;
+    const restore = setBusy(okBtn, "Importing… (large folders take a while)");
+    lock(true);
+    let res;
+    try {
+      res = await postJSON("/api/imports", body);
+    } catch (err) {
+      lock(false);
+      throw err;
+    } finally {
+      restore();
+    }
+    const docs = res.documents, skipped = res.skipped;
+    const wsId = res.workspace?.id;
+    done = wsId ? `/workspaces/${wsId}` : docs.length === 1 ? `/documents/${docs[0].id}` : "/documents";
+    if (docs.length && !skipped.length) { location.href = done; return; }
+    // stay open so what was skipped, and why, can be read
+    out.innerHTML = `<b>${esc(docs.length ? `Added ${plural(docs.length, "document")}.` : "Nothing was imported.")}</b>` +
+      (skipped.length ? ` Skipped ${esc(plural(skipped.length, "item"))}:<ul>` +
+        skipped.map((s) => `<li><code>${esc(s.name)}</code> <span class="warn">${esc(s.reason)}</span></li>`).join("") + "</ul>" : "");
+    out.hidden = false;
+    if (docs.length) okBtn.textContent = "Continue";
+    else { done = null; lock(false); }
+  });
+
+  dlg.showModal();
+  urlsIn.focus();
+}
+
+function wireImports() {
+  $$(".import-open").forEach((btn) => btn.addEventListener("click", guard(() => openImportDialog(btn.dataset.workspace))));
+}
+
 function wireUploads() {
   $$(".upload-input").forEach((input) => input.addEventListener("change", (e) => {
     uploadFiles(e.target.files, { workspaceId: e.target.dataset.workspace });
@@ -1126,6 +1202,7 @@ document.addEventListener("click", guard(async (e) => {
 }));
 
 wireUploads();
+wireImports();
 
 // ------------------------------------------------------------------ theme
 /* The inline script in base.html applies the saved theme before first paint;
@@ -1234,6 +1311,8 @@ function renderDiff(segments) {
   add("Go to", "Help", "/help", "how it works, shortcuts");
   add("Go to", "API docs", "/docs", "OpenAPI", "swagger");
   add("Actions", "Upload files…", () => $(".upload-input")?.click(), "PDF, images or a .zip");
+  add("Actions", "Import from S3 or a link…", guard(() => openImportDialog()), "s3:// paths, folders or https:// links",
+      "s3 aws bucket url presigned download sagemaker ec2");
   add("Actions", "Change theme", () => $("#theme-toggle")?.click(), "system, light, dark", "dark mode light mode");
 
   let docs = null;  // loaded when the palette first opens

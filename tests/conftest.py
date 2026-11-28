@@ -7,6 +7,13 @@ import pytest
 
 HAS_TESSERACT = shutil.which("tesseract") is not None
 
+
+@pytest.fixture(autouse=True)
+def _no_aws_metadata_probe(monkeypatch):
+    """boto3 asks the EC2 metadata address for credentials when it finds none: no network in tests."""
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+
+
 TEXT_PAGE = "Invoice 2024-117\nThe quick brown fox jumps over the lazy dog.\nTotal due: $1,250.00"
 SCAN_PAGE = "Scanned receipt\nThe quick brown fox"
 

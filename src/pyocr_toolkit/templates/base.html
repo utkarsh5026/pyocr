@@ -88,6 +88,28 @@
     </div>
   </form>
 </dialog>
+{# Import from S3 or web links (common.js openImportDialog). The server fetches with its own AWS identity. #}
+<dialog id="import-dialog" class="dialog" aria-labelledby="import-dialog-title">
+  <form method="dialog" id="import-form">
+    <h2 id="import-dialog-title">{{ icon('cloud') }}Import from S3 or a link</h2>
+    <label class="field"><span>One address per line</span>
+      <textarea id="import-urls" rows="5" spellcheck="false" autocomplete="off"
+                placeholder="s3://my-bucket/scans/invoice-117.pdf&#10;s3://my-bucket/scans/2024/&#10;https://example.com/report.pdf"></textarea></label>
+    <p class="small muted">A path ending in <code>/</code> imports every PDF, image and .zip under it. S3 uses this machine's AWS
+      credentials (profile, EC2 instance role or SageMaker execution role); links, S3 presigned URLs included, need none.
+      Run <code>pyocr doctor</code> to see which credentials are in use.</p>
+    <div class="import-target-row">
+      <label class="field"><span>Add to</span><select id="import-target"></select></label>
+      <label class="field" id="import-ws-name-row"><span>Workspace name</span>
+        <input id="import-ws-name" maxlength="80" autocomplete="off" placeholder="suggested from the paths"></label>
+    </div>
+    <div id="import-result" class="small" hidden></div>
+    <div class="dialog-actions">
+      <button type="button" class="btn ghost" value="cancel" id="import-cancel">Cancel</button>
+      <button class="btn primary" value="ok" id="import-ok">{{ icon('cloud') }}Import</button>
+    </div>
+  </form>
+</dialog>
 <div id="toast" hidden role="status"></div>
 <script src="/static/common.js?v={{ version }}"></script>
 {% block scripts %}{% endblock %}

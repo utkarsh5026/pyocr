@@ -746,7 +746,7 @@ function initSchemaBuilder(host, onChange) {
           </span>
         </div>
         <div class="sb-err small err" hidden></div>
-        <input class="sb-desc" placeholder="Hint for the model (optional), e.g. “as printed, with currency symbol”" aria-label="Hint for the model">
+        <input class="sb-desc" placeholder="＋ hint for the model (optional), e.g. “as printed, with currency symbol”" aria-label="Hint for the model">
         <input class="sb-options" placeholder="Allowed values, comma-separated: paid, unpaid, overdue" aria-label="Allowed values">
         <div class="sb-children"></div>
       </div>`);
@@ -800,8 +800,8 @@ function initSchemaBuilder(host, onChange) {
 
   function render(focusField) {
     host.innerHTML = "";
-    const title = _h(`<label class="sb-title"><span>Schema name <span class="muted">(optional)</span></span>
-      <input placeholder="e.g. Purchase order" autocomplete="off"></label>`);
+    const title = _h(`<label class="sb-title"><span>Schema name</span>
+      <input placeholder="optional, e.g. Purchase order" autocomplete="off"></label>`);
     const input = $("input", title);
     input.value = model.title;
     input.addEventListener("input", () => { model.title = input.value; changed(); });
@@ -826,7 +826,8 @@ function initSchemaBuilder(host, onChange) {
  */
 function initSchemaPicker(root, presets, context, pageContext) {
   const box = $("[data-schema-box]", root), sel = $("[data-schema-preset]", root), hint = $("[data-schema-hint]", root);
-  const details = $("[data-schema-edit]", root), ta = $("[data-schema]", root), summary = $("[data-schema-status]", root);
+  const editBox = $("[data-schema-edit]", root), draftBox = $("[data-draft-box]", root);
+  const ta = $("[data-schema]", root), summary = $("[data-schema-status]", root);
   const notesEl = $("[data-schema-notes]", root), syntax = $("[data-schema-syntax]", root);
   const fixBtn = $("[data-schema-fix]", root), formatBtn = $("[data-schema-format]", root);
   const prevTable = $("[data-preview-table]", root), prevJson = $("[data-preview-json]", root);
@@ -837,7 +838,22 @@ function initSchemaPicker(root, presets, context, pageContext) {
     check();
   });
   let tab = "fields", preview = _store.get("pyocr.schemaPreview") || "table", last = null, timer, seq = 0;
-  const customHint = "Your own schema. Build it field by field, or write JSON Schema.";
+  const customHint = "Your own schema.";
+  const toggles = $$("[data-schema-toggle]", root);
+  /** Open the editor ("edit"), the drafter ("draft") or neither (null): one panel at a time keeps the picker short. */
+  function openPanel(name) {
+    editBox.hidden = name !== "edit";
+    draftBox.hidden = name !== "draft";
+    toggles.forEach((b) => {
+      const on = b.dataset.schemaToggle === name;
+      b.setAttribute("aria-expanded", String(on));
+      b.classList.toggle("on", on);
+    });
+    if (name === "draft") $("[data-draft]", root).focus();
+    if (last) show(last);
+  }
+  toggles.forEach((b) => b.addEventListener("click", () =>
+    openPanel(b.getAttribute("aria-expanded") === "true" ? null : b.dataset.schemaToggle)));
 
   sel.innerHTML = presets.map((p) => `<option value="${esc(p.id)}">${esc(p.label)}</option>`).join("") +
     '<option value="custom">My own fields…</option>';
@@ -867,7 +883,7 @@ function initSchemaPicker(root, presets, context, pageContext) {
       }
     }
     tab = name;
-    _store.set("pyocr.schemaTab", name);
+    if (name !== "example") _store.set("pyocr.schemaTab", name);
     $$("[data-schema-tab]", root).forEach((b) => b.classList.toggle("active", b.dataset.schemaTab === name));
     $$("[data-schema-pane]", root).forEach((p) => { p.hidden = p.dataset.schemaPane !== name; });
   }
@@ -878,7 +894,7 @@ function initSchemaPicker(root, presets, context, pageContext) {
     editor.set(p ? _pretty(p.schema) : (_store.get("pyocr.extractSchema") ||
       _pretty({ title: "", type: "object", properties: { field_name: { type: "string" } } })));
     showTab(_store.get("pyocr.schemaTab") === "json" ? "json" : "fields", true);
-    if (!p) details.open = true;
+    if (!p) openPanel("edit");
     check(true);
   }
   function value() { return sel.value === "custom" ? ta.value : sel.value; }
@@ -907,11 +923,12 @@ function initSchemaPicker(root, presets, context, pageContext) {
     }
     fixBtn.hidden = !r.repaired;
     fixBtn.title = r.repaired ? `Will fix: ${r.repairs.join(", ")}` : "";
+    const warns = (r.notes || []).filter((n) => n.level === "warn" || n.level === "error").length;
     summary.innerHTML = r.ok
-      ? `<span class="good">✓</span> ${r.fields} field${r.fields === 1 ? "" : "s"} · ${esc(r.label)}` +
-        (details.open ? "" : ' · <a href="#" data-open-editor>edit fields &amp; see an example</a>')
+      ? `<span class="good">✓</span> ${r.fields} field${r.fields === 1 ? "" : "s"}` +
+        (warns && editBox.hidden ? ` · <a href="#" data-open-editor class="warn">⚠ ${warns} note${warns === 1 ? "" : "s"}</a>` : "") + " ·"
       : `<span class="err">✕ ${esc(r.line ? `The JSON has a syntax error (line ${r.line})` : r.error)}</span>` +
-        (r.repaired ? " · it can be fixed automatically" : "");
+        (r.repaired ? ' · <a href="#" data-open-editor>fix it</a>' : "") + " ·";
     notesEl.innerHTML = (r.notes || []).map((n) =>
       `<li class="note-${esc(n.level)}"><span class="note-icon" aria-hidden="true">${ICON[n.level] || "•"}</span><span>` +
       (n.path && !n.path.startsWith("(") ? `<code>${esc(n.path)}</code> ` : "") + `${esc(n.message)}</span></li>`).join("");
@@ -940,18 +957,18 @@ function initSchemaPicker(root, presets, context, pageContext) {
     apply(schema) {
       editor.set(_pretty(schema));
       makeCustom();
-      details.open = true;
+      openPanel("edit");
       showTab("fields", true);
       check(true);
     },
   });
   $$("[data-schema-tab]", root).forEach((b) => b.addEventListener("click", () => showTab(b.dataset.schemaTab)));
   $$("[data-preview]", root).forEach((b) => b.addEventListener("click", () => showPreview(b.dataset.preview)));
-  details.addEventListener("toggle", () => last && show(last));
   summary.addEventListener("click", (e) => {
     if (!e.target.closest("[data-open-editor]")) return;
     e.preventDefault();
-    details.open = true;
+    openPanel("edit");
+    if (last && !last.ok) showTab("json", true);
   });
   syntax.addEventListener("click", (e) => {
     if (!e.target.closest("[data-goto]") || !last?.line) return;
@@ -986,7 +1003,7 @@ function initSchemaPicker(root, presets, context, pageContext) {
  * draft can be refined step by step ("also add the due date").
  */
 function initSchemaDrafter(root, { context, pageContext, current, apply }) {
-  const box = $("[data-draft-box]", root), ta = $("[data-draft]", root), go = $("[data-draft-go]", root);
+  const ta = $("[data-draft]", root), go = $("[data-draft-go]", root);
   const usePage = $("[data-draft-page]", root), keep = $("[data-draft-keep]", root), status = $("[data-draft-status]", root);
   ta.value = _store.get("pyocr.draftText") || "";
   usePage.closest("label").hidden = !pageContext;
@@ -1025,7 +1042,6 @@ function initSchemaDrafter(root, { context, pageContext, current, apply }) {
       done();
     }
   });
-  return { open: () => { box.open = true; ta.focus(); } };
 }
 
 // ------------------------------------------------------------------ structured data

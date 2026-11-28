@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Simpler structured-data setup.** *Fields to extract* is now one row: the preset, then **Edit fields** and
+  **✨ Describe** buttons that open the field editor or the plain-words drafter below it, one at a time. The editor
+  has three tabs, *Fields*, *JSON* and *Example* (the example output used to sit under the editor). Field rows are
+  lighter: one line for name, type and *Required*, the hint as a caption under it, and reorder / remove buttons
+  that appear on the row you're on. Provider notes stay inside the editor; the summary line shows “⚠ 1 note” instead.
+- **Hide the page list or the text panel** on the Pages view with the buttons at the top corners of the page image,
+  or `[` / `]`. The choice is remembered; picking a text tab brings the panel back.
+
 ## 0.8.0 - 2026-11-28
 
 - **Import from S3 and links, for running on EC2 or SageMaker.** `pyocr import s3://bucket/file.pdf`,

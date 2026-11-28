@@ -317,8 +317,30 @@ function switchTab(name) {
   $$(".tab-body").forEach((t) => { t.hidden = t.dataset.tab !== name; });
   // "Side by side" is a layout mode: widen the text panel and remember it.
   root.classList.toggle("side", name === "side");
+  if (root.classList.contains("no-panel")) setPane("panel", true);  // picking a tab means you want to see it
   try { localStorage.setItem("pyocr.sideBySide", name === "side" ? "1" : "0"); } catch (_) { /* private mode */ }
   applyZoom();
+}
+
+// ------------------------------------------------------------------ layout
+/** Show or hide the page list ("pages") or the text panel ("panel"); the choice is remembered. */
+function setPane(name, shown) {
+  root.classList.toggle(`no-${name}`, !shown);
+  const btn = $(name === "pages" ? "#toggle-pages" : "#toggle-panel");
+  const what = name === "pages" ? "page list" : "text panel", key = name === "pages" ? "[" : "]";
+  btn.setAttribute("aria-pressed", String(shown));
+  btn.title = `${shown ? "Hide" : "Show"} the ${what} (${key})`;
+  btn.setAttribute("aria-label", `${shown ? "Hide" : "Show"} the ${what}`);
+  try { localStorage.setItem(`pyocr.pane.${name}`, shown ? "1" : "0"); } catch (_) { /* private mode */ }
+  applyZoom();
+}
+const togglePane = (name) => setPane(name, root.classList.contains(`no-${name}`));
+function restorePanes() {
+  for (const name of ["pages", "panel"]) {
+    let shown = true;
+    try { shown = localStorage.getItem(`pyocr.pane.${name}`) !== "0"; } catch (_) { /* private mode */ }
+    setPane(name, shown);
+  }
 }
 
 // ------------------------------------------------------------------ actions
@@ -871,6 +893,10 @@ function wire() {
     });
   });
 
+  $("#toggle-pages").addEventListener("click", () => togglePane("pages"));
+  $("#toggle-panel").addEventListener("click", () => togglePane("panel"));
+  restorePanes();
+
   document.addEventListener("keydown", (e) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.metaKey || e.ctrlKey || e.altKey) return;
     const tabs = { 1: "native", 2: "ocr", 3: "llm", 4: "compare", 5: "side" };
@@ -881,6 +907,8 @@ function wire() {
     else if (e.key === "t") { switchTab("llm"); guard(() => runLlm(false))(); }
     else if (e.key === "o") { switchTab("ocr"); guard(() => runOcr(false))(); }
     else if (e.key === "e") toggleAdjust();
+    else if (e.key === "[") togglePane("pages");
+    else if (e.key === "]") togglePane("panel");
   });
 }
 

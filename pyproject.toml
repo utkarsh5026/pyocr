@@ -1,6 +1,6 @@
 [project]
 name = "pyocr-toolkit"
-version = "0.7.0"
+version = "0.8.0"
 description = "Inspect and compare PDF/image text extraction - native text, OCR engines (Tesseract, EasyOCR, PaddleOCR, docTR, RapidOCR, Google Vision, Azure, Textract, Mistral) and LLMs (Claude, GPT, Gemini, Azure, local) - in your browser."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -50,6 +50,8 @@ easyocr = ["easyocr>=1.7"]
 paddleocr = ["paddleocr>=3", "paddlepaddle>=3"]
 doctr = ["python-doctr[torch]>=0.10"]
 textract = ["boto3>=1.34"]
+# Import documents from s3:// (https:// links, S3 presigned URLs included, need nothing extra).
+s3 = ["boto3>=1.34"]
 
 [project.urls]
 Homepage = "https://github.com/utkarsh5026/pyocr"

@@ -30,6 +30,7 @@ from .llm import MAX_PAGES_PER_REQUEST, PROMPT_MODES, ProviderError, build_provi
 from .ocr import build_ocr_engines
 from .pdftext import DEFAULT_TEXT_LIBRARY, native_source_id
 from .preprocess import Preprocess, presets_json, process_bytes
+from .remote import MAX_LOCATIONS, import_remote
 from .service import LLMSpec, Services, ocr_source_id, parse_pages
 from .workspaces import WorkspaceStore, ingest, suggest_names
 
@@ -132,6 +133,14 @@ class SuggestNamesBody(BaseModel):
 
 class ProviderTestBody(BaseModel):
     model: str | None = None
+
+
+class ImportBody(BaseModel):
+    #: s3://bucket/key, s3://bucket/folder/ or http(s):// links (S3 presigned URLs work)
+    urls: list[str] = Field(..., min_length=1, max_length=MAX_LOCATIONS)
+    workspace_id: str | None = None
+    #: create a workspace with this name for what was imported (only if something was)
+    workspace_name: str | None = Field(None, max_length=80)
 
 
 class CredentialsBody(BaseModel):
@@ -326,6 +335,31 @@ def build_api(settings: Settings, store: DocumentStore, services: Services, jobs
         elif workspace_id:
             body["workspace"] = asdict(workspaces.get(workspace_id))
         return body
+
+    @api.post("/imports", status_code=201, tags=["documents"])
+    def import_urls(body: ImportBody, request: Request):
+        """Import from S3 (``s3://bucket/key``, ``s3://bucket/folder/``) or web links; zips are unpacked.
+
+        S3 uses the AWS_* settings or the standard AWS credential chain (profile, EC2 instance
+        role, SageMaker execution role). Locations that fail are listed in ``skipped`` with why.
+        Same response as ``POST /api/uploads``.
+        """
+        _require_same_origin(request)  # it fetches with this machine's AWS identity
+        if body.workspace_id:  # fail before fetching anything
+            workspaces.get(body.workspace_id)
+        elif body.workspace_name and body.workspace_name.strip():
+            workspaces.check_new_name(body.workspace_name)
+        result = import_remote(store, body.urls, settings)
+        for meta in result.documents:
+            store.warm_page_stats(meta.id)
+        out = result.to_json()
+        ids = [m.id for m in result.documents]
+        if body.workspace_id:
+            ws = workspaces.add_documents(body.workspace_id, ids) if ids else workspaces.get(body.workspace_id)
+            out["workspace"] = asdict(ws)
+        elif body.workspace_name and body.workspace_name.strip() and ids:
+            out["workspace"] = asdict(workspaces.create(body.workspace_name, ids))
+        return out
 
     @api.get("/documents/{doc_id}", tags=["documents"])
     def document(doc_id: str):

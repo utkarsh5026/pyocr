@@ -170,6 +170,12 @@ class WorkspaceStore:
         ws.doc_ids = [d for d in ws.doc_ids if (self.documents.root / d / "meta.json").exists()]
         return ws
 
+    def check_new_name(self, name: str) -> str:
+        """The cleaned name, or WorkspaceError if it's empty, too long or taken. For checks before slow work."""
+        name = clean_name(name)
+        self._check_unique(name)
+        return name
+
     def _check_unique(self, name: str, except_id: str | None = None) -> None:
         for ws in self.list():
             if ws.id != except_id and ws.name.lower() == name.lower():
@@ -305,13 +311,15 @@ def _archive_members(filename: str, data: bytes, max_bytes: int, result: IngestR
             yield path.name, zf.read(info)
 
 
-def ingest(store: DocumentStore, files: Iterable[tuple[str, bytes]], *, max_bytes: int) -> IngestResult:
+def ingest(store: DocumentStore, files: Iterable[tuple[str, bytes]], *, max_bytes: int,
+           result: IngestResult | None = None) -> IngestResult:
     """Add every file to ``store``, expanding zip archives. Bad files are skipped, not fatal.
 
     Only a broken archive or one over the safety limits raises, because then
-    nothing in it can be trusted.
+    nothing in it can be trusted. Pass ``result`` when ``files`` is a generator
+    that records its own skips there (``remote.py``), so both kinds stay in order.
     """
-    result = IngestResult()
+    result = result if result is not None else IngestResult()
 
     def add_one(name: str, data: bytes) -> None:
         try:

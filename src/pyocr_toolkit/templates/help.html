@@ -80,6 +80,14 @@
     <code>MAX_UPLOAD_MB</code>, and the zip's unpacked total up to 5 × <code>MAX_UPLOAD_MB</code>.</li>
   <li><b>Renaming.</b> On the workspace page, click the pencil or double-click the name. Name ideas based on the files are offered there too.</li>
   <li><b>Adding later.</b> On a workspace page, <i>Add files</i> or dropping files puts them straight into that workspace.</li>
+  <li><b>From S3 or a link.</b> <i>Import from S3 or a link</i> (on Home, a workspace page, or <kbd>Ctrl</kbd>+<kbd>K</kbd>)
+    takes one address per line: <code>s3://bucket/file.pdf</code>, <code>s3://bucket/folder/</code> (everything under it,
+    subfolders included) or an <code>https://</code> link such as an S3 presigned URL. The server downloads each file once
+    and keeps a copy, like an upload. S3 needs <code>pip install "pyocr-toolkit[s3]"</code> and uses this machine's AWS
+    credentials: your <code>~/.aws</code> profile, the EC2 instance role or the SageMaker execution role, found
+    automatically (<code>pyocr doctor</code> says which). The role needs <code>s3:GetObject</code>, and
+    <code>s3:ListBucket</code> for folders. At most <code>IMPORT_MAX_FILES</code> (500) files per import; anything
+    that fails is listed with the reason.</li>
   <li><b>Removing vs deleting.</b> <b>×</b> on a card takes the document out of the workspace but keeps it in the Library;
     the bin deletes it everywhere. Deleting a workspace asks whether to delete its documents as well.</li>
   <li>A document can belong to more than one workspace. Its badges in the Library show which ones.</li>
@@ -421,7 +429,8 @@ pyocr libraries                                       # which PDF libraries are 
 pyocr compare FILE -p openai -m gpt-6.2-sol                 # per-page OCR/native error rate vs an LLM
 pyocr extract FILE --preprocess clean                 # adjust the image first (a preset or e.g. 'gray;auto;contrast=1.5')
 pyocr import a.pdf b.pdf scans.zip folder/ -w "Q3"    # add many files as one workspace (zips unpacked)
-pyocr import FILE... --no-workspace                   # add to the Library without grouping</pre>
+pyocr import FILE... --no-workspace                   # add to the Library without grouping
+pyocr import s3://bucket/folder/ https://host/a.pdf   # from S3 (needs the [s3] extra) or links</pre>
 <p>Documents processed from the command line also appear in the Library, so you can inspect them in the browser afterwards.</p>
 
 <h2 id="api">HTTP API</h2>
@@ -429,6 +438,7 @@ pyocr import FILE... --no-workspace                   # add to the Library witho
   The most useful endpoints:</p>
 <pre class="code">POST /api/documents                              upload (multipart "file")
 POST /api/uploads                                several files (multipart "files"), zips unpacked; optional workspace_id
+POST /api/imports                                {"urls":["s3://bucket/folder/"],"workspace_name":"Q3"} from S3 or links
 GET  /api/workspaces                             list; POST {"name"} creates, PATCH /api/workspaces/{id} renames
 POST /api/workspaces/suggest-names               {"filenames":["invoices.zip"]} → name ideas
 POST /api/documents/{id}/jobs                    {"kind":"llm","pages":"1-5","llm":{"provider":"anthropic"}}

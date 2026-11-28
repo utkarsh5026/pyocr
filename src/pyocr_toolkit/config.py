@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     # --- storage / rendering -------------------------------------------------
     data_dir: Path = Path("data")
     max_upload_mb: int = 200
+    # Most files one import from S3 / web links may add (`pyocr import s3://...`, Import from S3 or URL).
+    import_max_files: int = 500
     # DPI used for the page preview shown in the browser.
     preview_dpi: int = 110
     # DPI used for the image sent to the LLM and for Tesseract OCR.
@@ -62,8 +64,9 @@ class Settings(BaseSettings):
     azure_document_intelligence_endpoint: str | None = None
     azure_document_intelligence_key: str | None = None
 
-    # AWS Textract (DetectDocumentText). Credentials can also come from the
-    # usual AWS chain (~/.aws/credentials, AWS_PROFILE, instance roles).
+    # AWS: Textract (DetectDocumentText) and importing from s3://. Credentials
+    # can also come from the usual AWS chain (~/.aws/credentials, AWS_PROFILE,
+    # EC2 instance roles, SageMaker execution roles).
     aws_region: str | None = None
     aws_access_key_id: str | None = None
     aws_secret_access_key: str | None = None

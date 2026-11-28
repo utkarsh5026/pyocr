@@ -7,6 +7,7 @@
     <h1>See exactly what your text extraction produces.</h1>
     <p class="lead">Embedded text, OCR and LLM transcriptions side by side, with error rates and clean exports.</p>
   </div>
+  <div class="home-drop-col">
   <label class="dropzone" id="home-drop">
     <input class="upload-input" type="file" hidden multiple
            accept=".zip,.pdf,.xps,.oxps,.epub,.cbz,.fb2,.mobi,.svg,.png,.jpg,.jpeg,.jp2,.jpx,.bmp,.gif,.tif,.tiff,.pnm,.pgm,.pbm,.ppm,.pam,.psd,.webp,.cbr,.txt">
@@ -14,6 +15,8 @@
     <b>Drop files here or click to upload</b>
     <span class="small" title="PDF, XPS, EPUB, PNG, JPEG, TIFF, WebP or a .zip of them · several files become a workspace">PDF, images or a .zip · up to {{ request.app.state.settings.max_upload_mb }} MB</span>
   </label>
+  <button type="button" class="btn small ghost import-open home-import">{{ icon('cloud') }}Import from S3 or a link</button>
+  </div>
 </section>
 
 {% set ready = ocr_engines|selectattr('available')|list %}

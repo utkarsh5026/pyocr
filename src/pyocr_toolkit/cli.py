@@ -147,8 +147,12 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
     except OSError as exc:
         ok = False
         print(f"  ✗ Data dir     {data} is not writable: {exc}")
+    from .remote import aws_status
+
+    s3_ready, s3_detail = aws_status(settings)  # optional: a problem here is shown, not counted as a failure
+    print(f"  S3 import      {'✓' if s3_ready else '·'} {s3_detail}")
     env = Path(".env")
-    print(f"  .env           {'found' if env.exists() else 'not found (run `pyocr init`)'} in {Path.cwd()}")
+    print(f"  .env         {'found' if env.exists() else 'not found (run `pyocr init`)'} in {Path.cwd()}")
     ready = [p for p in services.providers.values() if p.configured]
     print(f"  LLM providers  {len(ready)} of {len(services.providers)} configured")
     for p in services.providers.values():
@@ -161,14 +165,19 @@ def cmd_doctor(_args: argparse.Namespace) -> int:
 
 
 def cmd_import(args: argparse.Namespace) -> int:
+    from itertools import chain
+
     from .documents import SUPPORTED_EXTENSIONS, DocumentError, DocumentStore
-    from .workspaces import ARCHIVE_EXTENSIONS, WorkspaceStore, ingest, is_archive, suggest_names
+    from .remote import RemoteFetcher, is_remote, parse_locations
+    from .workspaces import ARCHIVE_EXTENSIONS, IngestResult, WorkspaceStore, ingest, is_archive, suggest_names
 
     settings = get_settings()
     store = DocumentStore(settings.documents_dir)
     spaces = WorkspaceStore(settings.workspaces_dir, store)
+    remote_args = [a for a in args.files if is_remote(a)]
+    local_args = [Path(a) for a in args.files if not is_remote(a)]
     paths: list[Path] = []
-    for path in args.files:
+    for path in local_args:
         if path.is_dir():
             wanted = SUPPORTED_EXTENSIONS | ARCHIVE_EXTENSIONS
             paths += sorted(p for p in path.rglob("*") if p.is_file() and p.suffix.lower() in wanted
@@ -177,18 +186,30 @@ def cmd_import(args: argparse.Namespace) -> int:
             paths.append(path)
         else:
             raise FileNotFoundError(f"no such file or folder: {path}")
-    if not paths:
+    if not paths and not remote_args:
         raise ValueError("nothing to import: no supported files found")
 
-    grouped = not args.no_workspace and (args.workspace or len(paths) > 1 or any(is_archive(p.name) for p in paths))
+    result = IngestResult()
     try:
+        locations = parse_locations(remote_args) if remote_args else []
+        # set up S3 / HTTP before touching the library, so a missing boto3 adds nothing
+        remote_files = RemoteFetcher(settings, result, progress=lambda label: print(f"  ↓ {label}", file=sys.stderr)
+                                     ).files(locations) if locations else iter(())
+        names = [p.name for p in local_args] + [loc.name for loc in locations]
+        grouped = not args.no_workspace and (args.workspace or len(paths) + len(locations) > 1
+                                             or any(is_archive(p.name) for p in paths)
+                                             or any(loc.is_folder for loc in locations))
         if grouped:
-            name = args.workspace or suggest_names([p.name for p in args.files], taken=[w.name for w in spaces.list()],
-                                                   count=1)[0]
+            name = args.workspace or suggest_names(names, taken=[w.name for w in spaces.list()], count=1)[0]
             ws = spaces.create(name)
-        result = ingest(store, ((p.name, p.read_bytes()) for p in paths), max_bytes=settings.max_upload_mb * 1024 * 1024)
-        if grouped:
+        local_files = ((p.name, p.read_bytes()) for p in paths)
+        result = ingest(store, chain(local_files, remote_files), max_bytes=settings.max_upload_mb * 1024 * 1024,
+                        result=result)
+        if grouped and result.documents:
             ws = spaces.add_documents(ws.id, [m.id for m in result.documents])
+        elif grouped:
+            spaces.delete(ws.id)  # nothing came in: don't leave an empty workspace behind
+            grouped = False
     except DocumentError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -377,8 +398,8 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("-o", "--output", type=Path, default=None, help="file to write (default: stdout)")
     e.set_defaults(func=lambda a: asyncio.run(_extract(a)))
 
-    m = sub.add_parser("import", help="add files, folders or .zip archives to the library as one workspace")
-    m.add_argument("files", type=Path, nargs="+")
+    m = sub.add_parser("import", help="add files, folders, .zip archives, s3:// paths or https:// links as one workspace")
+    m.add_argument("files", nargs="+", metavar="FILE|FOLDER|s3://bucket/key|s3://bucket/folder/|https://...")
     m.add_argument("-w", "--workspace", default=None, help="workspace name (default: a suggested one)")
     m.add_argument("--no-workspace", action="store_true", help="add to the library without grouping")
     m.set_defaults(func=cmd_import)

@@ -225,6 +225,7 @@ pyocr compare scan.pdf -p openai -m gpt-6.2-sol                   # per-page OCR
 pyocr extract scan.pdf -p anthropic --preprocess 'gray;auto;contrast=1.5'  # adjust the image first (or a preset: clean, bw, ...)
 pyocr extract invoice.pdf -p anthropic --mode extract --schema invoice --format json  # fields, not text (or a JSON Schema file)
 pyocr import a.pdf b.pdf scans.zip folder/ -w invoices      # add many files as one workspace (zips unpacked)
+pyocr import s3://my-bucket/scans/2024/ -w scans-2024      # every PDF/image/zip under an S3 folder (see below)
 pyocr providers                                             # which providers are ready
 pyocr engines                                               # which OCR engines are ready
 python -m pyocr_toolkit --help                              # same CLI without the script on PATH
@@ -252,6 +253,40 @@ Zips are unpacked; files that can't be used (unsupported type, zip in a zip, enc
 reported with the reason. A single file still uploads straight to the library. Workspaces only reference documents
 (`data/workspaces/<id>.json`), so removing a document from one, or deleting a workspace, keeps the document unless
 you ask otherwise.
+
+### Import from S3 or a link (EC2, SageMaker)
+
+On an EC2 instance or in SageMaker, documents usually live in S3. Paste `s3://` paths or `https://` links into
+**Import from S3 or a link** (on Home, on a workspace page, or Ctrl+K), or pass them to `pyocr import`:
+
+```bash
+pip install "pyocr-toolkit[s3]"                       # boto3, needed for s3:// only
+pyocr import s3://my-bucket/scans/invoice-117.pdf     # one file
+pyocr import s3://my-bucket/scans/2024/ -w scans-2024 # everything under a folder (subfolders too), zips unpacked
+pyocr import "https://my-bucket.s3.amazonaws.com/a.pdf?X-Amz-Signature=..."   # a presigned URL: no AWS credentials needed
+pyocr import local.pdf s3://my-bucket/more/           # local and remote in one workspace
+pyocr doctor                                          # shows which AWS credentials S3 would use, and from where
+```
+
+The file is fetched once and copied into `DATA_DIR`, just like an upload, so everything else works the same and the
+document stays usable if the object is later deleted.
+
+**Credentials.** No AWS settings are needed in most cases. boto3 checks a fixed list of places in order: environment
+variables, `~/.aws` profiles and SSO, container credentials, and the EC2 instance metadata service. So the same command
+uses your profile on a laptop, the instance role on EC2 and the execution role in SageMaker. `pyocr doctor` tells you
+which one it found. The role needs `s3:GetObject`, plus `s3:ListBucket` to import a folder. The optional `AWS_*`
+settings (shared with Textract) override the chain, and `AWS_ENDPOINT_URL_S3` points at an S3-compatible server such as MinIO.
+
+**Limits and safety.** Each file can be up to `MAX_UPLOAD_MB`, and one import adds at most `IMPORT_MAX_FILES` files (500 by default).
+Hidden files and unsupported types in a folder are ignored. Anything that fails (missing, access denied, expired link)
+is listed with the reason and the rest still imports. Links to cloud metadata addresses (169.254.169.254, including
+behind redirects) are refused, because they serve the machine's own credentials. Signatures in presigned URLs are not echoed back in messages.
+The import endpoint has the same cross-site protection as saving credentials.
+
+**Viewing the app from your laptop.** `pyocr serve` listens on `127.0.0.1` only (there's no login). On EC2, use an SSH
+tunnel rather than opening the port: `ssh -L 8000:127.0.0.1:8000 ec2-user@<host>`, then browse `http://localhost:8000`.
+SageMaker Studio's `/proxy/<port>/` path isn't supported by the web UI yet (its links assume it is served at `/`);
+the CLI works there.
 
 ## How it works
 

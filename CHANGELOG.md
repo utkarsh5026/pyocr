@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.8.0 - 2026-11-28
+
 - **Import from S3 and links, for running on EC2 or SageMaker.** `pyocr import s3://bucket/file.pdf`,
   `s3://bucket/folder/` (everything under it, zips unpacked) and `https://` links (S3 presigned URLs work without
   AWS credentials), mixed freely with local files. In the web app, use *Import from S3 or a link* on Home, on a
@@ -10,6 +12,7 @@
   profile, an EC2 instance role or a SageMaker execution role works with no settings. The `AWS_*` settings
   override it. `pyocr doctor` shows which credentials were found and from where, never their values. New
   setting: `IMPORT_MAX_FILES` (default 500). Links to cloud metadata addresses are refused.
+- LLM prompts and cache keys are unchanged, so existing results stay valid.
 
 ## 0.7.0 - 2026-11-28
 

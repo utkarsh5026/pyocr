@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.7.0 - 2026-11-28
+
 - **Calmer interface, same features.** The top bar has three sections, *Documents* (Workspaces / All files / Leaderboard),
   *Search* and *Settings* (Providers / Models), plus a *Jobs* pill that shows how many extractions are running.
   **Ctrl+K / ⌘K** opens a command palette on every page: jump to any page or document by name, run the current
@@ -70,6 +72,7 @@
   renders keep working while it runs. The page grid draws thumbnails in batches of 200 as you scroll. Existing
   folders (and documents added with `pyocr add`) get `pages.json` on first view; it is derived data and is rebuilt
   if missing or damaged.
+- No new settings, and LLM prompts and cache keys are unchanged, so existing results stay valid.
 
 ## 0.6.0 - 2026-11-27
 
